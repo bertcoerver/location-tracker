@@ -24,7 +24,7 @@ locations/
 **Adding a run is just making a folder** — no config, no code. The picker lists
 whatever subfolders exist, newest first, and hides itself when there's only one.
 A run that has pinged within the last hour is marked live, with a `●` in the picker
-and a dot beside the title.
+and a pulsing dot beside the title.
 
 A file sitting loose in `locations/` belongs to no run and is never shown. An unknown
 or malformed `run` falls back to the newest run rather than erroring.
@@ -34,9 +34,14 @@ Each run keeps its own point cache, and **switching runs costs no API requests a
 
 ## On screen
 
-There is one number on the page: **how long since the last ping**. Not how many pings there are,
-and not what second the browser last checked GitHub — that second is the page's business, and the
-coloured dot beside the ticker already says whether polling is healthy.
+There is one number on the page: **how long since the last ping**, sitting beside the run name.
+Not how many pings there are, and not what second the browser last checked GitHub — that second is
+the page's business, and the dot already says whether polling is healthy.
+
+**One dot, two signals.** Its colour is the last poll's outcome — green for fine, red for failed,
+with the reason spelled out underneath — and it pulses while the run is live, meaning it has pinged
+within the last hour. There used to be a second dot for that; two of them side by side just read as
+decoration.
 
 That ticker is also the only control. **Click it to fly back to the newest fix**; panning the map
 turns following off, and the ticker dims to say so. There is no separate Follow button because

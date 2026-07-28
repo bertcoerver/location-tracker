@@ -7,7 +7,7 @@ import { ago } from './util.js';
 export function createUi({ onRecenter, onRunPick }) {
   const el = id => document.getElementById(id);
   const titleEl  = el('title-text');
-  const liveEl   = el('live');
+  const dotEl    = el('dot');
   const tickerEl = el('ticker');
   const tickerTextEl = el('ticker-text');
   const errorEl  = el('error');
@@ -49,7 +49,10 @@ export function createUi({ onRecenter, onRunPick }) {
     const now = Date.now();
     const names = Object.keys(index).sort((a, b) => index[b].latest - index[a].latest);
 
-    liveEl.hidden = !isLive(index[run], now);
+    // The status dot doubles as the live indicator: its COLOUR is whether the
+    // last poll worked, and it PULSES while the run is still going. Two dots
+    // side by side read as decoration rather than as two separate signals.
+    dotEl.dataset.live = String(isLive(index[run], now));
 
     // One run is not a choice. Two are.
     runEl.parentElement.hidden = names.length < 2;
