@@ -27,13 +27,10 @@
     --profile-h: 0px;
     --profile-min-w: 640px;
 
-    /* Sequential ramp, oldest -> newest. Validated (ordinal, light surface):
-       monotone L, adjacent dL >= .06, light end 2.06:1, hue spread 4 deg. */
-    --ramp-0: #86b6ef;
-    --ramp-1: #5598e7;
-    --ramp-2: #2a78d6;
-    --ramp-3: #184f95;
-    --ramp-4: #0d366b;
+    /* Every ping, one colour. Age used to be encoded in a ramp; it isn't any
+       more, because the panel now says how old the newest fix is and that is
+       the only part of the answer anyone was reading off the colours. */
+    --point: #2a78d6;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -47,12 +44,8 @@
       --course:         #a99af0;
       --shadow:         0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-      /* Same hue, stepped for the dark surface; oldest is the dimmest. */
-      --ramp-0: #184f95;
-      --ramp-1: #2a78d6;
-      --ramp-2: #5598e7;
-      --ramp-3: #9ec5f4;
-      --ramp-4: #cde2fb;
+      /* Same hue, lifted for the dark surface. */
+      --point:          #5598e7;
     }
   }
 
@@ -104,29 +97,36 @@
     animation: pulse 2.2s ease-in-out infinite;
   }
   #live[hidden] { display: none; }
-  #count {
-    font-variant-numeric: tabular-nums;
-    font-size: 21px;
+  /* The one reading on the page, and the control that flies back to it. There
+     is no separate Follow button any more: the thing you want to look at and
+     the way to go there are the same thing. */
+  #ticker {
+    font: inherit;
+    font-size: 15px;
     font-weight: 600;
-    line-height: 1.15;
-    letter-spacing: -.01em;
-  }
-  #count small { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
-  #updated {
-    margin-top: 3px;
-    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
+    letter-spacing: -.01em;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: 0;
+    text-align: left;
+    color: var(--text-secondary);
+    cursor: pointer;
   }
+  #ticker[aria-pressed="true"] { color: var(--text-primary); }
+  #ticker:hover { color: var(--text-primary); }
+  #ticker:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
   #dot {
     width: 6px; height: 6px; flex: none;
     border-radius: 50%;
     background: var(--text-muted);
     transition: background .2s;
   }
-  body[data-state="loading"] #dot { background: var(--ramp-2); animation: pulse 1.1s ease-in-out infinite; }
+  body[data-state="loading"] #dot { background: var(--point); animation: pulse 1.1s ease-in-out infinite; }
   body[data-state="ok"]      #dot { background: #1baf7a; }
   body[data-state="error"]   #dot { background: #e34948; }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
@@ -192,48 +192,6 @@
     pointer-events: none;
   }
 
-  #legend {
-    bottom: calc(var(--profile-h) + max(12px, env(safe-area-inset-bottom)));
-    left: max(12px, env(safe-area-inset-left));
-    padding: 9px 11px;
-  }
-  #legend .bar {
-    height: 7px;
-    width: 132px;
-    border-radius: 4px;
-    background: linear-gradient(90deg, var(--ramp-0), var(--ramp-1), var(--ramp-2), var(--ramp-3), var(--ramp-4));
-  }
-  #legend .ends {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    margin-top: 5px;
-    color: var(--text-secondary);
-    font-size: 11px;
-  }
-
-  #follow {
-    bottom: calc(var(--profile-h) + max(12px, env(safe-area-inset-bottom)));
-    right: max(12px, env(safe-area-inset-right));
-    padding: 8px 12px;
-    font: inherit;
-    font-weight: 500;
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-  }
-  #follow::before {
-    content: "";
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--text-muted);
-  }
-  #follow[aria-pressed="true"] { color: var(--text-primary); }
-  #follow[aria-pressed="true"]::before { background: var(--accent); }
-  #follow:hover { border-color: var(--text-muted); }
-
   .tip {
     font: inherit;
     padding: 9px 11px !important;
@@ -259,9 +217,17 @@
   }
   .tip img { display: block; margin-top: 6px; max-width: 100%; border-radius: 5px; }
 
-  @media (max-width: 560px) {
-    #legend { display: none; }
+  /* The profile's tooltip. Same `.tip` skin as the map's, but positioned by us:
+     deck.gl isn't involved, and the canvas sits inside a horizontally scrolled
+     container, so canvas coordinates are not page coordinates. Fixed, and sitting
+     ON TOP of the strip rather than below it, where there is no room. */
+  #profile-tip {
+    position: fixed;
+    z-index: 2;
+    bottom: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px) + 8px);
+    pointer-events: none;
   }
+  #profile-tip[hidden] { display: none; }
 </style>
 </head>
 <body data-state="loading">
@@ -273,25 +239,20 @@
     <span id="title-text">Location Tracker</span>
     <span id="live" title="Pinged within the last hour" hidden></span>
   </h1>
-  <div id="count">&mdash;</div>
-  <div id="updated"><span id="dot"></span><span id="updated-text">Loading&hellip;</span></div>
+  <button id="ticker" type="button" aria-pressed="true" title="Fly to the latest ping">
+    <span id="dot"></span><span id="ticker-text">Loading&hellip;</span>
+  </button>
   <div id="run-picker" hidden>
     <select id="run" aria-label="Run"></select>
   </div>
   <div id="error"></div>
 </div>
 
-<div id="legend" class="panel" aria-hidden="true">
-  <div class="bar"></div>
-  <div class="ends"><span>Oldest</span><span>Newest</span></div>
-</div>
-
-<button id="follow" class="panel" type="button" aria-pressed="true">Follow latest</button>
-
 <div id="profile" class="panel" hidden>
   <div id="profile-scroll"><canvas id="profile-canvas"></canvas></div>
   <div id="profile-readout"></div>
 </div>
+<div id="profile-tip" class="tip" hidden></div>
 
 <script type="module" src="src/main.js"></script>
 </body>

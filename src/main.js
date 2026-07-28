@@ -38,7 +38,10 @@ const map = createMap(document.getElementById('map'), {
 const profile = createProfile(document.getElementById('profile'));
 
 const ui = createUi({
-  onFollowClick: () => (map.isFollowing() ? map.stopFollowing() : map.recenter()),
+  // The ticker is the Follow button now. Clicking it always means "take me to
+  // the runner" — following is switched OFF by panning the map, which is the
+  // gesture that actually means "leave the camera alone".
+  onRecenter: () => map.recenter(),
   // Picking a run pins it in the URL, so just navigate: a fresh load reads it
   // back out and paints from that run's own cache. Nothing to tear down.
   onRunPick: name => { location.href = urlFor(name); }
@@ -158,7 +161,6 @@ async function poll() {
       ? 'Too many pings for one listing — older ones are missing. See the README.'
       : courseError);
     ui.setState('ok');
-    ui.setUpdatedNow();
   } catch (err) {
     if (err instanceof RateLimitError) {
       backoffUntil = err.retryAt;
@@ -166,7 +168,7 @@ async function poll() {
     } else {
       ui.setError(err.message);
     }
-    ui.setState('error', 'Update failed');
+    ui.setState('error');
   }
 }
 

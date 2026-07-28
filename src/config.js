@@ -29,7 +29,12 @@ export const CONFIG = {
 
   // --- the height profile strip --------------------------------------------
   profileHeight: 104,
-  profileMinWidth: 640 // narrower than this and the profile scrolls rather than squashes
+  profileMinWidth: 640, // narrower than this and the profile scrolls rather than squashes
+  // Blur radius in pixel columns, applied when drawing the terrain line. One
+  // column is a few tens of metres of course, so this smooths over ~100 m of
+  // ground: enough to settle GPS elevation noise, far too little to flatten a
+  // hill. The underlying min/max summary is not touched.
+  profileSmoothPx: 3
 };
 
 // localStorage keys. Bump the version suffix when the cached shape changes —

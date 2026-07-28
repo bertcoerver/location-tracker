@@ -32,6 +32,22 @@ or malformed `run` falls back to the newest run rather than erroring.
 Each run keeps its own point cache, and **switching runs costs no API requests at all**
 — see below.
 
+## On screen
+
+There is one number on the page: **how long since the last ping**. Not how many pings there are,
+and not what second the browser last checked GitHub — that second is the page's business, and the
+coloured dot beside the ticker already says whether polling is healthy.
+
+That ticker is also the only control. **Click it to fly back to the newest fix**; panning the map
+turns following off, and the ticker dims to say so. There is no separate Follow button because
+"where is the runner" and "take me there" were never two questions.
+
+Every ping is one colour, with the newest in the accent colour and a pulsing halo. There used to
+be a time ramp and a legend to decode it, but the only thing anyone read off it was how fresh the
+newest fix was, and the ticker now says that in words. All the colours are CSS custom properties in
+[`index.html`](index.html) — `--point`, `--accent`, `--course`, `--surface-*` — and
+[`colors.js`](src/colors.js) reads whichever of light or dark is active.
+
 ## The course
 
 Drop a `.gpx` file into a run's folder and it becomes that run's course:
@@ -52,12 +68,17 @@ With a course present, three things change:
 
 - **The route is drawn**, with its waypoints as markers you can hover for a name and elevation.
 - **Pings snap to it.** A fix within 500 m of the course is drawn where it belongs on the route, and
-  its real position stays visible underneath at low opacity — so you can always see how far the snap
-  moved things. A fix further away than that is left exactly where it is.
+  its real position stays visible underneath at low opacity, joined to it by a dashed line — so you
+  can always see how far the snap moved things, and which fix moved where. A fix further away than
+  that is left exactly where it is.
 - **A height profile appears** along the bottom, if the GPX carries elevation for every point. It
-  plots the whole course, with each snapped ping on it, and hovering reads out distance and height.
-  On a narrow screen it keeps its width and scrolls sideways rather than compressing a 20 km race
-  into 375 pixels.
+  plots the whole course with each snapped ping on it; hovering a ping gives the same tooltip the
+  map does, and hovering anywhere else reads out distance and height. On a narrow screen it keeps
+  its width and scrolls sideways rather than compressing a 20 km race into 375 pixels.
+
+  The terrain line is drawn from one elevation sample per pixel column, then blurred by
+  `profileSmoothPx` columns — about 100 m of ground, which settles GPS noise without flattening
+  anything real. The underlying summary keeps every peak; only the drawing is smoothed.
 
 ### Circular courses
 
@@ -198,7 +219,7 @@ src/
   profile.js        the height profile strip (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
-  colors.js         reads the CSS colour tokens, samples the ramp
+  colors.js         reads the CSS colour tokens
   util.js           time parsing, formatting, concurrency pool, storage guard
 test/
   *.test.js         run with `npm test`
@@ -221,6 +242,7 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - New data field from the phone → `github.js` (`fetchPoint`) and `layers.js` (`tooltipHtml`).
 - New visual layer → `layers.js`, then include it in `pointLayers`.
 - New panel or control → `index.html` for markup/CSS, `ui.js` for behaviour.
+- New colour → a token in `index.html`, then read it in `colors.js`. Never a literal in a layer.
 - New URL parameter → `route.js`.
 - Different repo, poll rate, or snap threshold → `config.js` only.
 - Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
@@ -257,6 +279,11 @@ pinned down on the two things that are easy to get quietly wrong — that on a c
 loop the same coordinate resolves to the start when it arrives first and the finish
 when it arrives last, and that growing a run one ping at a time gives byte-identical
 results to snapping it all at once, at one projection per ping.
+
+The profile's arithmetic is tested without a canvas anywhere near it: that smoothing
+settles column-to-column noise without moving a summit or sagging the ends of the
+course towards sea level, and that hovering picks the dot you are actually pointing at
+rather than its neighbour — a mistake that looks fine in a screenshot.
 
 ## Publishing
 

@@ -9,12 +9,15 @@
 // arithmetic is tested without a canvas anywhere near it.
 
 import { CONFIG } from './config.js';
-import { accent, course as courseColor, rampAt, surface } from './colors.js';
-import { fmtDistance } from './layers.js';
+import { accent, course as courseColor, point as pointColor, surface } from './colors.js';
+import { fmtDistance, tooltipHtml } from './layers.js';
 import { latestOf } from './points.js';
 
 const PAD_TOP = 10;
 const PAD_BOTTOM = 14;
+
+/** How close the cursor has to get to a dot, in pixels, to pick it up. */
+const HIT_RADIUS = 14;
 
 /**
  * Collapse the course's elevations into one min/max pair per pixel column.
@@ -52,6 +55,75 @@ export function columns(course, width) {
   }
 
   return { min, max };
+}
+
+/**
+ * Box blur over a column series, for drawing only.
+ *
+ * A per-pixel maximum is a faithful summary but an ugly line: consecutive
+ * columns come from different GPS samples, so a flat road arrives as a picket
+ * fence. Averaging a few columns together turns that back into terrain.
+ *
+ * Edges clamp — the window shrinks rather than reaching past the ends — because
+ * the alternative (treating off-array as zero) drags the start and finish of the
+ * course down towards sea level, which is a visible lie at both ends.
+ *
+ * Deliberately NOT folded into `columns()`: that stays the honest min/max, and
+ * this is a drawing decision applied on top of it.
+ *
+ * @param {ArrayLike<number>} values
+ * @param {number} radius columns either side; 0 is the identity.
+ */
+export function smooth(values, radius) {
+  const n = values.length;
+  const r = Math.floor(radius);
+  if (r < 1 || n === 0) return Float64Array.from(values);
+
+  // Prefix sums, so the cost is independent of the radius and there is no
+  // window to slide in and out of the array's ends incorrectly.
+  const prefix = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) prefix[i + 1] = prefix[i] + values[i];
+
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - r);
+    const hi = Math.min(n - 1, i + r);
+    out[i] = (prefix[hi + 1] - prefix[lo]) / (hi - lo + 1);
+  }
+
+  return out;
+}
+
+/**
+ * The snapped ping nearest a point on the strip, or null if none is close enough.
+ *
+ * Pure and canvas-free so the hit geometry is testable — getting this subtly
+ * wrong shows up as a tooltip for the neighbouring dot, which is the kind of bug
+ * that survives a visual check.
+ *
+ * Unsnapped pings are not candidates: they have no distance along the course, so
+ * they aren't drawn here at all.
+ *
+ * @param {Array}  points sorted oldest-first
+ * @param {object} course
+ * @param {object} scale  from `scaleFor`
+ * @param {number} px,py  cursor position in canvas pixels
+ */
+export function hitTest(points, course, scale, px, py, radius = HIT_RADIUS) {
+  let best = null;
+  let bestD = radius * radius;
+
+  for (const p of points) {
+    if (!p.snap) continue;
+    const dx = scale.x(p.snap.along) - px;
+    const dy = scale.y(p.snap.ele ?? elevationAt(course, p.snap.along)) - py;
+    const d = dx * dx + dy * dy;
+    // `<=` so that among dots at the same spot — a stationary phone produces a
+    // pile of them — the newest wins, which is the one the eye is on top of.
+    if (d <= bestD) { bestD = d; best = p; }
+  }
+
+  return best;
 }
 
 /**
@@ -100,6 +172,9 @@ export function createProfile(root) {
   const scroller = root.querySelector('#profile-scroll');
   const canvas = root.querySelector('#profile-canvas');
   const readout = root.querySelector('#profile-readout');
+  // Outside the panel: the strip has `overflow: hidden`, so a tooltip parented
+  // to it would be clipped to a 104 px band.
+  const tip = document.getElementById('profile-tip');
   const ctx = canvas.getContext('2d');
 
   let course = null;
@@ -143,14 +218,17 @@ export function createProfile(root) {
     ctx.clearRect(0, 0, width, height);
 
     const scale = scaleFor(course, width, height);
-    const { min, max } = columns(course, width);
+    const { max } = columns(course, width);
+    // Fill and stroke share one smoothed series, so the shaded band can't drift
+    // away from the line drawn on its edge.
+    const ridge = smooth(max, CONFIG.profileSmoothPx);
     const line = courseColor();
 
-    // The terrain: a filled band from the column's low to the strip's floor,
-    // with the high edge drawn on top so ridges stay crisp.
+    // The terrain: a filled band down to the strip's floor, with the top edge
+    // drawn over it so the skyline stays crisp.
     ctx.beginPath();
     ctx.moveTo(0, height);
-    for (let x = 0; x < width; x++) ctx.lineTo(x + 0.5, scale.y(max[x]));
+    for (let x = 0; x < width; x++) ctx.lineTo(x + 0.5, scale.y(ridge[x]));
     ctx.lineTo(width, height);
     ctx.closePath();
     ctx.fillStyle = `rgba(${line.join(',')}, 0.20)`;
@@ -158,11 +236,12 @@ export function createProfile(root) {
 
     ctx.beginPath();
     for (let x = 0; x < width; x++) {
-      const y = scale.y(max[x]);
+      const y = scale.y(ridge[x]);
       if (x === 0) ctx.moveTo(0.5, y); else ctx.lineTo(x + 0.5, y);
     }
     ctx.strokeStyle = `rgba(${line.join(',')}, 0.85)`;
     ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
     ctx.stroke();
 
     drawWaypoints(scale, height);
@@ -189,12 +268,13 @@ export function createProfile(root) {
 
   /**
    * The pings, at their distance along the course and the course's height there
-   * — the same ramp as the map, so the two views read as one dataset. Unsnapped
-   * pings have no distance, so they simply aren't here.
+   * — the same colours as the map, so the two views read as one dataset.
+   * Unsnapped pings have no distance, so they simply aren't here.
    */
   function drawPoints(scale) {
     const latest = latestOf(points);
     const ring = surface();
+    const fill = `rgb(${pointColor().join(',')})`;
 
     for (const p of points) {
       if (!p.snap) continue;
@@ -204,7 +284,7 @@ export function createProfile(root) {
 
       ctx.beginPath();
       ctx.arc(x, y, isLatest ? 5 : 3.2, 0, Math.PI * 2);
-      ctx.fillStyle = `rgb(${(isLatest ? accent() : rampAt(p.k)).join(',')})`;
+      ctx.fillStyle = isLatest ? `rgb(${accent().join(',')})` : fill;
       ctx.fill();
 
       if (isLatest) {
@@ -228,19 +308,67 @@ export function createProfile(root) {
     ctx.stroke();
   }
 
+  /**
+   * Show one ping's tooltip above the strip.
+   *
+   * The markup is `tooltipHtml` — the very same function the map's tooltip uses
+   * — so a ping reads identically whichever of the two you happen to hover.
+   * Positioning is ours because deck.gl isn't involved here, and because the
+   * canvas lives inside a horizontally scrolled container: canvas coordinates
+   * are not page coordinates, so this works from the raw client position.
+   */
+  function showTip(point, clientX) {
+    const latest = latestOf(points);
+    tip.innerHTML = tooltipHtml(point, !!latest && latest.name === point.name);
+    tip.hidden = false;
+
+    // Centred on the cursor, then pushed back inside the window — at the far
+    // end of a scrolled strip the dot is near the edge and the tip would
+    // otherwise hang off it.
+    const width = tip.offsetWidth;
+    const left = Math.max(8, Math.min(innerWidth - width - 8, clientX - width / 2));
+    tip.style.left = `${left}px`;
+  }
+
+  function hideTip() {
+    tip.hidden = true;
+    tip.innerHTML = '';
+  }
+
   canvas.addEventListener('pointermove', event => {
     if (!visible()) return;
     const rect = canvas.getBoundingClientRect();
     const scale = scaleFor(course, rect.width, rect.height);
-    hover = scale.distanceAt(event.clientX - rect.left);
-    readout.textContent = `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
+    const x = event.clientX - rect.left;
+
+    // A dot under the cursor wins over the terrain reading: it's the specific
+    // thing being pointed at, and the readout would just be the same numbers.
+    const hit = hitTest(points, course, scale, x, event.clientY - rect.top);
+    if (hit) {
+      hover = hit.snap.along;
+      readout.textContent = '';
+      showTip(hit, event.clientX);
+    } else {
+      hover = scale.distanceAt(x);
+      readout.textContent = `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
+      hideTip();
+    }
     draw();
   });
 
-  canvas.addEventListener('pointerleave', () => {
+  function leave() {
     hover = null;
     readout.textContent = '';
+    hideTip();
     draw();
+  }
+
+  canvas.addEventListener('pointerleave', leave);
+  // Touch doesn't reliably deliver `pointerleave` — a tap elsewhere is how a
+  // phone says "done", and without this the tip would stay up for good.
+  canvas.addEventListener('pointercancel', leave);
+  document.addEventListener('pointerdown', event => {
+    if (!canvas.contains(event.target)) leave();
   });
 
   addEventListener('resize', sync);
@@ -254,6 +382,7 @@ export function createProfile(root) {
       if (course) locateWaypoints(course);
       hover = null;
       readout.textContent = '';
+      hideTip();
       sync();
     },
 

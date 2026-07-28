@@ -1,36 +1,39 @@
-// The status panel, the run picker and the follow button — all DOM, no map, no network.
+// The status panel and the run picker — all DOM, no map, no network.
 
 import { isLive } from './github.js';
 import { latestOf } from './points.js';
-import { ago, fmtClock } from './util.js';
+import { ago } from './util.js';
 
-export function createUi({ onFollowClick, onRunPick }) {
+export function createUi({ onRecenter, onRunPick }) {
   const el = id => document.getElementById(id);
-  const titleEl   = el('title-text');
-  const liveEl    = el('live');
-  const countEl   = el('count');
-  const updatedEl = el('updated-text');
-  const errorEl   = el('error');
-  const followEl  = el('follow');
-  const runEl     = el('run');
+  const titleEl  = el('title-text');
+  const liveEl   = el('live');
+  const tickerEl = el('ticker');
+  const tickerTextEl = el('ticker-text');
+  const errorEl  = el('error');
+  const runEl    = el('run');
 
   let points = [];
   let index = {};
   let run = null;
 
-  followEl.addEventListener('click', onFollowClick);
+  tickerEl.addEventListener('click', onRecenter);
   runEl.addEventListener('change', () => onRunPick(runEl.value));
 
-  function renderCount(state) {
-    const n = points.length;
-    if (n) {
-      const plural = n === 1 ? '' : 's';
-      countEl.innerHTML =
-        `${n.toLocaleString()} <small>point${plural} &middot; last ${ago(latestOf(points).t)}</small>`;
+  /**
+   * How long since the last ping — the only number on the page.
+   *
+   * Not how long since the browser last talked to GitHub: that is the page's
+   * business, not the viewer's, and the coloured dot beside this already says
+   * whether it's healthy.
+   */
+  function renderTicker(state) {
+    if (points.length) {
+      tickerTextEl.textContent = `Last ping ${ago(latestOf(points).t)}`;
     } else if (state === 'loading') {
-      countEl.innerHTML = '&mdash;';
+      tickerTextEl.textContent = 'Loading…';
     } else {
-      countEl.innerHTML = run ? '<small>No locations yet</small>' : '<small>No runs yet</small>';
+      tickerTextEl.textContent = run ? 'No locations yet' : 'No runs yet';
     }
   }
 
@@ -62,7 +65,7 @@ export function createUi({ onFollowClick, onRunPick }) {
   return {
     setPoints(next) {
       points = next;
-      renderCount(document.body.dataset.state);
+      renderTicker(document.body.dataset.state);
     },
 
     /** @param {string|null} next the run now on screen, null when there are none. */
@@ -80,16 +83,15 @@ export function createUi({ onFollowClick, onRunPick }) {
       renderRuns();
     },
 
-    /** @param {'loading'|'ok'|'error'} state drives the coloured dot via CSS. */
-    setState(state, text) {
+    /**
+     * @param {'loading'|'ok'|'error'} state drives the coloured dot via CSS.
+     *
+     * State no longer has any text of its own: the ticker always shows the ping
+     * age, and a failure has a message, which goes to `setError`.
+     */
+    setState(state) {
       document.body.dataset.state = state;
-      if (text) updatedEl.textContent = text;
-      else if (state === 'loading') updatedEl.textContent = 'Checking…';
-      renderCount(state);
-    },
-
-    setUpdatedNow() {
-      updatedEl.textContent = `Updated ${fmtClock.format(new Date())}`;
+      renderTicker(state);
     },
 
     setError(message) {
@@ -97,12 +99,12 @@ export function createUi({ onFollowClick, onRunPick }) {
     },
 
     setFollowPressed(on) {
-      followEl.setAttribute('aria-pressed', String(on));
+      tickerEl.setAttribute('aria-pressed', String(on));
     },
 
-    /** Keep "last 3m ago" honest between polls — and the live markers with it. */
+    /** Keep "Last ping 3m ago" honest between polls — and the live markers with it. */
     refreshRelativeTime() {
-      if (points.length) renderCount(document.body.dataset.state);
+      if (points.length) renderTicker(document.body.dataset.state);
       renderRuns();
     }
   };

@@ -1,7 +1,7 @@
 // deck.gl layer construction. `deck` is a global from the UMD bundle loaded by
 // index.html, not an import.
 
-import { accent, course as courseColor, rampAt, surface, prefersDark } from './colors.js';
+import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
 import { escapeHtml, fmtTime } from './util.js';
 import { latestOf, posOf } from './points.js';
 
@@ -78,24 +78,43 @@ export function courseLayers(course) {
 /**
  * The point layers.
  *
- * When a run has a course, each ping is drawn twice: faintly where the GPS
- * actually put it, and solidly where it snapped to. The faint layer is the
- * honesty — it shows how far the snap moved things — but the snapped one is
+ * When a run has a course, each ping is drawn three times: faintly where the GPS
+ * actually put it, a dashed line from there to the course, and solidly where it
+ * snapped to. The first two are the honesty — they show how far the snap moved
+ * things, and which real fix each snapped dot came from — but the snapped one is
  * what the eye should land on, so it carries all the weight and the tooltip.
  *
- * @param {Array} points sorted oldest-first, each carrying `k` and maybe `snap`
+ * @param {Array} points sorted oldest-first, each maybe carrying `snap`
  * @param {number} pulse 0..1, drives the halo on the newest fix
  */
 export function pointLayers(points, pulse) {
   const latest = latestOf(points);
   const latestData = latest ? [latest] : [];
   const ring = surface();
+  const fill = pointColor();
 
   // Only the ones that actually moved. For an unsnapped ping the two positions
-  // are the same, and drawing it twice would just make it look heavier.
+  // are the same, so there is nothing to draw faintly and nothing to join up.
   const moved = points.filter(p => p.snap);
 
   return [
+    // Which faint dot belongs to which snapped one. Dashed rather than solid so
+    // it reads as an annotation and can't be mistaken for a leg of the route.
+    // `PathStyleExtension` ships inside the deck.gl UMD bundle index.html
+    // already loads — this costs no extra script.
+    new deck.PathLayer({
+      id: 'snap-link',
+      data: moved,
+      getPath: p => [[p.lon, p.lat], [p.snap.lon, p.snap.lat]],
+      widthUnits: 'pixels',
+      getWidth: 1,
+      widthMinPixels: 1,
+      getColor: [...fill, 90],
+      extensions: [new deck.PathStyleExtension({ dash: true })],
+      getDashArray: [4, 3],
+      dashJustified: true
+    }),
+
     new deck.ScatterplotLayer({
       id: 'raw',
       data: moved,
@@ -103,8 +122,7 @@ export function pointLayers(points, pulse) {
       radiusUnits: 'pixels',
       getPosition: p => [p.lon, p.lat],
       getRadius: 3,
-      getFillColor: p => [...rampAt(p.k), 70],
-      updateTriggers: { getFillColor: moved.length }
+      getFillColor: [...fill, 70]
     }),
 
     new deck.ScatterplotLayer({
@@ -120,8 +138,7 @@ export function pointLayers(points, pulse) {
       lineWidthUnits: 'pixels',
       getLineWidth: 1.5,
       getLineColor: [...ring, 235],
-      getFillColor: p => [...rampAt(p.k), 232],
-      updateTriggers: { getFillColor: points.length }
+      getFillColor: [...fill, 232]
     }),
 
     // Pulsing halo, so a newly arrived fix is visible without hunting for it.

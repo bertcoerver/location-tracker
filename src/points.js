@@ -1,23 +1,15 @@
 // Turns the name-keyed cache into the array the map draws.
 
 /**
- * Sorts points oldest-first and annotates each with `k` — its position in the
- * time span, 0..1 — which is what the colour ramp reads.
+ * Sorts points oldest-first — which is the order everything downstream assumes,
+ * the snapper most of all: it scores each ping against where the previous one
+ * ended up, so out of order it would give a different (wrong) answer.
  *
  * @param {Object} cache name -> point record
- * @returns {Array} sorted points, each with `k`
+ * @returns {Array} sorted points
  */
 export function buildPoints(cache) {
-  const points = Object.values(cache).sort((a, b) => a.t - b.t);
-  if (!points.length) return points;
-
-  const first = points[0].t;
-  const span = points[points.length - 1].t - first;
-
-  // A single point (or several sharing one timestamp) is "newest" by definition.
-  for (const p of points) p.k = span ? (p.t - first) / span : 1;
-
-  return points;
+  return Object.values(cache).sort((a, b) => a.t - b.t);
 }
 
 export function latestOf(points) {
