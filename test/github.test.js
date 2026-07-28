@@ -1,11 +1,14 @@
 // Regression tests for the whole point of this app: never refetch what we
-// already have. These run against a fake GitHub, so they're offline and fast.
+// already have, and never spend an API request you don't have to. These run
+// against a fake GitHub, so they're offline and fast.
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONFIG, keysFor, LS_RUNS_AT } from '../src/config.js';
-import { listRuns, RateLimitError, sync } from '../src/github.js';
+import { CONFIG, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
+import {
+  buildIndex, defaultRun, hydrate, isLive, RateLimitError, refreshIndex
+} from '../src/github.js';
 
 // --- fakes -------------------------------------------------------------------
 
@@ -19,37 +22,33 @@ function fakeLocalStorage() {
   };
 }
 
-/** A stand-in for the repo. `files` maps a full repo path to a body object. */
+/**
+ * A stand-in for the repo. `files` maps a full repo path to a body object.
+ * Serves the two endpoints the app uses: the recursive tree of `locations/`,
+ * and raw file bodies.
+ */
 function fakeGitHub(files) {
   const state = { files: new Map(Object.entries(files)), calls: [] };
+  const root = `${CONFIG.dir}/`;
 
-  const dirname = path => path.slice(0, path.lastIndexOf('/'));
-
-  /** Immediate children of `path`, in Contents API shape. */
-  const listing = path => {
+  /** Everything under locations/, in Git Trees shape — paths relative to it. */
+  const tree = () => {
     const entries = [];
     const dirs = new Set();
 
     for (const [full, body] of state.files) {
-      if (!full.startsWith(`${path}/`)) continue;
-      const rest = full.slice(path.length + 1);
-      if (rest.includes('/')) {
-        dirs.add(rest.slice(0, rest.indexOf('/')));
-      } else {
-        entries.push({
-          name: rest,
-          type: 'file',
-          sha: `sha-${rest}-${JSON.stringify(body).length}`,
-          download_url: `https://raw.githubusercontent.com/x/y/main/${full}`
-        });
-      }
+      if (!full.startsWith(root)) continue;
+      const path = full.slice(root.length);
+      const slash = path.indexOf('/');
+      if (slash > 0) dirs.add(path.slice(0, slash));
+      entries.push({ path, type: 'blob', sha: `sha-${path}-${JSON.stringify(body).length}` });
     }
-    for (const name of dirs) entries.push({ name, type: 'dir', sha: `dir-${name}` });
+    for (const path of dirs) entries.push({ path, type: 'tree', sha: `tree-${path}` });
     return entries;
   };
 
-  // The ETag changes whenever the listing does — same as GitHub.
-  const etagOf = path => `"${JSON.stringify(listing(path).map(e => e.sha))}"`;
+  // The ETag changes whenever the tree does — same as GitHub.
+  const etagOf = () => `W/"${JSON.stringify(tree().map(e => e.sha))}"`;
 
   state.fetch = async (url, opts = {}) => {
     const isApi = String(url).includes('api.github.com');
@@ -65,17 +64,17 @@ function fakeGitHub(files) {
           }
         });
       }
-      const path = String(url).split('/contents/')[1];
-      const entries = listing(path);
-      if (!entries.length && ![...state.files.keys()].some(f => dirname(f) === path)) {
-        return new Response('', { status: 404 });   // git has no empty directories
-      }
-      const etag = etagOf(path);
+      const entries = tree();
+      // git has no empty directories, so locations/ itself doesn't exist yet.
+      if (!entries.length) return new Response('', { status: 404 });
+
+      const etag = etagOf();
       if (opts.headers?.['If-None-Match'] === etag) return new Response(null, { status: 304 });
-      return new Response(JSON.stringify(entries), { status: 200, headers: { etag } });
+      return new Response(JSON.stringify({ tree: entries, truncated: !!state.truncated }),
+        { status: 200, headers: { etag } });
     }
 
-    const path = decodeURIComponent(String(url).split('/main/')[1]);
+    const path = String(url).split(`/${CONFIG.branch}/`)[1];
     if (!state.files.has(path)) return new Response('', { status: 404 });
     return new Response(JSON.stringify(state.files.get(path)), { status: 200 });
   };
@@ -98,6 +97,12 @@ const FILES = {
 
 let gh;
 
+/** One full cycle: refresh the index, then fill in one run from it. */
+async function poll(run) {
+  const { index, changed } = await refreshIndex();
+  return { index, changed, cache: await hydrate(run, index) };
+}
+
 beforeEach(() => {
   globalThis.localStorage = fakeLocalStorage();
   gh = fakeGitHub({ ...FILES });
@@ -106,52 +111,62 @@ beforeEach(() => {
 
 // --- the caching contract ----------------------------------------------------
 
-test('cold start fetches the listing and every file once', async () => {
-  const { changed, cache } = await sync('vendee-10k');
+test('cold start costs one API request and downloads every file once', async () => {
+  const { changed, cache } = await poll('vendee-10k');
 
   assert.equal(changed, true);
   assert.equal(Object.keys(cache).length, 3);
+  // One, not two: the tree carries the run list and the run's files together.
   assert.deepEqual(gh.counts(), { api: 1, raw: 3 });
 });
 
 test('a poll with nothing new costs one conditional request and zero downloads', async () => {
-  await sync('vendee-10k');
+  await poll('vendee-10k');
   gh.reset();
 
-  const { changed, cache } = await sync('vendee-10k');
+  const { changed, cache } = await poll('vendee-10k');
 
   assert.equal(changed, false, 'a 304 must report no change');
   assert.equal(Object.keys(cache).length, 3, 'cached points survive the 304');
   assert.deepEqual(gh.counts(), { api: 1, raw: 0 });
 });
 
+test('a 304 still yields a usable index, not an empty one', async () => {
+  await poll('vendee-10k');
+
+  const { index } = await refreshIndex();
+
+  assert.deepEqual(Object.keys(index), ['vendee-10k']);
+  assert.equal(Object.keys(index['vendee-10k'].files).length, 3);
+});
+
 test('a new point upstream downloads exactly that one file', async () => {
-  await sync('vendee-10k');
+  await poll('vendee-10k');
   gh.reset();
 
   gh.files.set(`${RUN}/2026-07-28T12_06_01+02_00.json`, { lat: 46.5736, lon: -0.7720, btry: 49 });
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 4);
   assert.deepEqual(gh.counts(), { api: 1, raw: 1 });
 });
 
 test('an edited file is refetched because its sha changed', async () => {
-  await sync('vendee-10k');
+  await poll('vendee-10k');
   gh.reset();
 
   gh.files.set(`${RUN}/2026-07-28T11_23_25+02_00.json`, { lat: 1, lon: 2, btry: 100 });
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.deepEqual(gh.counts(), { api: 1, raw: 1 });
   assert.equal(cache['2026-07-28T11_23_25+02_00.json'].lat, 1);
 });
 
 test('deleting a file upstream drops it from the cache', async () => {
-  await sync('vendee-10k');
+  await poll('vendee-10k');
   gh.files.delete(`${RUN}/2026-07-28T11_09_28+02_00.json`);
 
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 2);
   assert.ok(!('2026-07-28T11_09_28+02_00.json' in cache));
@@ -159,84 +174,119 @@ test('deleting a file upstream drops it from the cache', async () => {
 
 // --- runs --------------------------------------------------------------------
 
-test('a run only sees its own folder', async () => {
+test('a run only sees its own files', async () => {
   gh.files.set('locations/other-race/2026-07-29T09_00_00+02_00.json', { lat: 1, lon: 2 });
 
-  const { cache } = await sync('vendee-10k');
+  const { index, cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 3);
-  assert.equal(Object.keys(await sync('other-race').then(r => r.cache)).length, 1);
+  assert.equal(Object.keys(await hydrate('other-race', index)).length, 1);
 });
 
 test('each run caches separately, so switching back costs no downloads', async () => {
   gh.files.set('locations/other-race/2026-07-29T09_00_00+02_00.json', { lat: 1, lon: 2 });
 
-  await sync('vendee-10k');
-  await sync('other-race');
+  const { index } = await poll('vendee-10k');
+  await hydrate('other-race', index);
   gh.reset();
 
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 3, 'the other run did not evict this one');
   assert.deepEqual(gh.counts(), { api: 1, raw: 0 });
 });
 
-test('the root feed shows only loose files, not files inside runs', async () => {
+test('opening a run for the first time costs ZERO API requests', async () => {
+  // The point of splitting the index from the bodies: the index already lists
+  // every run, so a run you've never opened needs only the CDN. Switching runs
+  // must never be able to rate-limit you.
+  gh.files.set('locations/other-race/2026-07-29T09_00_00+02_00.json', { lat: 1, lon: 2 });
+
+  const { index } = await poll('vendee-10k');
+  gh.reset();
+
+  const cache = await hydrate('other-race', index);
+
+  assert.equal(Object.keys(cache).length, 1);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 1 });
+});
+
+test('loose files in locations/ belong to no run and are never shown', async () => {
   gh.files.set('locations/2026-07-29T10_00_00+02_00.json', { lat: 9, lon: 9 });
 
-  const { cache, dirs } = await sync(null);
+  const { index, cache } = await poll('vendee-10k');
 
-  assert.deepEqual(Object.keys(cache), ['2026-07-29T10_00_00+02_00.json']);
-  assert.deepEqual(dirs, ['vendee-10k'], 'polling the root discovers runs for free');
-});
-
-test('polling a run reports no dirs, since it never listed the root', async () => {
-  const { dirs } = await sync('vendee-10k');
-  assert.equal(dirs, null);
-});
-
-test('listRuns returns the subfolders and costs nothing again within the TTL', async () => {
-  assert.deepEqual(await listRuns(), ['vendee-10k']);
-  gh.reset();
-
-  // This is what a page reload does. Before the TTL it re-listed every time,
-  // doubling the cost of a reload for a folder list that changes once a race.
-  assert.deepEqual(await listRuns(), ['vendee-10k']);
-  assert.deepEqual(gh.counts(), { api: 0, raw: 0 });
-});
-
-test('listRuns re-checks once the TTL expires, and a 304 restarts the clock', async () => {
-  await listRuns();
-  globalThis.localStorage.setItem(LS_RUNS_AT, JSON.stringify(Date.now() - 2 * CONFIG.runsTtlMs));
-  gh.reset();
-
-  assert.deepEqual(await listRuns(), ['vendee-10k'], 'unchanged upstream, so a 304');
-  assert.deepEqual(gh.counts(), { api: 1, raw: 0 });
-
-  gh.reset();
-  assert.deepEqual(await listRuns(), ['vendee-10k']);
-  assert.deepEqual(gh.counts(), { api: 0, raw: 0 }, 'the 304 must not be re-paid next load');
-});
-
-test('listRuns picks up a newly created run after the TTL', async () => {
-  await listRuns();
-  gh.files.set('locations/new-race/2026-08-01T09_00_00+02_00.json', { lat: 1, lon: 2 });
-  globalThis.localStorage.setItem(LS_RUNS_AT, JSON.stringify(Date.now() - 2 * CONFIG.runsTtlMs));
-
-  assert.deepEqual((await listRuns()).sort(), ['new-race', 'vendee-10k']);
+  assert.deepEqual(Object.keys(index), ['vendee-10k'], 'a loose file is not a run');
+  assert.equal(Object.keys(cache).length, 3);
+  assert.ok(!Object.values(index).some(r => '2026-07-29T10_00_00+02_00.json' in r.files));
 });
 
 test('a run folder that does not exist yet is empty, not an error', async () => {
-  const { changed, cache } = await sync('not-yet-run');
+  const { index } = await refreshIndex();
+  assert.deepEqual(await hydrate('not-yet-run', index), {});
+});
 
-  assert.equal(changed, true);
-  assert.deepEqual(cache, {});
+test('an entirely empty repo is empty, not an error', async () => {
+  gh.files.clear();
+
+  const { index } = await refreshIndex();
+
+  assert.deepEqual(index, {});
+  assert.equal(defaultRun(index), null);
+});
+
+// --- the index: which run is newest, which are live --------------------------
+
+const TREE = [
+  { path: 'old-race', type: 'tree', sha: 't1' },
+  { path: 'old-race/2026-07-01T09_00_00+02_00.json', type: 'blob', sha: 'a' },
+  { path: 'new-race/2026-07-28T11_00_00+02_00.json', type: 'blob', sha: 'b' },
+  { path: 'new-race/2026-07-28T12_00_00+02_00.json', type: 'blob', sha: 'c' }
+];
+
+test('buildIndex groups by run and records each run\'s latest ping', () => {
+  const index = buildIndex(TREE);
+
+  assert.deepEqual(Object.keys(index).sort(), ['new-race', 'old-race']);
+  assert.deepEqual(Object.keys(index['new-race'].files).length, 2);
+  assert.equal(index['new-race'].latest, Date.parse('2026-07-28T12:00:00+02:00'));
+  assert.equal(index['old-race'].latest, Date.parse('2026-07-01T09:00:00+02:00'));
+});
+
+test('buildIndex ignores loose files, subtrees, non-json and unparsable names', () => {
+  const index = buildIndex([
+    ...TREE,
+    { path: '2026-07-28T13_00_00+02_00.json', type: 'blob', sha: 'd' },  // loose
+    { path: 'new-race/nested/2026-07-28T14_00_00+02_00.json', type: 'blob', sha: 'e' },
+    { path: 'new-race/README.md', type: 'blob', sha: 'f' },
+    { path: 'new-race/notes.json', type: 'blob', sha: 'g' }              // no timestamp
+  ]);
+
+  assert.deepEqual(Object.keys(index).sort(), ['new-race', 'old-race']);
+  assert.equal(Object.keys(index['new-race'].files).length, 2, 'only the two real pings');
+  // A name with no time must not be able to drag `latest` to NaN and break the
+  // newest-run pick for every other run.
+  assert.equal(index['new-race'].latest, Date.parse('2026-07-28T12:00:00+02:00'));
+});
+
+test('defaultRun picks the run that pinged most recently', () => {
+  assert.equal(defaultRun(buildIndex(TREE)), 'new-race');
+});
+
+test('a run is live only if it pinged within the hour', () => {
+  const index = buildIndex(TREE);
+  const now = Date.parse('2026-07-28T12:30:00+02:00');
+
+  assert.equal(isLive(index['new-race'], now), true, '30 minutes ago');
+  assert.equal(isLive(index['old-race'], now), false, 'weeks ago');
+  assert.equal(isLive(index['new-race'], now + CONFIG.liveMs), false, 'exactly an hour is stale');
+  assert.equal(isLive(undefined, now), false, 'no run selected');
 });
 
 // --- parsing -----------------------------------------------------------------
 
 test('optional fields are carried through and absent ones stay absent', async () => {
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   const withMsg = cache['2026-07-28T11_09_28+02_00.json'];
   assert.equal(withMsg.btry, undefined, 'a null msg/img file has no battery');
@@ -247,7 +297,7 @@ test('optional fields are carried through and absent ones stay absent', async ()
 });
 
 test('timestamps come from the filename, since the body has none', async () => {
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
   assert.equal(
     cache['2026-07-28T11_36_00+02_00.json'].t,
     Date.parse('2026-07-28T11:36:00+02:00')
@@ -257,7 +307,7 @@ test('timestamps come from the filename, since the body has none', async () => {
 test('a file with unusable coordinates is skipped, not fatal', async () => {
   gh.files.set(`${RUN}/2026-07-28T13_00_00+02_00.json`, { lat: 'nope', lon: null });
 
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 3);
   assert.ok(!('2026-07-28T13_00_00+02_00.json' in cache));
@@ -270,16 +320,18 @@ test('one failing download does not sink the whole poll', async () => {
     return real(url, opts);
   };
 
-  const { cache } = await sync('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 2, 'the other two still land');
 });
 
-test('non-json entries in the listing are ignored', async () => {
-  gh.files.set(`${RUN}/README.md`, 'not json');
+test('the raw URL is built with the offset\'s + left literal', async () => {
+  await poll('vendee-10k');
 
-  const { cache } = await sync('vendee-10k');
-  assert.equal(Object.keys(cache).length, 3);
+  const raw = gh.calls.find(c => c.kind === 'RAW').url;
+  assert.ok(raw.includes('+02_00.json'), `encoded the plus: ${raw}`);
+  assert.ok(raw.startsWith(
+    `https://raw.githubusercontent.com/${CONFIG.owner}/${CONFIG.repo}/${CONFIG.branch}/${RUN}/`));
 });
 
 // --- failure modes -----------------------------------------------------------
@@ -288,7 +340,7 @@ test('a rate limit surfaces as RateLimitError carrying the reset time', async ()
   gh.rateLimited = true;
   gh.resetAt = Date.parse('2026-07-28T13:00:00Z');
 
-  const err = await sync('vendee-10k').then(() => null, e => e);
+  const err = await refreshIndex().then(() => null, e => e);
 
   assert.ok(err instanceof RateLimitError);
   assert.equal(err.retryAt, gh.resetAt);
@@ -296,27 +348,33 @@ test('a rate limit surfaces as RateLimitError carrying the reset time', async ()
 
 test('a plain API error propagates', async () => {
   globalThis.fetch = async () => new Response('', { status: 500 });
-  await assert.rejects(sync('vendee-10k'), /500/);
+  await assert.rejects(refreshIndex(), /500/);
 });
 
-test('the ETag is not stored when the points could not be', async () => {
+test('a truncated tree is reported rather than silently believed', async () => {
+  gh.truncated = true;
+  const { truncated } = await refreshIndex();
+  assert.equal(truncated, true);
+});
+
+test('the ETag is not stored when the index could not be', async () => {
   // Simulate a full quota: writes fail silently, as localStorage does.
   globalThis.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
 
-  await sync('vendee-10k');
+  await refreshIndex();
 
-  // Storing only the ETag would make the next load answer 304 with an empty
-  // cache — a blank map that never recovers.
-  const keys = keysFor('vendee-10k');
-  assert.equal(globalThis.localStorage.getItem(keys.etag), null);
-  assert.equal(globalThis.localStorage.getItem(keys.points), null);
+  // Storing only the ETag would make the next load answer 304 with no index —
+  // a map that has no idea what runs exist and never recovers.
+  assert.equal(globalThis.localStorage.getItem(LS_TREE_ETAG), null);
+  assert.equal(globalThis.localStorage.getItem(LS_TREE), null);
 });
 
 test('with storage unavailable, every poll still returns the full set', async () => {
   globalThis.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
 
-  await sync('vendee-10k');
-  const { cache } = await sync('vendee-10k');
+  await poll('vendee-10k');
+  const { cache } = await poll('vendee-10k');
 
   assert.equal(Object.keys(cache).length, 3);
+  assert.equal(globalThis.localStorage.getItem(keysFor('vendee-10k').points), null);
 });

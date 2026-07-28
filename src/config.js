@@ -8,39 +8,33 @@ export const CONFIG = {
   dir:    'locations',
 
   // GitHub allows 60 API requests/hour PER IP, and a 304 costs the same as a
-  // 200 — measured, despite the docs saying conditional requests are free. Each
-  // poll is one request, so this rate is a budget split between everyone behind
-  // the same connection: 240s = 15/hour, leaving room for four viewers.
+  // 200 — measured, despite the docs saying conditional requests are free. One
+  // poll is one request whatever the run count, so this rate is a budget split
+  // between everyone behind the same connection: 240s = 15/hour, room for four.
   pollMs: 240000,
   minRefreshMs: 30000, // floor between refreshes, however they were triggered
-  runsTtlMs: 3600000,  // subfolders appear when you create a race, not every poll
+  liveMs: 3600000,     // a run with a ping this recent is still running
   concurrency: 8,      // parallel file fetches on a cold start
   maxZoom: 17          // this tracker often sits still; don't zoom into the void
 };
 
 // localStorage keys. Bump the version suffix when the cached shape changes —
 // old entries are then ignored instead of misread.
-const V = 'v3';
+const V = 'v4';
 
 /**
- * Each run gets its own cache namespace. Without this, switching runs would
- * diff a new listing against another run's points and refetch everything.
- * `run` is null for the unsorted feed at the root of `locations/`.
+ * Each run's points get their own cache namespace, so switching runs never
+ * evicts the one you came from.
  */
 export function keysFor(run) {
-  const suffix = run ? `.${run}` : '';
-  return {
-    points: `lt.points.${V}${suffix}`,
-    etag:   `lt.etag.${V}${suffix}`,
-    // When this run was last fetched. Persisted so the refresh throttle survives
-    // a page reload — in memory it resets, and refresh-mashing spends the budget.
-    // Keyed per run so opening a different one is never made to wait.
-    refresh: `lt.refresh.${V}${suffix}`
-  };
+  return { points: `lt.points.${V}.${run}` };
 }
 
-// The directory listing used to discover which runs exist. Cached separately
-// because it's the parent of every run's own listing.
-export const LS_RUNS      = `lt.runs.${V}`;
-export const LS_RUNS_ETAG = `lt.runs-etag.${V}`;
-export const LS_RUNS_AT   = `lt.runs-at.${V}`;
+// The index: every run, its files and its latest ping, from one tree request.
+// Not per-run, because one request covers them all.
+export const LS_TREE      = `lt.tree.${V}`;
+export const LS_TREE_ETAG = `lt.tree-etag.${V}`;
+
+// When the index was last fetched. Persisted so the refresh throttle survives a
+// page reload — in memory it resets, and refresh-mashing spends the budget.
+export const LS_REFRESH   = `lt.refresh.${V}`;

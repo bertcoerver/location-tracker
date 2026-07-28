@@ -1,11 +1,16 @@
 // The data layer: everything that talks to GitHub.
 //
-// The whole efficiency story lives in this file. Files in `locations/` are
-// IMMUTABLE — the tracker only ever adds new ones — which is what makes the
-// cache below correct: a filename we've already seen never needs refetching.
+// The whole efficiency story lives in this file, and it rests on two facts:
+//
+//   1. Files in `locations/` are IMMUTABLE — the tracker only ever adds new ones
+//      — so a filename we've already seen never needs refetching.
+//   2. A ping's capture time is in its FILENAME, so a directory listing alone
+//      tells us when every run last moved. No file bodies required.
+//
+// (2) is why one recursive tree request answers everything the UI needs: which
+// runs exist, which are live, which is newest, and what's in the one on screen.
 
-import { CONFIG, keysFor, LS_RUNS, LS_RUNS_AT, LS_RUNS_ETAG } from './config.js';
-import { dirFor } from './route.js';
+import { CONFIG, keysFor, LS_TREE, LS_TREE_ETAG } from './config.js';
 import { parseTime, pool, storage } from './util.js';
 
 /** Thrown when GitHub says we've spent our hourly budget. Carries when to retry. */
@@ -18,30 +23,34 @@ export class RateLimitError extends Error {
 }
 
 /**
- * Lists one repo directory, conditionally.
+ * The one API request this app makes: every path under `locations/`, in every
+ * run, conditionally.
  *
  * Returns `null` when GitHub answers 304 Not Modified — nothing has changed and
- * no body was transferred. That is the common case, and it's what keeps the
- * bandwidth near zero.
+ * no body was transferred. That is the common case between pings.
  *
- * It does NOT keep the request count near zero. GitHub's docs claim a 304 is
- * free; measured against this endpoint it decrements x-ratelimit-remaining just
- * like a 200 does. So the budget is 60 polls/hour per IP, full stop — see the
- * rate limit section of the README.
+ * It does NOT keep the request COUNT near zero. GitHub's docs claim a 304 is
+ * free; measured, it decrements x-ratelimit-remaining just like a 200 does. So
+ * the budget is 60 polls/hour per IP — see the README's rate limit section.
+ *
+ * The `branch:dir` ref scopes the tree to `locations/`, which both shrinks the
+ * response and stops commits to the code busting the ETag.
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ THIS IS THE FUNCTION TO REPLACE when the repo outgrows the API.         │
- * │ A Contents API listing returns at most 1000 entries — about 3.5 days at │
- * │ a 5-minute ping cadence, though splitting pings across runs pushes that │
- * │ out per run. The migration is a GitHub Action that appends each ping    │
- * │ into a compact `<run>/index.json`; this function then becomes a single  │
- * │ conditional fetch of that file and everything else stays put.           │
+ * │ A tree response is capped at 100k entries / 7MB, after which GitHub sets│
+ * │ `truncated` and silently drops the rest. The migration is a GitHub      │
+ * │ Action that appends each ping into a compact `<run>/index.json`; this   │
+ * │ becomes a fetch of those files and everything downstream stays put.     │
  * └─────────────────────────────────────────────────────────────────────────┘
  *
- * @returns {{files: Array, dirs: string[], etag: string}|null}
+ * @returns {{entries: Array, truncated: boolean, etag: string|null}|null}
  */
-export async function listDir(path, etag) {
-  const url = `https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/contents/${path}`;
+export async function fetchTree(etag) {
+  const { owner, repo, branch, dir } = CONFIG;
+  const url =
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}:${dir}?recursive=1`;
+
   const headers = { Accept: 'application/vnd.github+json' };
   if (etag) headers['If-None-Match'] = etag;
 
@@ -49,9 +58,9 @@ export async function listDir(path, etag) {
 
   if (res.status === 304) return null;
 
-  // An empty run folder doesn't exist as far as git is concerned. That's not an
-  // error, it's just a run with no pings yet.
-  if (res.status === 404) return { files: [], dirs: [], etag: null };
+  // No `locations/` yet — an empty directory doesn't exist as far as git is
+  // concerned. That's not an error, it's a repo with no pings.
+  if (res.status === 404) return { entries: [], truncated: false, etag: null };
 
   if (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
@@ -59,12 +68,91 @@ export async function listDir(path, etag) {
   }
   if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
 
-  const entries = await res.json();
+  const body = await res.json();
   return {
-    files: entries.filter(e => e.type === 'file' && e.name.endsWith('.json')),
-    dirs:  entries.filter(e => e.type === 'dir').map(e => e.name),
-    etag:  res.headers.get('etag')
+    entries: body.tree || [],
+    truncated: Boolean(body.truncated),
+    etag: res.headers.get('etag')
   };
+}
+
+/**
+ * Folds a flat tree listing into the shape the rest of the app reads:
+ *
+ *   { 'vendee-10k': { files: { '<name>.json': '<sha>', … }, latest: <ms> } }
+ *
+ * Pure, and the only place the layout of the repo is interpreted.
+ *
+ * A path with no slash is a file sitting loose in `locations/`, belonging to no
+ * run. Runs are the whole model now, so those are dropped rather than shown.
+ */
+export function buildIndex(entries) {
+  const index = {};
+
+  for (const entry of entries) {
+    if (entry.type !== 'blob' || !entry.path.endsWith('.json')) continue;
+
+    const slash = entry.path.indexOf('/');
+    if (slash < 1) continue;                          // loose file
+
+    const run = entry.path.slice(0, slash);
+    const name = entry.path.slice(slash + 1);
+    if (name.includes('/')) continue;                 // nested deeper than a run
+
+    // No parsable time means no place on a time-coloured map, and it must not
+    // be allowed to drag a run's `latest` around either.
+    const t = parseTime(name);
+    if (Number.isNaN(t)) continue;
+
+    const record = (index[run] ??= { files: {}, latest: -Infinity });
+    record.files[name] = entry.sha;
+    if (t > record.latest) record.latest = t;
+  }
+
+  return index;
+}
+
+/** The last known index, so the first paint needs no network at all. */
+export function cachedIndex() {
+  return storage.get(LS_TREE) || {};
+}
+
+/**
+ * One poll: refresh the index of every run. This is the ONLY rate-limited call
+ * in the app, which is why `main.js` puts a throttle around exactly this.
+ *
+ * @returns {{changed: boolean, index: Object, truncated: boolean}} `changed` is
+ *   false on a 304, in which case `index` is the cached one — still usable.
+ */
+export async function refreshIndex() {
+  const tree = await fetchTree(storage.get(LS_TREE_ETAG));
+  if (!tree) return { changed: false, index: cachedIndex(), truncated: false };
+
+  const index = buildIndex(tree.entries);
+
+  // Only remember the ETag if the index itself was persisted. Otherwise a reload
+  // would send the ETag, get a 304, and have no idea what runs exist.
+  if (storage.set(LS_TREE, index)) storage.set(LS_TREE_ETAG, tree.etag);
+  else storage.remove(LS_TREE_ETAG);
+
+  return { changed: true, index, truncated: tree.truncated };
+}
+
+/** The run to show when the URL doesn't ask for one: whichever moved last. */
+export function defaultRun(index) {
+  const names = Object.keys(index);
+  if (!names.length) return null;
+  return names.reduce((a, b) => (index[b].latest > index[a].latest ? b : a));
+}
+
+/** Has this run had a ping recently enough to still be underway? */
+export function isLive(record, now = Date.now()) {
+  return Boolean(record) && now - record.latest < CONFIG.liveMs;
+}
+
+/** Reads one run's last known points from the cache, for an instant first paint. */
+export function loadCache(run) {
+  return run ? storage.get(keysFor(run).points) || {} : {};
 }
 
 /**
@@ -72,11 +160,18 @@ export async function listDir(path, etag) {
  * NOT subject to the API's 60 requests/hour limit. A brand-new path can't be
  * stale in the CDN, so there's no freshness concern.
  *
+ * The URL is built rather than read off the listing: a tree entry carries only
+ * a path. This is byte-for-byte the `download_url` the Contents API returns,
+ * `+` in the UTC offset included — raw.githubusercontent.com wants it literal.
+ *
  * @returns a point record, or null if the file isn't usable.
  */
-export async function fetchPoint(entry) {
-  const res = await fetch(entry.download_url, { cache: 'force-cache' });
-  if (!res.ok) throw new Error(`${entry.name}: HTTP ${res.status}`);
+export async function fetchPoint(run, name, sha) {
+  const { owner, repo, branch, dir } = CONFIG;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${run}/${name}`;
+
+  const res = await fetch(url, { cache: 'force-cache' });
+  if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
   const body = await res.json();
 
   // Only lat/lon are guaranteed. Older files carry msg/img, newer ones btry.
@@ -84,96 +179,37 @@ export async function fetchPoint(entry) {
   const lon = Number(body.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
-  const t = parseTime(entry.name);
-  if (Number.isNaN(t)) return null;
-
-  const point = { name: entry.name, sha: entry.sha, t, lat, lon };
+  const point = { name, sha, t: parseTime(name), lat, lon };
   if (Number.isFinite(body.btry)) point.btry = Number(body.btry);
   if (body.msg) point.msg = String(body.msg);
   if (body.img) point.img = String(body.img);
   return point;
 }
 
-/** Reads one run's last known points from the cache, for an instant first paint. */
-export function loadCache(run) {
-  return storage.get(keysFor(run).points) || {};
-}
-
-/** The last known run names, so the picker is populated before any request lands. */
-export function cachedRuns() {
-  return storage.get(LS_RUNS) || [];
-}
-
 /**
- * The runs available to switch between, i.e. the subdirectories of `locations/`.
+ * Fills in one run's points from the index: diff against the cache, download
+ * only what's genuinely new.
  *
- * Kept in its own cache namespace because it's the parent listing, and a run's
- * own poll never sees its siblings. Costs one conditional request, so after the
- * first ever load this is a 304 and free.
+ * Every request this makes goes to the CDN, so it is FREE against the API's
+ * hourly budget. That's what lets a run you've never opened load instantly off
+ * a cached index — no poll, no throttle, no waiting.
  *
- * @returns {Promise<string[]>}
+ * @returns {Promise<Object>} name -> point record, for the whole run.
  */
-export async function listRuns() {
-  const cached = storage.get(LS_RUNS);
-  const fetchedAt = storage.get(LS_RUNS_AT) || 0;
-
-  // Runs appear when you create a race, not every four minutes. Without this the
-  // picker cost a request on EVERY page load — doubling what a reload spends,
-  // since a warm poll returns 304 and so can't supply the names itself.
-  if (cached && Date.now() - fetchedAt < CONFIG.runsTtlMs) return cached;
-
-  const listing = await listDir(CONFIG.dir, storage.get(LS_RUNS_ETAG));
-  if (!listing) {
-    // Unchanged upstream. Restart the clock so a 304 isn't re-paid next load.
-    storage.set(LS_RUNS_AT, Date.now());
-    return cached || [];
-  }
-
-  if (storage.set(LS_RUNS, listing.dirs)) {
-    storage.set(LS_RUNS_ETAG, listing.etag);
-    storage.set(LS_RUNS_AT, Date.now());
-  } else {
-    storage.remove(LS_RUNS_ETAG);
-  }
-
-  return listing.dirs;
-}
-
-/**
- * One poll for one run: list, diff against that run's cache, fetch only what's
- * genuinely new.
- *
- * @param {string|null} run null polls the unsorted feed at the root.
- * @returns {{changed: boolean, cache: Object, dirs: string[]|null}} `changed` is
- *   false on a 304. `dirs` is non-null only when this poll happened to list the
- *   root, in which case the caller gets the run names for free.
- */
-export async function sync(run = null) {
-  const keys = keysFor(run);
+export async function hydrate(run, index) {
+  const files = index[run]?.files || {};
   const cache = loadCache(run);
-  const listing = await listDir(dirFor(run), storage.get(keys.etag));
 
-  if (!listing) return { changed: false, cache, dirs: null };
-
-  const fresh = listing.files.filter(e => cache[e.name]?.sha !== e.sha);
+  const fresh = Object.entries(files).filter(([name, sha]) => cache[name]?.sha !== sha);
   if (fresh.length) {
-    const fetched = await pool(fresh, CONFIG.concurrency, e =>
-      fetchPoint(e).catch(() => null));   // one bad file must not sink the poll
-    for (const p of fetched) if (p) cache[p.name] = p;
+    const fetched = await pool(fresh, CONFIG.concurrency, ([name, sha]) =>
+      fetchPoint(run, name, sha).catch(() => null));  // one bad file mustn't sink the poll
+    for (const point of fetched) if (point) cache[point.name] = point;
   }
 
   // Mirror deletions, so removing a file upstream removes the dot.
-  const live = new Set(listing.files.map(e => e.name));
-  for (const name of Object.keys(cache)) if (!live.has(name)) delete cache[name];
+  for (const name of Object.keys(cache)) if (!(name in files)) delete cache[name];
 
-  // Only remember the ETag if the points themselves were persisted. Otherwise a
-  // reload would send the ETag, get a 304, and render an empty map.
-  if (storage.set(keys.points, cache)) storage.set(keys.etag, listing.etag);
-  else storage.remove(keys.etag);
-
-  // Polling the root just listed the parent folder, so the picker's cache can
-  // ride along for free instead of costing its own request on the next load.
-  if (!run && storage.set(LS_RUNS, listing.dirs)) storage.set(LS_RUNS_AT, Date.now());
-
-  return { changed: true, cache, dirs: run ? null : listing.dirs };
+  if (run) storage.set(keysFor(run).points, cache);
+  return cache;
 }

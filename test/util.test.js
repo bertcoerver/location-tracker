@@ -171,16 +171,15 @@ test('persistedAt keeps the interval across a reload', async () => {
   assert.equal(calls, 2, 'and one is allowed once the window passes');
 });
 
-test('a different run is never made to wait out another run\'s interval', () => {
+test('persistedAt keys are independent of one another', () => {
   globalThis.localStorage = fakeStorage();
   const now = fakeClock();
   let a = 0, b = 0;
 
-  reloadable(() => a++, now, 'lt.refresh.race-one')()();
-  reloadable(() => b++, now, 'lt.refresh.race-two')()();
+  reloadable(() => a++, now, 'lt.refresh.one')()();
+  reloadable(() => b++, now, 'lt.refresh.two')()();
 
-  // Same instant, so a shared key would have blocked the second one — leaving a
-  // freshly opened run staring at a blank map.
+  // Same instant: a shared key would have blocked the second one.
   assert.equal(a, 1);
   assert.equal(b, 1);
 });

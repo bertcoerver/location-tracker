@@ -1,12 +1,13 @@
 // The status panel, the run picker and the follow button — all DOM, no map, no network.
 
-import { ago, fmtClock } from './util.js';
+import { isLive } from './github.js';
 import { latestOf } from './points.js';
-import { urlFor } from './route.js';
+import { ago, fmtClock } from './util.js';
 
-export function createUi({ onFollowClick, run }) {
+export function createUi({ onFollowClick, onRunPick }) {
   const el = id => document.getElementById(id);
-  const titleEl   = el('title');
+  const titleEl   = el('title-text');
+  const liveEl    = el('live');
   const countEl   = el('count');
   const updatedEl = el('updated-text');
   const errorEl   = el('error');
@@ -14,15 +15,11 @@ export function createUi({ onFollowClick, run }) {
   const runEl     = el('run');
 
   let points = [];
+  let index = {};
+  let run = null;
 
   followEl.addEventListener('click', onFollowClick);
-
-  // Switching run changes the URL, so just navigate: a fresh load reads the new
-  // run out of the URL and paints from its own cache. Nothing to tear down.
-  runEl.addEventListener('change', () => { location.href = urlFor(runEl.value || null); });
-
-  titleEl.textContent = run || 'Location Tracker';
-  document.title = run ? `${run} · Location Tracker` : 'Location Tracker';
+  runEl.addEventListener('change', () => onRunPick(runEl.value));
 
   function renderCount(state) {
     const n = points.length;
@@ -30,8 +27,35 @@ export function createUi({ onFollowClick, run }) {
       const plural = n === 1 ? '' : 's';
       countEl.innerHTML =
         `${n.toLocaleString()} <small>point${plural} &middot; last ${ago(latestOf(points).t)}</small>`;
+    } else if (state === 'loading') {
+      countEl.innerHTML = '&mdash;';
     } else {
-      countEl.innerHTML = state === 'loading' ? '&mdash;' : '<small>No locations yet</small>';
+      countEl.innerHTML = run ? '<small>No locations yet</small>' : '<small>No runs yet</small>';
+    }
+  }
+
+  /**
+   * Rebuild the picker. Newest run first, so whatever is happening now is at the
+   * top, and a live one is marked — a plain `<select>` can't be styled per
+   * option in any portable way, so the marker has to be in the text.
+   *
+   * Re-rendered on a timer as well as on new data, so a run stops claiming to be
+   * live an hour after its last ping without waiting for a poll.
+   */
+  function renderRuns() {
+    const now = Date.now();
+    const names = Object.keys(index).sort((a, b) => index[b].latest - index[a].latest);
+
+    liveEl.hidden = !isLive(index[run], now);
+
+    // One run is not a choice. Two are.
+    runEl.parentElement.hidden = names.length < 2;
+    if (names.length < 2) return;
+
+    runEl.innerHTML = '';
+    for (const name of names) {
+      const label = isLive(index[name], now) ? `● ${name}` : name;
+      runEl.add(new Option(label, name, false, name === run));
     }
   }
 
@@ -41,22 +65,19 @@ export function createUi({ onFollowClick, run }) {
       renderCount(document.body.dataset.state);
     },
 
-    /**
-     * @param {string[]} runs subfolder names. The picker stays hidden until
-     *   there's somewhere to go, so a repo with no runs looks exactly as before.
-     */
-    setRuns(runs) {
-      // A run named in the URL but missing upstream still belongs in the list,
-      // otherwise the picker would silently show the wrong selection.
-      const names = run && !runs.includes(run) ? [run, ...runs] : runs;
-      if (!names.length) return;
+    /** @param {string|null} next the run now on screen, null when there are none. */
+    setRun(next) {
+      run = next;
+      titleEl.textContent = run || 'Location Tracker';
+      document.title = run ? `${run} · Location Tracker` : 'Location Tracker';
+      renderRuns();
+    },
 
-      runEl.innerHTML = '';
-      for (const [value, label] of [['', 'Unsorted'], ...names.map(n => [n, n])]) {
-        const option = new Option(label, value, false, value === (run || ''));
-        runEl.add(option);
-      }
-      runEl.parentElement.hidden = false;
+    /** @param {Object} next the run index: name -> { files, latest }. */
+    setRuns(next, current) {
+      index = next;
+      run = current;
+      renderRuns();
     },
 
     /** @param {'loading'|'ok'|'error'} state drives the coloured dot via CSS. */
@@ -79,9 +100,10 @@ export function createUi({ onFollowClick, run }) {
       followEl.setAttribute('aria-pressed', String(on));
     },
 
-    /** Keep "last 3m ago" honest between polls. */
+    /** Keep "last 3m ago" honest between polls — and the live markers with it. */
     refreshRelativeTime() {
       if (points.length) renderCount(document.body.dataset.state);
+      renderRuns();
     }
   };
 }

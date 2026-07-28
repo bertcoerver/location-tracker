@@ -7,28 +7,30 @@ A phone drops one small JSON file per location ping into [`locations/`](location
 
 ## Runs
 
-Pings are grouped into one subfolder of [`locations/`](locations/) per run:
+Every ping belongs to a run — one subfolder of [`locations/`](locations/) per race:
 
 ```
 locations/
   test/                 an existing run — /?run=test
   vendee-10k/           add a folder, get a map
-  2026-07-28T…json      loose files land here — /
 ```
-
-Pick one with the `run` query parameter, and the map shows only that folder:
 
 | URL | Shows |
 |---|---|
-| `/` | loose files sitting directly in `locations/` — the unsorted feed |
-| `/?run=test` | `locations/test/` |
+| `/` | whichever run pinged most recently, and it **keeps following** — a new race takes over the plain link as soon as it starts |
+| `/?run=test` | `locations/test/`, pinned; never overridden |
 | `/?run=locations/test` | the same thing, so you can paste a path straight from GitHub |
 
-**Adding a run is just making a folder** — no config, no code. A picker in the corner
-lists whatever subfolders exist, and each run keeps its own independent cache, so
-switching between them never refetches points you already have.
+**Adding a run is just making a folder** — no config, no code. The picker lists
+whatever subfolders exist, newest first, and hides itself when there's only one.
+A run that has pinged within the last hour is marked live, with a `●` in the picker
+and a dot beside the title.
 
-An unknown or malformed `run` falls back to the unsorted feed rather than erroring.
+A file sitting loose in `locations/` belongs to no run and is never shown. An unknown
+or malformed `run` falls back to the newest run rather than erroring.
+
+Each run keeps its own point cache, and **switching runs costs no API requests at all**
+— see below.
 
 ## Data format
 
@@ -52,18 +54,29 @@ handles files that carry any, all, or none of them. Files are never edited once 
 Re-downloading every file on a timer would not scale, so the page only ever fetches what it does
 not already have:
 
-1. **One conditional request per poll** to the GitHub Contents API, sent with `If-None-Match`.
-   When nothing has changed GitHub answers `304 Not Modified`, so no body is transferred.
-   (A 304 still *counts* against the rate limit — measured, despite what the docs say. See
-   "Rate limit" below.)
-2. **Diff against `localStorage`**, which caches each point keyed by filename + blob SHA. Because
+1. **One conditional request per poll**, to the Git Trees API:
+   `GET /repos/…/git/trees/main:locations?recursive=1`, sent with `If-None-Match`. When nothing has
+   changed GitHub answers `304 Not Modified`, so no body is transferred. (A 304 still *counts*
+   against the rate limit — measured, despite what the docs say. See "Rate limit" below.)
+2. **Build the index** from that one response. Because a ping's capture time is in its *filename*,
+   the listing alone says which runs exist, when each last moved, and what's in the one on screen.
+   That is why the request count doesn't grow with the number of runs.
+3. **Diff against `localStorage`**, which caches each point keyed by filename + blob SHA. Because
    files are immutable, a cached entry is never refetched.
-3. **Fetch only the new files** from `raw.githubusercontent.com`, which is not subject to the
+4. **Fetch only the new files** from `raw.githubusercontent.com`, which is not subject to the
    API's 60 requests/hour limit.
 
 Steady state is one cheap request every 240 s plus one ~70-byte fetch per new point. Reloading the
 page costs a single `304` and zero data fetches. Polling pauses while the tab is hidden and
 resumes on focus, subject to the 30 s floor described under "Rate limit".
+
+Steps 1–2 are the only rate-limited work, and they're independent of which run you're looking at.
+So **opening a run costs zero API requests**: the cached index already lists its files, and their
+bodies come from the CDN. Switching runs can never rate-limit you.
+
+The trade is response size. A tree listing covers every ping in the repo, not one folder, so a
+changed poll transfers roughly 200 bytes per ping ever recorded. At race-day volumes that is tens
+of kilobytes; see "Known limit" for where it stops being reasonable.
 
 ### Rate limit
 
@@ -89,8 +102,6 @@ one office is not. Four safeguards keep a tab from spending faster than that:
 - **That interval is persisted**, so it survives a page reload — otherwise mashing the browser
   refresh button reset it every time, which was the cheapest way to get rate limited. It's keyed
   per run, so opening a run you haven't viewed still loads immediately.
-- **The run list is cached for `runsTtlMs` (1 hour)** and refreshed for free whenever the root feed
-  is polled. Subfolders appear when you create a race, not every four minutes.
 - **Hidden tabs don't poll at all.**
 
 Measured cost of one page load, warm cache:
@@ -99,7 +110,8 @@ Measured cost of one page load, warm cache:
 |---|---|
 | Reload within 30 s | **0** — repainted from cache |
 | Reload after 30 s | **1** |
-| Cold load of a run never viewed | 2 |
+| Cold load, empty cache | **1** |
+| Switching to a run you've never opened | **0** |
 
 Trading latency for headroom is a one-line change to `pollMs` in [`src/config.js`](src/config.js).
 Going further means removing the API from the read path entirely — a GitHub Action that aggregates
@@ -108,11 +120,13 @@ of delay before a new ping is visible.
 
 ### Known limit
 
-A Contents API directory listing returns at most **1000 entries**, roughly 3.5 days of pings at the
-current 5-minute cadence — though that's now per run, so a race would have to last three days to
-hit it. When it is reached, add a GitHub Action that appends each ping into a compact
-`<run>/index.json`; only `listDir()` in [`src/github.js`](src/github.js) needs to change, and it's
-marked in the source.
+A tree response is capped at **100,000 entries / 7 MB**, after which GitHub sets `truncated` and
+silently drops the rest — roughly a year of pings at the current 5-minute cadence, and the page
+says so in the status panel rather than quietly showing a partial map. Response size will get
+uncomfortable well before that.
+
+When it does, add a GitHub Action that appends each ping into a compact `<run>/index.json`; only
+`fetchTree()` in [`src/github.js`](src/github.js) needs to change, and it's marked in the source.
 
 ## Project structure
 
@@ -121,8 +135,8 @@ index.html          markup + all CSS (the colour tokens live here)
 src/
   main.js           entry point: wires everything together, owns the poll loop
   config.js         repo coordinates, poll interval — the only file to edit
-  route.js          which run the URL asks for, and where its files live
-  github.js         data layer: listing, fetching, the incremental cache
+  route.js          which run the URL pins, if any
+  github.js         data layer: the tree request, the run index, the point cache
   points.js         cache -> sorted array, time position, bounding box
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
@@ -170,9 +184,10 @@ npm test
 
 Uses Node's built-in test runner — no dependencies, no `npm install`. The suite
 runs offline against a fake GitHub and covers the caching contract that the whole
-design rests on: a cold start downloads everything once, an unchanged poll
-downloads nothing, one new point upstream downloads exactly one file, and
-switching between runs doesn't invalidate either one's cache.
+design rests on: a cold start costs one API request and downloads every file once,
+an unchanged poll downloads nothing, one new point upstream downloads exactly one
+file, opening a run for the first time costs no API request at all, and loose files
+never surface as a run.
 
 ## Publishing
 

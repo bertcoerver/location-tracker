@@ -114,6 +114,9 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
       }
     },
 
+    /** Fit the next setPoints() again — a different run is a different place. */
+    refit() { fitted = false; },
+
     isFollowing: () => follow,
 
     /** Turn following back on and fly to the newest fix. */

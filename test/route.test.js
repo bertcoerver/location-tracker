@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dirFor, parseRun, urlFor } from '../src/route.js';
+import { parseRun, urlFor } from '../src/route.js';
 
-test('no run parameter means the unsorted root feed', () => {
+test('no run parameter means "pick the newest run"', () => {
   assert.equal(parseRun(''), null);
   assert.equal(parseRun('?follow=1'), null);
   assert.equal(parseRun('?run='), null);
@@ -20,16 +20,11 @@ test('the full repo path form is accepted too', () => {
   assert.equal(parseRun('?run=/locations/vendee-10k/'), 'vendee-10k');
 });
 
-test('traversal and other unusable names resolve to the root, never to a path', () => {
+test('traversal and other unusable names unpin, never reach a path', () => {
   // The names below must not survive into a fetch URL under any cleaning.
   for (const bad of ['..', '../../etc', 'a/b', 'a b', '.hidden', '%2e%2e', '']) {
     assert.equal(parseRun(`?run=${encodeURIComponent(bad)}`), null, bad);
   }
-});
-
-test('dirFor maps a run to its folder, and null to the root', () => {
-  assert.equal(dirFor('vendee-10k'), 'locations/vendee-10k');
-  assert.equal(dirFor(null), 'locations');
 });
 
 test('urlFor round-trips through parseRun', () => {

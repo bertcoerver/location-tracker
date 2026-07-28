@@ -82,6 +82,18 @@
     text-transform: uppercase;
     color: var(--text-muted);
   }
+  /* The picker marks live runs too, but someone with a single run never opens
+     it — this is where they see that the tracker is actually moving. */
+  #live {
+    display: inline-block;
+    width: 6px; height: 6px;
+    margin-left: 5px;
+    vertical-align: 1px;
+    border-radius: 50%;
+    background: #1baf7a;
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  #live[hidden] { display: none; }
   #count {
     font-variant-numeric: tabular-nums;
     font-size: 21px;
@@ -212,7 +224,10 @@
 <div id="map"></div>
 
 <div id="status" class="panel">
-  <h1 id="title">Location Tracker</h1>
+  <h1 id="title">
+    <span id="title-text">Location Tracker</span>
+    <span id="live" title="Pinged within the last hour" hidden></span>
+  </h1>
   <div id="count">&mdash;</div>
   <div id="updated"><span id="dot"></span><span id="updated-text">Loading&hellip;</span></div>
   <div id="run-picker" hidden>
