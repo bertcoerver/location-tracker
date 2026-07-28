@@ -4,7 +4,8 @@
 // IMMUTABLE — the tracker only ever adds new ones — which is what makes the
 // cache below correct: a filename we've already seen never needs refetching.
 
-import { CONFIG, LS_POINTS, LS_ETAG } from './config.js';
+import { CONFIG, keysFor, LS_RUNS, LS_RUNS_ETAG } from './config.js';
+import { dirFor } from './route.js';
 import { parseTime, pool, storage } from './util.js';
 
 /** Thrown when GitHub says we've spent our hourly budget. Carries when to retry. */
@@ -17,7 +18,7 @@ export class RateLimitError extends Error {
 }
 
 /**
- * Lists the remote directory, conditionally.
+ * Lists one repo directory, conditionally.
  *
  * Returns `null` when GitHub answers 304 Not Modified — meaning nothing has
  * changed, no body was transferred, and (per GitHub's docs) the request did not
@@ -27,13 +28,16 @@ export class RateLimitError extends Error {
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ THIS IS THE FUNCTION TO REPLACE when the repo outgrows the API.         │
  * │ A Contents API listing returns at most 1000 entries — about 3.5 days at │
- * │ a 5-minute ping cadence. The migration is a GitHub Action that appends  │
- * │ each ping into a compact `data/index.json`; this function then becomes  │
- * │ a single conditional fetch of that file and everything else stays put.  │
+ * │ a 5-minute ping cadence, though splitting pings across runs pushes that │
+ * │ out per run. The migration is a GitHub Action that appends each ping    │
+ * │ into a compact `<run>/index.json`; this function then becomes a single  │
+ * │ conditional fetch of that file and everything else stays put.           │
  * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * @returns {{files: Array, dirs: string[], etag: string}|null}
  */
-export async function listRemoteFiles(etag) {
-  const url = `https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/contents/${CONFIG.dir}`;
+export async function listDir(path, etag) {
+  const url = `https://api.github.com/repos/${CONFIG.owner}/${CONFIG.repo}/contents/${path}`;
   const headers = { Accept: 'application/vnd.github+json' };
   if (etag) headers['If-None-Match'] = etag;
 
@@ -41,16 +45,22 @@ export async function listRemoteFiles(etag) {
 
   if (res.status === 304) return null;
 
+  // An empty run folder doesn't exist as far as git is concerned. That's not an
+  // error, it's just a run with no pings yet.
+  if (res.status === 404) return { files: [], dirs: [], etag: null };
+
   if (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
     throw new RateLimitError(reset || Date.now() + 15 * 60000);
   }
   if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
 
-  const entries = (await res.json())
-    .filter(e => e.type === 'file' && e.name.endsWith('.json'));
-
-  return { entries, etag: res.headers.get('etag') };
+  const entries = await res.json();
+  return {
+    files: entries.filter(e => e.type === 'file' && e.name.endsWith('.json')),
+    dirs:  entries.filter(e => e.type === 'dir').map(e => e.name),
+    etag:  res.headers.get('etag')
+  };
 }
 
 /**
@@ -80,23 +90,53 @@ export async function fetchPoint(entry) {
   return point;
 }
 
-/** Reads the last known set of points from the cache, for an instant first paint. */
-export function loadCache() {
-  return storage.get(LS_POINTS) || {};
+/** Reads one run's last known points from the cache, for an instant first paint. */
+export function loadCache(run) {
+  return storage.get(keysFor(run).points) || {};
+}
+
+/** The last known run names, so the picker is populated before any request lands. */
+export function cachedRuns() {
+  return storage.get(LS_RUNS) || [];
 }
 
 /**
- * One poll: list, diff against the cache, fetch only what's genuinely new.
+ * The runs available to switch between, i.e. the subdirectories of `locations/`.
  *
- * @returns {{changed: boolean, cache: Object}} `changed` is false on a 304.
+ * Kept in its own cache namespace because it's the parent listing, and a run's
+ * own poll never sees its siblings. Costs one conditional request, so after the
+ * first ever load this is a 304 and free.
+ *
+ * @returns {Promise<string[]>}
  */
-export async function sync() {
-  const cache = loadCache();
-  const listing = await listRemoteFiles(storage.get(LS_ETAG));
+export async function listRuns() {
+  const cached = storage.get(LS_RUNS) || [];
+  const listing = await listDir(CONFIG.dir, storage.get(LS_RUNS_ETAG));
+  if (!listing) return cached;
 
-  if (!listing) return { changed: false, cache };
+  if (storage.set(LS_RUNS, listing.dirs)) storage.set(LS_RUNS_ETAG, listing.etag);
+  else storage.remove(LS_RUNS_ETAG);
 
-  const fresh = listing.entries.filter(e => cache[e.name]?.sha !== e.sha);
+  return listing.dirs;
+}
+
+/**
+ * One poll for one run: list, diff against that run's cache, fetch only what's
+ * genuinely new.
+ *
+ * @param {string|null} run null polls the unsorted feed at the root.
+ * @returns {{changed: boolean, cache: Object, dirs: string[]|null}} `changed` is
+ *   false on a 304. `dirs` is non-null only when this poll happened to list the
+ *   root, in which case the caller gets the run names for free.
+ */
+export async function sync(run = null) {
+  const keys = keysFor(run);
+  const cache = loadCache(run);
+  const listing = await listDir(dirFor(run), storage.get(keys.etag));
+
+  if (!listing) return { changed: false, cache, dirs: null };
+
+  const fresh = listing.files.filter(e => cache[e.name]?.sha !== e.sha);
   if (fresh.length) {
     const fetched = await pool(fresh, CONFIG.concurrency, e =>
       fetchPoint(e).catch(() => null));   // one bad file must not sink the poll
@@ -104,13 +144,13 @@ export async function sync() {
   }
 
   // Mirror deletions, so removing a file upstream removes the dot.
-  const live = new Set(listing.entries.map(e => e.name));
+  const live = new Set(listing.files.map(e => e.name));
   for (const name of Object.keys(cache)) if (!live.has(name)) delete cache[name];
 
   // Only remember the ETag if the points themselves were persisted. Otherwise a
   // reload would send the ETag, get a 304, and render an empty map.
-  if (storage.set(LS_POINTS, cache)) storage.set(LS_ETAG, listing.etag);
-  else storage.remove(LS_ETAG);
+  if (storage.set(keys.points, cache)) storage.set(keys.etag, listing.etag);
+  else storage.remove(keys.etag);
 
-  return { changed: true, cache };
+  return { changed: true, cache, dirs: run ? null : listing.dirs };
 }

@@ -5,12 +5,37 @@ A phone drops one small JSON file per location ping into [`locations/`](location
 
 **Live map:** https://bertcoerver.github.io/location-tracker/
 
+## Runs
+
+Pings are grouped into one subfolder of [`locations/`](locations/) per run:
+
+```
+locations/
+  test/                 an existing run — /?run=test
+  vendee-10k/           add a folder, get a map
+  2026-07-28T…json      loose files land here — /
+```
+
+Pick one with the `run` query parameter, and the map shows only that folder:
+
+| URL | Shows |
+|---|---|
+| `/` | loose files sitting directly in `locations/` — the unsorted feed |
+| `/?run=test` | `locations/test/` |
+| `/?run=locations/test` | the same thing, so you can paste a path straight from GitHub |
+
+**Adding a run is just making a folder** — no config, no code. A picker in the corner
+lists whatever subfolders exist, and each run keeps its own independent cache, so
+switching between them never refetches points you already have.
+
+An unknown or malformed `run` falls back to the unsorted feed rather than erroring.
+
 ## Data format
 
 One file per fix, named with the capture time as ISO 8601 with **every colon replaced by `_`**:
 
 ```
-locations/2026-07-28T12_06_01+02_00.json
+locations/test/2026-07-28T12_06_01+02_00.json
 ```
 
 The timestamp lives *only* in the filename — there is no time field in the body:
@@ -42,8 +67,9 @@ resumes immediately on focus.
 ### Known limit
 
 A Contents API directory listing returns at most **1000 entries**, roughly 3.5 days of pings at the
-current 5-minute cadence. When that's reached, add a GitHub Action that appends each ping into a
-compact `data/index.json`; only `listRemoteFiles()` in `index.html` needs to change, and it's
+current 5-minute cadence — though that's now per run, so a race would have to last three days to
+hit it. When it is reached, add a GitHub Action that appends each ping into a compact
+`<run>/index.json`; only `listDir()` in [`src/github.js`](src/github.js) needs to change, and it's
 marked in the source.
 
 ## Project structure
@@ -53,6 +79,7 @@ index.html          markup + all CSS (the colour tokens live here)
 src/
   main.js           entry point: wires everything together, owns the poll loop
   config.js         repo coordinates, poll interval — the only file to edit
+  route.js          which run the URL asks for, and where its files live
   github.js         data layer: listing, fetching, the incremental cache
   points.js         cache -> sorted array, time position, bounding box
   map.js            deck.gl instance, camera, follow-latest behaviour
@@ -80,6 +107,7 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - New data field from the phone → `github.js` (`fetchPoint`) and `layers.js` (`tooltipHtml`).
 - New visual layer → `layers.js`, then include it in `pointLayers`.
 - New panel or control → `index.html` for markup/CSS, `ui.js` for behaviour.
+- New URL parameter → `route.js`.
 - Different repo or poll rate → `config.js` only.
 
 ## Running it
@@ -101,7 +129,8 @@ npm test
 Uses Node's built-in test runner — no dependencies, no `npm install`. The suite
 runs offline against a fake GitHub and covers the caching contract that the whole
 design rests on: a cold start downloads everything once, an unchanged poll
-downloads nothing, and one new point upstream downloads exactly one file.
+downloads nothing, one new point upstream downloads exactly one file, and
+switching between runs doesn't invalidate either one's cache.
 
 ## Publishing
 
