@@ -26,6 +26,11 @@ export const CONFIG = {
   snapBackPenalty: 1,
   snapForwardBias: 0.02,
   loopMeters: 250,     // start and finish this close means the course is circular
+  // Metres of elevation change that have to accumulate before a rise or a fall
+  // counts towards the course's ascent. GPX elevations wobble by a metre or two
+  // between adjacent vertices, and summing that wobble is how a 600 m course
+  // comes to report 1,400 m of climb. See course.js.
+  eleThresholdM: 3,
 
   // --- the height profile strip --------------------------------------------
   profileHeight: 104,

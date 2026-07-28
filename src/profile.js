@@ -10,6 +10,7 @@
 
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface } from './colors.js';
+import { pointAt } from './course.js';
 import { fmtDistance, tooltipHtml } from './layers.js';
 import { latestOf } from './points.js';
 
@@ -151,24 +152,21 @@ export function scaleFor(course, width, height) {
   };
 }
 
-/** Elevation of the course at a given distance along it, by linear search hint. */
+/**
+ * Elevation of the course at a given distance along it.
+ *
+ * Kept as its own name because that is what the drawing code is asking for, but
+ * the search itself lives in [course.js](course.js) alongside the other two
+ * questions with the same answer.
+ */
 export function elevationAt(course, distance) {
-  const { cum, path } = course;
-  let lo = 0;
-  let hi = cum.length - 1;
-  while (lo < hi - 1) {
-    const mid = (lo + hi) >> 1;
-    if (cum[mid] <= distance) lo = mid; else hi = mid;
-  }
-  const span = cum[hi] - cum[lo];
-  const t = span > 0 ? (distance - cum[lo]) / span : 0;
-  return path[lo].ele + (path[hi].ele - path[lo].ele) * t;
+  return pointAt(course, distance).ele;
 }
 
 /**
  * @param {HTMLElement} root  the `#profile` panel
  */
-export function createProfile(root) {
+export function createProfile(root, { onHover = () => {} } = {}) {
   const scroller = root.querySelector('#profile-scroll');
   const canvas = root.querySelector('#profile-canvas');
   const readout = root.querySelector('#profile-readout');
@@ -180,6 +178,10 @@ export function createProfile(root) {
   let course = null;
   let points = [];
   let hover = null;      // distance in metres under the cursor, or null
+  // Whether the cursor is on the strip itself. The map can also drive `hover`,
+  // and without this the two would overwrite each other on every mouse move —
+  // whoever the pointer is actually over has to win.
+  let owned = false;
 
   /**
    * Show the strip only when there is something to show. A course without
@@ -245,7 +247,7 @@ export function createProfile(root) {
     ctx.stroke();
 
     drawWaypoints(scale, height);
-    drawHover(scale, width, height);
+    drawHover(scale, width, height, ridge);
     drawPoints(scale);
   }
 
@@ -295,17 +297,28 @@ export function createProfile(root) {
     }
   }
 
-  function drawHover(scale, width, height) {
+  function drawHover(scale, width, height, ridge) {
     if (hover === null) return;
-    const x = Math.round(scale.x(hover)) + 0.5;
-    if (x < 0 || x > width) return;
+    const column = Math.round(scale.x(hover));
+    if (column < 0 || column > width) return;
+    const x = column + 0.5;
+    const ink = `rgb(${accent().join(',')})`;
 
     ctx.beginPath();
     ctx.moveTo(x, PAD_TOP - 4);
     ctx.lineTo(x, height - PAD_BOTTOM + 4);
-    ctx.strokeStyle = `rgb(${accent().join(',')})`;
+    ctx.strokeStyle = ink;
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // A bead where the crosshair meets the terrain, read off the SMOOTHED series
+    // the line was actually drawn from — the raw elevation there can be a couple
+    // of metres away, and a bead floating beside its own line looks like a bug.
+    const ele = ridge[Math.min(ridge.length - 1, Math.max(0, column))];
+    ctx.beginPath();
+    ctx.arc(x, scale.y(ele), 3, 0, Math.PI * 2);
+    ctx.fillStyle = ink;
+    ctx.fill();
   }
 
   /**
@@ -337,6 +350,7 @@ export function createProfile(root) {
 
   canvas.addEventListener('pointermove', event => {
     if (!visible()) return;
+    owned = true;
     const rect = canvas.getBoundingClientRect();
     const scale = scaleFor(course, rect.width, rect.height);
     const x = event.clientX - rect.left;
@@ -353,13 +367,16 @@ export function createProfile(root) {
       readout.textContent = `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
       hideTip();
     }
+    onHover(hover);
     draw();
   });
 
   function leave() {
+    owned = false;
     hover = null;
     readout.textContent = '';
     hideTip();
+    onHover(null);
     draw();
   }
 
@@ -388,6 +405,27 @@ export function createProfile(root) {
 
     setPoints(next) {
       points = next;
+      draw();
+    },
+
+    /**
+     * Mark a distance along the course, or clear it with null. This is the map
+     * pointing at the strip.
+     *
+     * Ignored while the cursor is on the strip itself: the pointer is only ever
+     * in one place, and whichever view it is over owns the crosshair.
+     *
+     * @param {number|null} along metres along the course.
+     */
+    setHover(along) {
+      if (owned || !visible()) return;
+      const next = along === null || along === undefined ? null : along;
+      if (next === hover) return;
+
+      hover = next;
+      readout.textContent = hover === null
+        ? ''
+        : `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
       draw();
     },
 

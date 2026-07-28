@@ -130,6 +130,34 @@
   #dot[data-live="true"]     { animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
 
+  /* Time since the first ping, mirroring the status panel across the window.
+     Ticks while the run is live and freezes at the total once it goes quiet —
+     a clock still counting after the finish claims the race is still on. */
+  #clock {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+    padding: 8px 13px 9px;
+    text-align: right;
+  }
+  #clock[hidden] { display: none; }
+  #clock-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  #clock-time {
+    /* Tabular figures, or every second of a ticking clock shuffles the digits
+       sideways as the glyph widths change. */
+    font-variant-numeric: tabular-nums;
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1.2;
+    margin-top: 1px;
+    color: var(--text-primary);
+  }
+
   #run-picker { margin-top: 8px; }
   #run-picker[hidden] { display: none; }
   #run {
@@ -244,6 +272,11 @@
     <select id="run" aria-label="Run"></select>
   </div>
   <div id="error"></div>
+</div>
+
+<div id="clock" class="panel" hidden>
+  <div id="clock-label">Elapsed</div>
+  <div id="clock-time">0:00:00</div>
 </div>
 
 <div id="profile" class="panel" hidden>

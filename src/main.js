@@ -9,6 +9,7 @@ import {
 import { parseGpx } from './gpx.js';
 import { buildPoints } from './points.js';
 import { applySnaps, snapAll } from './snap.js';
+import { deriveStats } from './stats.js';
 import { createMap } from './map.js';
 import { createProfile } from './profile.js';
 import { createUi } from './ui.js';
@@ -30,12 +31,19 @@ let course = null;
 let courseSha = null;
 let courseError = '';
 
+// The map and the height strip are two views of one run, so pointing at a place
+// in either marks it in the other. Each only reports what its OWN pointer is
+// over, and each ignores the other while it holds the cursor itself, so the two
+// callbacks below can't chase each other in a loop.
 const map = createMap(document.getElementById('map'), {
   // The map turns following off when the user pans; keep the button in sync.
-  onFollowChange: on => ui.setFollowPressed(on)
+  onFollowChange: on => ui.setFollowPressed(on),
+  onCourseHover: along => profile.setHover(along)
 });
 
-const profile = createProfile(document.getElementById('profile'));
+const profile = createProfile(document.getElementById('profile'), {
+  onHover: along => map.setHover(along)
+});
 
 const ui = createUi({
   // The ticker is the Follow button now. Clicking it always means "take me to
@@ -64,6 +72,10 @@ function show(cache) {
     if (snapped) storage.set(key, snaps);
     applySnaps(points, snaps);
   }
+
+  // Elapsed time and climb, hung off each point for the tooltip. Cheap, and it
+  // depends on the snaps above, so it goes here rather than being cached.
+  deriveStats(points, course);
 
   map.setPoints(points);
   profile.setPoints(points);
@@ -198,6 +210,10 @@ refresh();
 
 setInterval(() => { if (!document.hidden) refresh(); }, CONFIG.pollMs);
 setInterval(() => ui.refreshRelativeTime(), 15000);
+// The elapsed clock separately, and faster: a seconds display that only moves
+// every 15 s is a broken clock, and running the 15 s job at 1 Hz would rebuild
+// the run picker sixty times a minute to no purpose.
+setInterval(() => ui.tickClock(), 1000);
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 addEventListener('focus', refresh);

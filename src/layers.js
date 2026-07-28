@@ -2,7 +2,7 @@
 // index.html, not an import.
 
 import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
-import { escapeHtml, fmtTime } from './util.js';
+import { escapeHtml, fmtDuration, fmtTime } from './util.js';
 import { latestOf, posOf } from './points.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
@@ -45,6 +45,10 @@ export function courseLayers(course) {
       id: 'course',
       data: course.segments,
       getPath: seg => seg.map(p => [p.lon, p.lat]),
+      // Pickable not for a tooltip — it hasn't got one — but so that hovering
+      // the route reports a coordinate, which drives the height profile's
+      // crosshair. `makeTooltip` returns null for this layer by id.
+      pickable: true,
       widthUnits: 'pixels',
       getWidth: 3,
       widthMinPixels: 2,
@@ -168,6 +172,35 @@ export function pointLayers(points, pulse) {
   ];
 }
 
+/**
+ * The place on the course the height profile is being hovered over.
+ *
+ * A hollow ring rather than a filled dot: it has to sit on top of the route
+ * without hiding whatever ping might be underneath it, and it is a cursor, not
+ * a reading.
+ *
+ * @param {[number, number]|null} position lon/lat, or null when nothing is hovered.
+ */
+export function hoverLayers(position) {
+  if (!position) return [];
+
+  return [new deck.ScatterplotLayer({
+    id: 'hover',
+    data: [position],
+    radiusUnits: 'pixels',
+    getPosition: p => p,
+    getRadius: 8,
+    filled: false,
+    stroked: true,
+    lineWidthUnits: 'pixels',
+    getLineWidth: 2,
+    getLineColor: [...accent(), 255],
+    // The ring follows the cursor, so its position changes without the array
+    // identity saying anything useful about it.
+    updateTriggers: { getPosition: String(position) }
+  })];
+}
+
 /** Tooltip markup for one fix. Pure and DOM-free, so it's directly testable. */
 export function tooltipHtml(point, isLatest) {
   const rows = [
@@ -180,6 +213,24 @@ export function tooltipHtml(point, isLatest) {
     rows.push(`<div class="r">${fmtDistance(point.snap.along)} in &middot; ` +
       `snapped ${Math.round(point.snap.off)} m</div>`);
   }
+
+  // How long the run had been going when this fix arrived, and how long since
+  // the one before it — a long gap is usually a phone that lost signal, which is
+  // worth seeing next to the fix that ended it.
+  const stats = point.stats;
+  if (stats) {
+    const times = [`${fmtDuration(stats.sinceStart)} in`];
+    if (stats.sincePrev !== undefined) times.push(`${fmtDuration(stats.sincePrev)} since last`);
+    rows.push(`<div class="r">${times.join(' &middot; ')}</div>`);
+  }
+  // Climb, when the course has elevation and this fix landed on it. Totals
+  // first: that's the number the run is measured by, and the leg since the last
+  // ping is the detail underneath it.
+  if (stats && stats.upTotal !== undefined) {
+    rows.push(`<div class="r">${climbHtml(stats.upTotal, stats.downTotal)}</div>`);
+    rows.push(`<div class="r">${climbHtml(stats.up, stats.down)} since last</div>`);
+  }
+
   if (point.btry !== undefined) rows.push(`<div class="r">Battery ${point.btry}%</div>`);
   if (point.msg) rows.push(`<div class="m">${escapeHtml(point.msg)}</div>`);
   if (point.img) rows.push(`<img src="${encodeURI(point.img)}" alt="">`);
@@ -196,6 +247,12 @@ export function waypointTooltipHtml(waypoint) {
   return rows.join('');
 }
 
+/** "&uarr; 1,240 m &darr; 980 m" — arrows rather than +/-, which reads as arithmetic. */
+function climbHtml(up, down) {
+  const m = v => Math.round(v).toLocaleString();
+  return `&uarr;&#8202;${m(up)} m &nbsp;&darr;&#8202;${m(down)} m`;
+}
+
 /** "850 m" / "12.4 km" — the same wording the profile readout uses. */
 export function fmtDistance(m) {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
@@ -203,8 +260,12 @@ export function fmtDistance(m) {
 
 /** deck.gl's getTooltip callback, bound to a live accessor for the current points. */
 export function makeTooltip(getPoints) {
-  return ({ object }) => {
+  return ({ object, layer }) => {
     if (!object) return null;
+    // The route is pickable so that hovering it can move the profile crosshair.
+    // What comes back is a segment — an array of vertices, not a fix — and
+    // describing it as one would read `undefined.toFixed`.
+    if (layer?.id === 'course') return null;
     if (object.kind === 'waypoint') {
       return { html: waypointTooltipHtml(object), className: 'tip' };
     }

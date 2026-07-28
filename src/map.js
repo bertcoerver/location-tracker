@@ -2,13 +2,17 @@
 // Data comes in through setPoints(); nothing here knows about GitHub.
 
 import { CONFIG } from './config.js';
-import { courseBounds } from './course.js';
-import { basemapLayer, courseLayers, makeTooltip, pointLayers } from './layers.js';
+import { courseBounds, courseHoverAt, pointAt } from './course.js';
+import { basemapLayer, courseLayers, hoverLayers, makeTooltip, pointLayers } from './layers.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
 
-export function createMap(container, { onFollowChange = () => {} } = {}) {
+export function createMap(container, {
+  onFollowChange = () => {},
+  onCourseHover = () => {}
+} = {}) {
   let points = [];
   let course = null;
+  let hover = null;      // [lon, lat] on the course, from the profile strip
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
   let fitted = false;
@@ -17,7 +21,12 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
 
   /** The whole stack, in draw order. One place, so nothing can disagree. */
   function allLayers() {
-    return [basemapLayer(), ...courseLayers(course), ...pointLayers(points, pulse)];
+    return [
+      basemapLayer(),
+      ...courseLayers(course),
+      ...pointLayers(points, pulse),
+      ...hoverLayers(hover)
+    ];
   }
 
   const deckgl = new deck.DeckGL({
@@ -26,6 +35,23 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
     controller: true,
     layers: [basemapLayer()],
     getTooltip: makeTooltip(() => points),
+
+    /**
+     * Report what the cursor is pointing at on the course, so the height profile
+     * can mark the same place. Fires for every layer, including misses, which is
+     * how the crosshair learns to go away again.
+     */
+    onHover: info => {
+      if (!course) return;
+      // A ping already knows where it sits on the course; no need to re-solve
+      // geometry that snap.js worked out with the benefit of history.
+      if (info.object?.snap) return onCourseHover(info.object.snap.along);
+      if (info.layer?.id === 'course' && info.coordinate) {
+        return onCourseHover(courseHoverAt(course, info.coordinate[0], info.coordinate[1]));
+      }
+      onCourseHover(null);
+    },
+
     onViewStateChange: ({ viewState: next, interactionState }) => {
       const touched = interactionState &&
         (interactionState.isDragging || interactionState.isPanning || interactionState.isZooming);
@@ -157,6 +183,8 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
     setCourse(next) {
       const changed = (course?.sha ?? null) !== (next?.sha ?? null);
       course = next;
+      // A distance along the old course means nothing on the new one.
+      if (changed) hover = null;
 
       if (changed && next && follow) {
         const fit = fitView(points);
@@ -165,6 +193,26 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
           return setViewState(fit, true);
         }
       }
+      render();
+    },
+
+    /**
+     * Mark a distance along the course, or clear it with null. This is the
+     * height strip pointing at the map.
+     *
+     * @param {number|null} along metres along the course.
+     */
+    setHover(along) {
+      let next = null;
+      if (course && along !== null && along !== undefined) {
+        const at = pointAt(course, along);
+        next = [at.lon, at.lat];
+      }
+
+      // Renders run at 60 fps from tick() anyway, but a pointermove that hasn't
+      // changed the ring shouldn't rebuild the layer stack on its own account.
+      if (String(next) === String(hover)) return;
+      hover = next;
       render();
     },
 

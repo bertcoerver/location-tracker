@@ -2,7 +2,7 @@
 
 import { isLive } from './github.js';
 import { latestOf } from './points.js';
-import { ago } from './util.js';
+import { ago, fmtElapsed } from './util.js';
 
 export function createUi({ onRecenter, onRunPick }) {
   const el = id => document.getElementById(id);
@@ -12,6 +12,9 @@ export function createUi({ onRecenter, onRunPick }) {
   const tickerTextEl = el('ticker-text');
   const errorEl  = el('error');
   const runEl    = el('run');
+  const clockEl     = el('clock');
+  const clockTimeEl = el('clock-time');
+  const clockLabelEl = el('clock-label');
 
   let points = [];
   let index = {};
@@ -38,6 +41,30 @@ export function createUi({ onRecenter, onRunPick }) {
   }
 
   /**
+   * Time since the first ping of the run.
+   *
+   * Running while the run is live, frozen at first-to-last once it goes quiet.
+   * A clock that keeps counting after the finish is claiming the race is still
+   * on, which is the one thing this box must never say — so the label changes
+   * with it, and a stopped clock reads "Total" rather than "Elapsed".
+   *
+   * Recomputed from the timestamps every tick rather than counted up, so it
+   * can't drift and a backgrounded tab comes back with the right number.
+   */
+  function renderClock() {
+    const on = points.length > 0;
+    clockEl.hidden = !on;
+    if (!on) return;
+
+    const live = isLive(index[run], Date.now());
+    const from = points[0].t;
+    const to = live ? Date.now() : latestOf(points).t;
+
+    clockLabelEl.textContent = live ? 'Elapsed' : 'Total';
+    clockTimeEl.textContent = fmtElapsed(to - from);
+  }
+
+  /**
    * Rebuild the picker. Newest run first, so whatever is happening now is at the
    * top, and a live one is marked — a plain `<select>` can't be styled per
    * option in any portable way, so the marker has to be in the text.
@@ -53,6 +80,8 @@ export function createUi({ onRecenter, onRunPick }) {
     // last poll worked, and it PULSES while the run is still going. Two dots
     // side by side read as decoration rather than as two separate signals.
     dotEl.dataset.live = String(isLive(index[run], now));
+    // Liveness is also what decides whether the clock runs or shows a total.
+    renderClock();
 
     // One run is not a choice. Two are.
     runEl.parentElement.hidden = names.length < 2;
@@ -69,6 +98,12 @@ export function createUi({ onRecenter, onRunPick }) {
     setPoints(next) {
       points = next;
       renderTicker(document.body.dataset.state);
+      renderClock();
+    },
+
+    /** The seconds hand. Called once a second; it touches one text node. */
+    tickClock() {
+      renderClock();
     },
 
     /** @param {string|null} next the run now on screen, null when there are none. */

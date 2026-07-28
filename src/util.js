@@ -28,6 +28,41 @@ export function ago(ms, now = Date.now()) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+/**
+ * An exact span between two moments: "12s", "4m 12s", "1h 23m".
+ *
+ * Not [`ago`](#ago), which is deliberately coarse because it answers "is this
+ * still warm" about a single moving number. This one sits in a tooltip next to
+ * the timestamp it was measured from, where rounding 4m 12s to "4m" throws away
+ * the part being read.
+ *
+ * Two units at most — an hour and a half is 1h 30m, and nobody wants the
+ * seconds by then.
+ */
+export function fmtDuration(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const rest = s % 60;
+    return rest ? `${m}m ${rest}s` : `${m}m`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  // 59.6 minutes rounding to 60 would read "1h 60m".
+  return m === 60 ? `${h + 1}h` : m ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * A race clock: "0:04:12", "2:14:07". Always h:mm:ss, so the digits sit still
+ * as it ticks rather than shuffling sideways when a unit rolls over.
+ */
+export function fmtElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const pad = n => String(n).padStart(2, '0');
+  return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`;
+}
+
 /** Run `fn` over `items` with at most `n` in flight. Order of results is not guaranteed. */
 export async function pool(items, n, fn) {
   const out = [];

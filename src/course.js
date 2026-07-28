@@ -112,6 +112,7 @@ export function buildCourse(parsed, sha = null) {
   );
 
   const eles = parsed.hasElevation ? path.map(p => p.ele) : [];
+  const { cumUp, cumDown } = climb(parsed.hasElevation ? path : null, n);
 
   return {
     sha,
@@ -122,6 +123,8 @@ export function buildCourse(parsed, sha = null) {
     path,
     xy,
     cum,
+    cumUp,
+    cumDown,
     length,
     proj,
 
@@ -133,6 +136,123 @@ export function buildCourse(parsed, sha = null) {
 
     grid: gridIndex(xy, CONFIG.snapMeters, breaks)
   };
+}
+
+/**
+ * Ascent and descent accumulated from the start to each vertex.
+ *
+ * Not a plain sum of the differences. Consecutive GPX elevations wobble by a
+ * metre or two whatever the ground is doing — barometric drift, or the exporter
+ * rounding — and adding that wobble up is how a flat road comes out as a
+ * mountain range. Reported gains from raw summing are routinely double the real
+ * figure.
+ *
+ * So a change only counts once it has moved `eleThresholdM` clear of the last
+ * committed height, and then the whole move counts. Noise never reaches the
+ * threshold; a real hill crosses it repeatedly on the way up and is recorded in
+ * full, less at most one threshold's worth at the summit where the direction
+ * turns.
+ *
+ * Both arrays come out monotone non-decreasing, which is what makes the
+ * difference between two of them — the climb over a stretch of course — a
+ * meaningful number.
+ *
+ * @param {Array|null} path null when the course has no elevation at all, in
+ *   which case both arrays stay zero and every figure derived from them is
+ *   simply absent rather than wrong.
+ */
+function climb(path, n) {
+  const cumUp = new Float64Array(n);
+  const cumDown = new Float64Array(n);
+  if (!path) return { cumUp, cumDown };
+
+  const threshold = CONFIG.eleThresholdM;
+  let reference = path[0].ele;
+  let up = 0;
+  let down = 0;
+
+  for (let i = 0; i < n; i++) {
+    const ele = path[i].ele;
+    if (ele - reference >= threshold) {
+      up += ele - reference;
+      reference = ele;
+    } else if (reference - ele >= threshold) {
+      down += reference - ele;
+      reference = ele;
+    }
+    cumUp[i] = up;
+    cumDown[i] = down;
+  }
+
+  return { cumUp, cumDown };
+}
+
+/**
+ * The pair of vertices straddling a distance along the course, and how far
+ * between them it falls.
+ *
+ * The one binary search everything positional shares — elevation, coordinates
+ * and climb all ask the same question, and asking it three different ways is how
+ * they end up disagreeing at a vertex boundary.
+ *
+ * @returns {{lo: number, hi: number, t: number}} `t` clamped to 0..1, so a
+ *   distance off either end of the course reads as its first or last vertex
+ *   rather than extrapolating into nonsense.
+ */
+function locate(course, distance) {
+  const { cum } = course;
+  let lo = 0;
+  let hi = cum.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] <= distance) lo = mid; else hi = mid;
+  }
+  const span = cum[hi] - cum[lo];
+  const t = span > 0 ? (distance - cum[lo]) / span : 0;
+  return { lo, hi, t: t < 0 ? 0 : t > 1 ? 1 : t };
+}
+
+/** Where the course is at a given distance along it. */
+export function pointAt(course, distance) {
+  const { lo, hi, t } = locate(course, distance);
+  const a = course.path[lo];
+  const b = course.path[hi];
+  return {
+    lat: a.lat + (b.lat - a.lat) * t,
+    lon: a.lon + (b.lon - a.lon) * t,
+    ele: course.hasElevation ? a.ele + (b.ele - a.ele) * t : null
+  };
+}
+
+/**
+ * Ascent and descent from the start of the course to a distance along it.
+ *
+ * Subtract two of these and you have the climb over the stretch between them,
+ * which is what a ping's "since the last one" figure is.
+ */
+export function gainAt(course, distance) {
+  const { lo, hi, t } = locate(course, distance);
+  return {
+    up:   course.cumUp[lo]   + (course.cumUp[hi]   - course.cumUp[lo])   * t,
+    down: course.cumDown[lo] + (course.cumDown[hi] - course.cumDown[lo]) * t
+  };
+}
+
+/**
+ * Where on the course a map cursor is pointing, or null if it isn't near it.
+ *
+ * The plain nearest candidate, unlike [snap.js](snap.js)'s history-weighted
+ * choice: a cursor has no history, and it is genuinely AT the spot rather than
+ * being a noisy estimate of it. Where a loop crosses itself the two branches are
+ * equally true and a crosshair on either is fine — that ambiguity only matters
+ * for a runner's progress, which this is not.
+ */
+export function courseHoverAt(course, lon, lat, maxPerp = CONFIG.snapMeters) {
+  let best = null;
+  for (const c of nearestOnCourse(course, lon, lat, maxPerp)) {
+    if (!best || c.perp < best.perp) best = c;
+  }
+  return best ? best.along : null;
 }
 
 /** Bounding box of the course as [[minLon, minLat], [maxLon, maxLat]]. */
