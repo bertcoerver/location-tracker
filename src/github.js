@@ -4,7 +4,7 @@
 // IMMUTABLE — the tracker only ever adds new ones — which is what makes the
 // cache below correct: a filename we've already seen never needs refetching.
 
-import { CONFIG, keysFor, LS_RUNS, LS_RUNS_ETAG } from './config.js';
+import { CONFIG, keysFor, LS_RUNS, LS_RUNS_AT, LS_RUNS_ETAG } from './config.js';
 import { dirFor } from './route.js';
 import { parseTime, pool, storage } from './util.js';
 
@@ -20,10 +20,14 @@ export class RateLimitError extends Error {
 /**
  * Lists one repo directory, conditionally.
  *
- * Returns `null` when GitHub answers 304 Not Modified — meaning nothing has
- * changed, no body was transferred, and (per GitHub's docs) the request did not
- * count against the rate limit. That is the common case: most polls cost
- * essentially nothing.
+ * Returns `null` when GitHub answers 304 Not Modified — nothing has changed and
+ * no body was transferred. That is the common case, and it's what keeps the
+ * bandwidth near zero.
+ *
+ * It does NOT keep the request count near zero. GitHub's docs claim a 304 is
+ * free; measured against this endpoint it decrements x-ratelimit-remaining just
+ * like a 200 does. So the budget is 60 polls/hour per IP, full stop — see the
+ * rate limit section of the README.
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
  * │ THIS IS THE FUNCTION TO REPLACE when the repo outgrows the API.         │
@@ -110,12 +114,27 @@ export function cachedRuns() {
  * @returns {Promise<string[]>}
  */
 export async function listRuns() {
-  const cached = storage.get(LS_RUNS) || [];
-  const listing = await listDir(CONFIG.dir, storage.get(LS_RUNS_ETAG));
-  if (!listing) return cached;
+  const cached = storage.get(LS_RUNS);
+  const fetchedAt = storage.get(LS_RUNS_AT) || 0;
 
-  if (storage.set(LS_RUNS, listing.dirs)) storage.set(LS_RUNS_ETAG, listing.etag);
-  else storage.remove(LS_RUNS_ETAG);
+  // Runs appear when you create a race, not every four minutes. Without this the
+  // picker cost a request on EVERY page load — doubling what a reload spends,
+  // since a warm poll returns 304 and so can't supply the names itself.
+  if (cached && Date.now() - fetchedAt < CONFIG.runsTtlMs) return cached;
+
+  const listing = await listDir(CONFIG.dir, storage.get(LS_RUNS_ETAG));
+  if (!listing) {
+    // Unchanged upstream. Restart the clock so a 304 isn't re-paid next load.
+    storage.set(LS_RUNS_AT, Date.now());
+    return cached || [];
+  }
+
+  if (storage.set(LS_RUNS, listing.dirs)) {
+    storage.set(LS_RUNS_ETAG, listing.etag);
+    storage.set(LS_RUNS_AT, Date.now());
+  } else {
+    storage.remove(LS_RUNS_ETAG);
+  }
 
   return listing.dirs;
 }
@@ -151,6 +170,10 @@ export async function sync(run = null) {
   // reload would send the ETag, get a 304, and render an empty map.
   if (storage.set(keys.points, cache)) storage.set(keys.etag, listing.etag);
   else storage.remove(keys.etag);
+
+  // Polling the root just listed the parent folder, so the picker's cache can
+  // ride along for free instead of costing its own request on the next load.
+  if (!run && storage.set(LS_RUNS, listing.dirs)) storage.set(LS_RUNS_AT, Date.now());
 
   return { changed: true, cache, dirs: run ? null : listing.dirs };
 }

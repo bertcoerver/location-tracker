@@ -4,7 +4,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { keysFor } from '../src/config.js';
+import { CONFIG, keysFor, LS_RUNS_AT } from '../src/config.js';
 import { listRuns, RateLimitError, sync } from '../src/github.js';
 
 // --- fakes -------------------------------------------------------------------
@@ -195,12 +195,35 @@ test('polling a run reports no dirs, since it never listed the root', async () =
   assert.equal(dirs, null);
 });
 
-test('listRuns returns the subfolders and is free on the second call', async () => {
+test('listRuns returns the subfolders and costs nothing again within the TTL', async () => {
   assert.deepEqual(await listRuns(), ['vendee-10k']);
   gh.reset();
 
-  assert.deepEqual(await listRuns(), ['vendee-10k'], 'served from cache behind a 304');
+  // This is what a page reload does. Before the TTL it re-listed every time,
+  // doubling the cost of a reload for a folder list that changes once a race.
+  assert.deepEqual(await listRuns(), ['vendee-10k']);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 0 });
+});
+
+test('listRuns re-checks once the TTL expires, and a 304 restarts the clock', async () => {
+  await listRuns();
+  globalThis.localStorage.setItem(LS_RUNS_AT, JSON.stringify(Date.now() - 2 * CONFIG.runsTtlMs));
+  gh.reset();
+
+  assert.deepEqual(await listRuns(), ['vendee-10k'], 'unchanged upstream, so a 304');
   assert.deepEqual(gh.counts(), { api: 1, raw: 0 });
+
+  gh.reset();
+  assert.deepEqual(await listRuns(), ['vendee-10k']);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 0 }, 'the 304 must not be re-paid next load');
+});
+
+test('listRuns picks up a newly created run after the TTL', async () => {
+  await listRuns();
+  gh.files.set('locations/new-race/2026-08-01T09_00_00+02_00.json', { lat: 1, lon: 2 });
+  globalThis.localStorage.setItem(LS_RUNS_AT, JSON.stringify(Date.now() - 2 * CONFIG.runsTtlMs));
+
+  assert.deepEqual((await listRuns()).sort(), ['new-race', 'vendee-10k']);
 });
 
 test('a run folder that does not exist yet is empty, not an error', async () => {

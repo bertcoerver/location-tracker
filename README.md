@@ -53,16 +53,58 @@ Re-downloading every file on a timer would not scale, so the page only ever fetc
 not already have:
 
 1. **One conditional request per poll** to the GitHub Contents API, sent with `If-None-Match`.
-   When nothing has changed GitHub answers `304 Not Modified` — no body, and 304s do not count
-   against the rate limit.
+   When nothing has changed GitHub answers `304 Not Modified`, so no body is transferred.
+   (A 304 still *counts* against the rate limit — measured, despite what the docs say. See
+   "Rate limit" below.)
 2. **Diff against `localStorage`**, which caches each point keyed by filename + blob SHA. Because
    files are immutable, a cached entry is never refetched.
 3. **Fetch only the new files** from `raw.githubusercontent.com`, which is not subject to the
    API's 60 requests/hour limit.
 
-Steady state is one cheap request every 120 s plus one ~70-byte fetch per new point. Reloading the
+Steady state is one cheap request every 240 s plus one ~70-byte fetch per new point. Reloading the
 page costs a single `304` and zero data fetches. Polling pauses while the tab is hidden and
-resumes immediately on focus.
+resumes on focus, subject to the 30 s floor described under "Rate limit".
+
+### Rate limit
+
+Unauthenticated GitHub API access is **60 requests/hour per IP address** — per viewer's IP, not
+per repo, so audience size on its own is not the problem. File bodies don't count (they come from
+the CDN), and a hidden tab doesn't poll.
+
+A 304 counts the same as a 200, so the poll interval *is* the request rate. At `pollMs` of 240 s
+that's **15 requests/hour per open tab**, a quarter of the budget:
+
+| Viewers behind one IP | Requests/hour | Result |
+|---|---|---|
+| 1–4 | 15–60 | fine |
+| 5+ | 75+ | throttled until the hour rolls |
+
+Distinct connections are unaffected, so a hundred people on their own phones is fine while five in
+one office is not. Four safeguards keep a tab from spending faster than that:
+
+- **`minRefreshMs` (30 s) floors the gap between refreshes**, however they were triggered. `focus`
+  and `visibilitychange` both fire when a tab comes forward, so without this a viewer flipping
+  between tabs could burn the whole hour in a couple of minutes. Overlapping triggers coalesce into
+  the one in-flight request rather than stacking.
+- **That interval is persisted**, so it survives a page reload — otherwise mashing the browser
+  refresh button reset it every time, which was the cheapest way to get rate limited. It's keyed
+  per run, so opening a run you haven't viewed still loads immediately.
+- **The run list is cached for `runsTtlMs` (1 hour)** and refreshed for free whenever the root feed
+  is polled. Subfolders appear when you create a race, not every four minutes.
+- **Hidden tabs don't poll at all.**
+
+Measured cost of one page load, warm cache:
+
+| | API requests |
+|---|---|
+| Reload within 30 s | **0** — repainted from cache |
+| Reload after 30 s | **1** |
+| Cold load of a run never viewed | 2 |
+
+Trading latency for headroom is a one-line change to `pollMs` in [`src/config.js`](src/config.js).
+Going further means removing the API from the read path entirely — a GitHub Action that aggregates
+each run into one static file, which lifts the viewer ceiling completely but adds several minutes
+of delay before a new ping is visible.
 
 ### Known limit
 

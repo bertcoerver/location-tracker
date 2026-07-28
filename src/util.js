@@ -40,6 +40,46 @@ export async function pool(items, n, fn) {
   return out;
 }
 
+/**
+ * Wraps `fn` so it runs at most once per `ms`, and never concurrently with
+ * itself. Calls arriving too soon are DROPPED rather than queued — this guards
+ * a poll, so a stale skip is harmless and a backlog of them is not.
+ *
+ * @param {object}        [opts]
+ * @param {() => number}  [opts.now]   injectable clock, so this is testable without timers.
+ * @param {{get: () => number, set: (t: number) => void}} [opts.store]
+ *   where the last-run time is kept. Defaults to memory, which resets on reload;
+ *   pass `persistedAt()` to make the interval survive one.
+ */
+export function throttle(fn, ms, { now = Date.now, store = memoryStore() } = {}) {
+  let inFlight = null;
+
+  return (...args) => {
+    if (inFlight) return inFlight;                 // coalesce, don't stack
+    if (now() - store.get() < ms) return Promise.resolve();
+    store.set(now());
+    inFlight = Promise.resolve(fn(...args)).finally(() => { inFlight = null; });
+    return inFlight;
+  };
+}
+
+function memoryStore() {
+  let last = -Infinity;
+  return { get: () => last, set: t => { last = t; } };
+}
+
+/**
+ * A throttle store backed by localStorage, so the interval outlives the page.
+ * Falls back to memory semantics when storage is unavailable (`storage.get`
+ * returns null), which is the safe direction: refresh rather than block.
+ */
+export function persistedAt(key) {
+  return {
+    get: () => Number(storage.get(key)) || -Infinity,
+    set: t => storage.set(key, t)
+  };
+}
+
 export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

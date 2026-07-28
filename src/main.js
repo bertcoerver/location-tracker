@@ -1,13 +1,13 @@
 // Entry point: wires the data layer to the map and the status panel, and owns
 // the polling lifecycle. This is the only file that knows about all the others.
 
-import { CONFIG } from './config.js';
+import { CONFIG, keysFor } from './config.js';
 import { cachedRuns, listRuns, loadCache, RateLimitError, sync } from './github.js';
 import { buildPoints } from './points.js';
 import { createMap } from './map.js';
 import { createUi } from './ui.js';
 import { currentRun } from './route.js';
-import { fmtClock } from './util.js';
+import { fmtClock, persistedAt, throttle } from './util.js';
 
 // Which run we're showing is fixed for the life of the page — switching one
 // navigates, so everything below can treat it as a constant.
@@ -45,7 +45,7 @@ async function showRuns(dirs) {
   ui.setRuns(names);
 }
 
-async function refresh() {
+async function poll() {
   if (Date.now() < backoffUntil) return;
 
   ui.setState('loading');
@@ -67,6 +67,21 @@ async function refresh() {
     ui.setState('error', 'Update failed');
   }
 }
+
+/**
+ * Every path below funnels through this. `focus` and `visibilitychange` both
+ * fire when a tab comes forward, and someone flipping between tabs fires them
+ * over and over — unthrottled, a couple of minutes of that spends the whole
+ * hourly budget and locks the map out with a rate limit error.
+ *
+ * The interval is persisted, so it also survives a reload: hammering the browser
+ * refresh button repaints from cache instead of spending a request each time.
+ * It's keyed per run, so opening a run you haven't viewed still loads at once
+ * rather than sitting blank waiting out someone else's interval.
+ */
+const refresh = throttle(poll, CONFIG.minRefreshMs, {
+  store: persistedAt(keysFor(run).refresh)
+});
 
 function frame() {
   map.tick();
