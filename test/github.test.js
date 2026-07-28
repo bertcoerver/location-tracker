@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { CONFIG, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
 import {
-  buildIndex, defaultRun, hydrate, isLive, RateLimitError, refreshIndex
+  buildIndex, defaultRun, fetchCourse, hydrate, isLive, RateLimitError, refreshIndex
 } from '../src/github.js';
 
 // --- fakes -------------------------------------------------------------------
@@ -76,7 +76,9 @@ function fakeGitHub(files) {
 
     const path = String(url).split(`/${CONFIG.branch}/`)[1];
     if (!state.files.has(path)) return new Response('', { status: 404 });
-    return new Response(JSON.stringify(state.files.get(path)), { status: 200 });
+    const body = state.files.get(path);
+    // A string is served as-is: that's how a .gpx is held in these fixtures.
+    return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status: 200 });
   };
 
   state.reset = () => { state.calls.length = 0; };
@@ -281,6 +283,78 @@ test('a run is live only if it pinged within the hour', () => {
   assert.equal(isLive(index['old-race'], now), false, 'weeks ago');
   assert.equal(isLive(index['new-race'], now + CONFIG.liveMs), false, 'exactly an hour is stale');
   assert.equal(isLive(undefined, now), false, 'no run selected');
+});
+
+// --- the course --------------------------------------------------------------
+
+const GPX = '<?xml version="1.0"?><gpx version="1.1"><trk><trkseg>' +
+  '<trkpt lat="46.5735" lon="-0.7721"><ele>60</ele></trkpt>' +
+  '<trkpt lat="46.5740" lon="-0.7725"><ele>70</ele></trkpt>' +
+  '</trkseg></trk></gpx>';
+
+test('a .gpx in a run is that run\'s course, and is not a ping', () => {
+  const index = buildIndex([
+    ...TREE,
+    { path: 'new-race/course.gpx', type: 'blob', sha: 'gpx1' }
+  ]);
+
+  assert.deepEqual(index['new-race'].course, { name: 'course.gpx', sha: 'gpx1' });
+  assert.equal(Object.keys(index['new-race'].files).length, 2, 'the gpx is not a ping');
+  // Dropping a course into a folder must not make a finished race look live.
+  assert.equal(index['new-race'].latest, Date.parse('2026-07-28T12:00:00+02:00'));
+});
+
+test('a run without a course says so explicitly', () => {
+  assert.equal(buildIndex(TREE)['old-race'].course, null);
+});
+
+test('the course is found whatever the file is called', () => {
+  const index = buildIndex([...TREE, { path: 'new-race/Vendée Loop.GPX', type: 'blob', sha: 'g' }]);
+  assert.equal(index['new-race'].course.name, 'Vendée Loop.GPX');
+});
+
+test('several courses in one run resolve the same way on every poll', () => {
+  // Arbitrary, but it has to be STABLE: a course that changed identity between
+  // polls would throw away the snap cache each time.
+  const entries = [
+    { path: 'new-race/z-route.gpx', type: 'blob', sha: 'z' },
+    { path: 'new-race/a-route.gpx', type: 'blob', sha: 'a' }
+  ];
+  assert.equal(buildIndex([...TREE, ...entries]).course, undefined);
+  assert.equal(buildIndex([...TREE, ...entries])['new-race'].course.name, 'a-route.gpx');
+  assert.equal(buildIndex([...TREE, ...entries.reverse()])['new-race'].course.name, 'a-route.gpx');
+});
+
+test('a folder holding only a course is not yet a run', () => {
+  // It has no latest ping, so it can't be sorted, marked live or defaulted to.
+  const index = buildIndex([...TREE, { path: 'future-race/course.gpx', type: 'blob', sha: 'g' }]);
+
+  assert.deepEqual(Object.keys(index).sort(), ['new-race', 'old-race']);
+});
+
+test('the course downloads from the CDN, so it costs no API request', async () => {
+  gh.files.set(`${RUN}/course.gpx`, GPX);
+  const { index } = await poll('vendee-10k');
+  gh.reset();
+
+  const file = await fetchCourse('vendee-10k', index);
+
+  assert.equal(file.text, GPX);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 1 });
+});
+
+test('fetchCourse returns nothing for a run that has no course', async () => {
+  const { index } = await poll('vendee-10k');
+  assert.equal(await fetchCourse('vendee-10k', index), null);
+  assert.equal(await fetchCourse('nonexistent', index), null);
+});
+
+test('a course that 404s raises rather than pretending there is no course', async () => {
+  // Silently falling back to "no course" would hide a broken repo indefinitely.
+  const { index } = await poll('vendee-10k');
+  index['vendee-10k'].course = { name: 'missing.gpx', sha: 'x' };
+
+  await assert.rejects(() => fetchCourse('vendee-10k', index), /404/);
 });
 
 // --- parsing -----------------------------------------------------------------

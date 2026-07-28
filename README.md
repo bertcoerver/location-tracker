@@ -32,6 +32,60 @@ or malformed `run` falls back to the newest run rather than erroring.
 Each run keeps its own point cache, and **switching runs costs no API requests at all**
 — see below.
 
+## The course
+
+Drop a `.gpx` file into a run's folder and it becomes that run's course:
+
+```
+locations/test/
+  test.gpx                          the course
+  2026-07-28T12_06_01+02_00.json    the pings
+```
+
+No config, no naming convention — any `.gpx` directly inside the folder is found. It is never
+treated as a ping, so adding one can't make a finished race look live, and a folder holding only a
+course isn't a run until the first ping lands. Track segments (`<trk>`) are preferred; a file with
+only a route (`<rte>`) works too. If a run somehow has several `.gpx` files the first alphabetically
+wins — arbitrary, but stable, which is what matters for the cache.
+
+With a course present, three things change:
+
+- **The route is drawn**, with its waypoints as markers you can hover for a name and elevation.
+- **Pings snap to it.** A fix within 500 m of the course is drawn where it belongs on the route, and
+  its real position stays visible underneath at low opacity — so you can always see how far the snap
+  moved things. A fix further away than that is left exactly where it is.
+- **A height profile appears** along the bottom, if the GPX carries elevation for every point. It
+  plots the whole course, with each snapped ping on it, and hovering reads out distance and height.
+  On a narrow screen it keeps its width and scrolls sideways rather than compressing a 20 km race
+  into 375 pixels.
+
+### Circular courses
+
+Where a course starts and finishes in the same place, a fix at that junction is metres from two
+points on the route that are a whole lap apart. Geometry cannot choose between them — both are
+equally close. So snapping runs in time order and scores each ping against how far the *previous*
+one got: moving backwards along the course is heavily penalised, jumping forwards mildly. Starting
+from zero, the first ping therefore lands at the start line and a late one at the finish, from
+identical coordinates.
+
+The tuning lives in [`src/config.js`](src/config.js) (`snapMeters`, `snapBackPenalty`,
+`snapForwardBias`, `loopMeters`). Two consequences worth knowing:
+
+- `along` is a position **on the course**, not a race odometer. On a second lap a ping snaps back to
+  where it was the first time round, because that is genuinely where it is. Laps aren't modelled.
+- An out-and-back course works, because the return leg is part of the route and distance keeps
+  increasing along it.
+
+### Cost
+
+A course is discovered in the tree listing the page already fetches, and downloaded from the CDN, so
+**it costs zero API requests**. Snapping is done once per ping, ever: results are keyed by filename
+in `localStorage`, so a reload paints the snapped positions before the GPX has even arrived. The
+whole cache is recomputed only if the course file changes, the threshold changes, or a ping appears
+that is older than one already snapped — a backfill, which was never scored against the pings before
+it. The parsed course itself is deliberately *not* cached; a long route would dwarf everything else
+in storage, and the browser's HTTP cache makes refetching it free.
+
 ## Data format
 
 One file per fix, named with the capture time as ISO 8601 with **every colon replaced by `_`**:
@@ -138,6 +192,10 @@ src/
   route.js          which run the URL pins, if any
   github.js         data layer: the tree request, the run index, the point cache
   points.js         cache -> sorted array, time position, bounding box
+  gpx.js            reads a .gpx into segments and waypoints (no dependencies)
+  course.js         projects it to metres: distance along, loop detection, grid index
+  snap.js           puts each ping on the course, once, and remembers where
+  profile.js        the height profile strip (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   colors.js         reads the CSS colour tokens, samples the ramp
@@ -164,7 +222,9 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - New visual layer → `layers.js`, then include it in `pointLayers`.
 - New panel or control → `index.html` for markup/CSS, `ui.js` for behaviour.
 - New URL parameter → `route.js`.
-- Different repo or poll rate → `config.js` only.
+- Different repo, poll rate, or snap threshold → `config.js` only.
+- Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
+- Changing how a ping picks its place on the course → the cost function in `snap.js`.
 
 ## Running it
 
@@ -188,6 +248,15 @@ design rests on: a cold start costs one API request and downloads every file onc
 an unchanged poll downloads nothing, one new point upstream downloads exactly one
 file, opening a run for the first time costs no API request at all, and loose files
 never surface as a run.
+
+The course work is covered the same way. The GPX parser is tested against the real
+[`locations/test/test.gpx`](locations/test/test.gpx) rather than a fixture written to
+suit it; the grid index is checked against brute force over a few hundred probes,
+since it is an optimisation and must never change an answer; and the snapper is
+pinned down on the two things that are easy to get quietly wrong — that on a closed
+loop the same coordinate resolves to the start when it arrives first and the finish
+when it arrives last, and that growing a run one ping at a time gives byte-identical
+results to snapping it all at once, at one projection per ping.
 
 ## Publishing
 

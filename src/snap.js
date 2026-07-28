@@ -1,0 +1,140 @@
+// Pinning each ping onto the course.
+//
+// The hard case is a CIRCULAR course. Where start and finish coincide, a fix at
+// the junction is a metre from two places on the route that are a whole lap
+// apart, and no amount of geometry can tell them apart — the two candidates are
+// genuinely equidistant. What separates them is history: a fix at the start of
+// the race is at the start of the course, one at the end is at the end.
+//
+// So snapping is sequential. Each ping is scored against where the previous one
+// landed, and the cost function is what encodes "runners move forwards".
+
+import { CONFIG } from './config.js';
+import { nearestOnCourse } from './course.js';
+
+/**
+ * Choose one of the candidate positions, given how far along the previous ping
+ * got. All three terms are in metres, so they add up honestly.
+ *
+ *   perp      how far the fix is from the course — the geometric fit
+ *   backward  moving back down the course is close to forbidden
+ *   forward   and jumping ahead is mildly discouraged
+ *
+ * The forward bias is the term that resolves a loop. Seeded at `prevAlong = 0`,
+ * the finish-line candidate carries a penalty of `bias * length` that the start
+ * does not, so the FIRST ping snaps to the start. By the last lap `prevAlong` is
+ * near `length` and the same junction resolves the other way, for free.
+ *
+ * It's deliberately small: two pings five minutes apart are perhaps a kilometre
+ * of real progress, which costs 20 m of penalty here — never enough to lose to a
+ * wrong branch that's tens of metres closer.
+ */
+function pick(candidates, prevAlong) {
+  let best = null;
+  let bestCost = Infinity;
+
+  for (const c of candidates) {
+    const cost = c.perp
+      + CONFIG.snapBackPenalty * Math.max(0, prevAlong - c.along)
+      + CONFIG.snapForwardBias * Math.max(0, c.along - prevAlong);
+
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = c;
+    }
+  }
+
+  return best;
+}
+
+/** One ping -> its place on the course, or null if it's simply not near it. */
+export function snapOne(course, point, prevAlong, nearest = nearestOnCourse) {
+  const best = pick(nearest(course, point.lon, point.lat, CONFIG.snapMeters), prevAlong);
+  if (!best) return null;
+  return { along: best.along, lon: best.lon, lat: best.lat, ele: best.ele, off: best.perp };
+}
+
+/** A cache that will match nothing — the shape `snapAll` expects when starting over. */
+function emptyCache(course) {
+  return {
+    courseSha: course.sha,
+    snapMeters: CONFIG.snapMeters,
+    last: null,
+    byName: {}
+  };
+}
+
+/**
+ * Snaps a whole run, doing as little work as possible.
+ *
+ * Every ping is projected onto the course EXACTLY ONCE in its lifetime: the
+ * result is keyed by filename in `cache.byName` and survives reloads through
+ * localStorage. Because location files are immutable and arrive in time order,
+ * resuming from the last cached ping gives bit-identical results to recomputing
+ * the lot — which the tests assert rather than assume.
+ *
+ * Three things invalidate the whole cache, because each makes the stored
+ * `along` values meaningless:
+ *   - a different course file (`courseSha`),
+ *   - a different threshold (`snapMeters`),
+ *   - a ping appearing that is OLDER than the last one we snapped. That's a
+ *     backfill, and the sequence it should have been scored against never ran.
+ *
+ * @param {object} course
+ * @param {Array}  points  sorted oldest-first, as `buildPoints()` returns them
+ * @param {object} cache   the previous result; pass a stale or empty one freely
+ * @returns {{cache: object, snapped: number}}
+ */
+export function snapAll(course, points, cache, nearest = nearestOnCourse) {
+  let next = cache;
+
+  const stale = !next
+    || next.courseSha !== course.sha
+    || next.snapMeters !== CONFIG.snapMeters
+    || !next.byName;
+
+  if (stale) next = emptyCache(course);
+
+  // A backfilled ping can't be scored against a sequence that already moved past
+  // it, so the only correct answer is to run the sequence again.
+  if (next.last && points.some(p => !(p.name in next.byName) && p.t < next.last.t)) {
+    next = emptyCache(course);
+  }
+
+  const byName = { ...next.byName };
+  let last = next.last;
+  let snapped = 0;
+
+  for (const point of points) {
+    if (point.name in byName) continue;
+
+    const result = snapOne(course, point, last ? last.along : 0, nearest);
+    byName[point.name] = result;
+    snapped++;
+
+    // A ping off the course leaves progress where it was. Otherwise a detour
+    // through a tunnel would drag the runner back to the start line on the far
+    // side of it.
+    if (result) last = { t: point.t, along: result.along };
+  }
+
+  // Mirror deletions, so a removed file doesn't keep a slot in the cache forever.
+  const live = new Set(points.map(p => p.name));
+  for (const name of Object.keys(byName)) if (!live.has(name)) delete byName[name];
+
+  return {
+    cache: { courseSha: course.sha, snapMeters: CONFIG.snapMeters, last, byName },
+    snapped
+  };
+}
+
+/** Hangs each cached snap off its point, in place. Cheap enough to redo on every paint. */
+export function applySnaps(points, cache) {
+  const byName = cache?.byName || {};
+  for (const point of points) {
+    const snap = byName[point.name];
+    if (snap) point.snap = snap;
+    else delete point.snap;
+  }
+  return points;
+}

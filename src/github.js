@@ -79,18 +79,26 @@ export async function fetchTree(etag) {
 /**
  * Folds a flat tree listing into the shape the rest of the app reads:
  *
- *   { 'vendee-10k': { files: { '<name>.json': '<sha>', … }, latest: <ms> } }
+ *   { 'vendee-10k': { files: { '<name>.json': '<sha>', … },
+ *                     latest: <ms>,
+ *                     course: { name: 'course.gpx', sha } | null } }
  *
  * Pure, and the only place the layout of the repo is interpreted.
  *
  * A path with no slash is a file sitting loose in `locations/`, belonging to no
  * run. Runs are the whole model now, so those are dropped rather than shown.
+ *
+ * A `.gpx` inside a run is that run's course. It is deliberately kept out of
+ * `files` and out of `latest`: a course is not a ping, and dropping one into a
+ * folder must not make a finished race look live. If a run somehow has several,
+ * the alphabetically first wins — arbitrary, but stable across polls.
  */
 export function buildIndex(entries) {
   const index = {};
+  const record = run => (index[run] ??= { files: {}, latest: -Infinity, course: null });
 
   for (const entry of entries) {
-    if (entry.type !== 'blob' || !entry.path.endsWith('.json')) continue;
+    if (entry.type !== 'blob') continue;
 
     const slash = entry.path.indexOf('/');
     if (slash < 1) continue;                          // loose file
@@ -99,14 +107,30 @@ export function buildIndex(entries) {
     const name = entry.path.slice(slash + 1);
     if (name.includes('/')) continue;                 // nested deeper than a run
 
+    if (/\.gpx$/i.test(name)) {
+      const found = record(run);
+      if (!found.course || name < found.course.name) found.course = { name, sha: entry.sha };
+      continue;
+    }
+
+    if (!name.endsWith('.json')) continue;
+
     // No parsable time means no place on a time-coloured map, and it must not
     // be allowed to drag a run's `latest` around either.
     const t = parseTime(name);
     if (Number.isNaN(t)) continue;
 
-    const record = (index[run] ??= { files: {}, latest: -Infinity });
-    record.files[name] = entry.sha;
-    if (t > record.latest) record.latest = t;
+    const found = record(run);
+    found.files[name] = entry.sha;
+    if (t > found.latest) found.latest = t;
+  }
+
+  // A folder holding only a course isn't a run yet — it has no `latest`, so it
+  // can't be sorted, marked live, or chosen as the default. Drop it until the
+  // first ping lands. (It also keeps `latest` finite, which matters: -Infinity
+  // does not survive a round trip through JSON.)
+  for (const [run, found] of Object.entries(index)) {
+    if (!Object.keys(found.files).length) delete index[run];
   }
 
   return index;
@@ -166,9 +190,13 @@ export function loadCache(run) {
  *
  * @returns a point record, or null if the file isn't usable.
  */
-export async function fetchPoint(run, name, sha) {
+export function rawUrl(run, name) {
   const { owner, repo, branch, dir } = CONFIG;
-  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${run}/${name}`;
+  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${run}/${name}`;
+}
+
+export async function fetchPoint(run, name, sha) {
+  const url = rawUrl(run, name);
 
   const res = await fetch(url, { cache: 'force-cache' });
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
@@ -184,6 +212,26 @@ export async function fetchPoint(run, name, sha) {
   if (body.msg) point.msg = String(body.msg);
   if (body.img) point.img = String(body.img);
   return point;
+}
+
+/**
+ * Downloads a run's course file, if it has one. Like every body in this app it
+ * comes from the CDN, so a course costs NOTHING against the API budget — the
+ * tree response we already have is what told us it exists.
+ *
+ * The parsed course isn't cached in localStorage on purpose: a long route would
+ * dwarf everything else stored there, and the HTTP cache makes the refetch free
+ * anyway. What we do keep is the snap result, which is the expensive part.
+ *
+ * @returns {Promise<{sha: string, text: string}|null>} null when there's no course.
+ */
+export async function fetchCourse(run, index) {
+  const course = index[run]?.course;
+  if (!course) return null;
+
+  const res = await fetch(rawUrl(run, course.name), { cache: 'force-cache' });
+  if (!res.ok) throw new Error(`${course.name}: HTTP ${res.status}`);
+  return { sha: course.sha, text: await res.text() };
 }
 
 /**

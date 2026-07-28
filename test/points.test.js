@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { boundsOf, buildPoints, latestOf } from '../src/points.js';
+import { boundsOf, buildPoints, latestOf, posOf, unionBounds } from '../src/points.js';
 import { interpolate } from '../src/colors.js';
 
 const cache = {
@@ -42,6 +42,37 @@ test('buildPoints and latestOf handle an empty cache', () => {
 
 test('boundsOf returns [[minLon, minLat], [maxLon, maxLat]]', () => {
   assert.deepEqual(boundsOf(buildPoints(cache)), [[-4, -5], [6, 3]]);
+});
+
+// --- where a point is actually drawn -----------------------------------------
+
+test('posOf prefers the snapped position over the raw fix', () => {
+  const point = { lat: 1, lon: 2, snap: { lat: 10, lon: 20, along: 5, off: 30 } };
+  assert.deepEqual(posOf(point), [20, 10]);
+});
+
+test('posOf falls back to the raw fix when nothing snapped', () => {
+  assert.deepEqual(posOf({ lat: 1, lon: 2 }), [2, 1]);
+});
+
+test('boundsOf frames where the points are DRAWN, not where the GPS put them', () => {
+  // Otherwise the camera would fit to a box the visible dots aren't inside.
+  const points = [
+    { lat: 0, lon: 0, snap: { lat: 50, lon: 60 } },
+    { lat: 1, lon: 1 }
+  ];
+  // The raw (0, 0) is nowhere in the box — only (60, 50) and (1, 1) are.
+  assert.deepEqual(boundsOf(points), [[1, 1], [60, 50]]);
+});
+
+test('unionBounds covers both boxes, and tolerates either being absent', () => {
+  const a = [[0, 0], [10, 10]];
+  const b = [[-5, 2], [4, 20]];
+
+  assert.deepEqual(unionBounds(a, b), [[-5, 0], [10, 20]]);
+  assert.deepEqual(unionBounds(a, null), a);
+  assert.deepEqual(unionBounds(null, b), b);
+  assert.equal(unionBounds(null, null), null);
 });
 
 test('interpolate hits the ramp endpoints exactly', () => {

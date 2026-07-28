@@ -41,7 +41,8 @@ export function getPalette() {
   palette = {
     ramp: ['--ramp-0', '--ramp-1', '--ramp-2', '--ramp-3', '--ramp-4'].map(read),
     accent: read('--accent'),
-    surface: read('--surface-1')
+    surface: read('--surface-1'),
+    course: read('--course')
   };
   return palette;
 }
@@ -53,6 +54,9 @@ export function rampAt(t) {
 
 export const accent  = () => getPalette().accent;
 export const surface = () => getPalette().surface;
+
+/** The race course. Off the blue ramp on purpose: the route is context, not data. */
+export const course  = () => getPalette().course;
 
 export const prefersDark = () =>
   globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;

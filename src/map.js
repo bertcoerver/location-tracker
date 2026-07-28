@@ -2,16 +2,23 @@
 // Data comes in through setPoints(); nothing here knows about GitHub.
 
 import { CONFIG } from './config.js';
-import { basemapLayer, makeTooltip, pointLayers } from './layers.js';
-import { boundsOf, latestOf } from './points.js';
+import { courseBounds } from './course.js';
+import { basemapLayer, courseLayers, makeTooltip, pointLayers } from './layers.js';
+import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
 
 export function createMap(container, { onFollowChange = () => {} } = {}) {
   let points = [];
+  let course = null;
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
   let fitted = false;
   let flying = false;
   let pulse = 0;
+
+  /** The whole stack, in draw order. One place, so nothing can disagree. */
+  function allLayers() {
+    return [basemapLayer(), ...courseLayers(course), ...pointLayers(points, pulse)];
+  }
 
   const deckgl = new deck.DeckGL({
     container,
@@ -40,7 +47,7 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
   });
 
   function render() {
-    deckgl.setProps({ viewState, layers: [basemapLayer(), ...pointLayers(points, pulse)] });
+    deckgl.setProps({ viewState, layers: allLayers() });
   }
 
   /** Drop the transition props once a flight ends, so a later render() doesn't
@@ -69,15 +76,27 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
     render();
   }
 
-  /** Fit every point, clamped — this tracker often sits still, and a degenerate
-   *  bounding box would otherwise fit to infinite zoom. */
+  /** Fit every point AND the course, clamped — this tracker often sits still,
+   *  and a degenerate bounding box would otherwise fit to infinite zoom. */
   function fitView(pts) {
-    const bounds = boundsOf(pts);
+    // The course is the thing worth seeing whole; the pings so far are usually a
+    // small part of it, and fitting only those would open on a stretch of road
+    // with no context.
+    const bounds = unionBounds(
+      pts.length ? boundsOf(pts) : null,
+      course ? courseBounds(course) : null
+    );
+    if (!bounds) return null;
+
     const base = { width: innerWidth, height: innerHeight, longitude: 0, latitude: 0, zoom: 1 };
 
     let fit = null;
     try {
-      fit = new deck.WebMercatorViewport(base).fitBounds(bounds, { padding: 80 });
+      // The profile strip covers the bottom of the window, so the fit has to
+      // clear it or the start of the course hides behind it.
+      fit = new deck.WebMercatorViewport(base).fitBounds(bounds, {
+        padding: { top: 80, left: 80, right: 80, bottom: 80 + bottomInset() }
+      });
     } catch { /* degenerate bounds */ }
 
     const usable = fit && Number.isFinite(fit.zoom);
@@ -96,22 +115,57 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
     onFollowChange(on);
   }
 
+  /** How much of the bottom of the window the profile strip is covering, if any. */
+  function bottomInset() {
+    const value = getComputedStyle(document.documentElement).getPropertyValue('--profile-h');
+    return parseFloat(value) || 0;
+  }
+
   return {
     /** Replace the drawn set. Fits on first data, then follows new arrivals. */
     setPoints(next) {
-      const previousLatest = latestOf(points)?.name ?? null;
+      const previous = latestOf(points);
+      const previousAt = previous ? String(posOf(previous)) : null;
       points = next;
-      if (!points.length) return;
+      if (!points.length) return render();
 
       const latest = latestOf(points);
+      const [lon, lat] = posOf(latest);
+
       if (!fitted) {
+        const fit = fitView(points);
         fitted = true;
-        setViewState(fitView(points), false);
-      } else if (follow && latest.name !== previousLatest) {
-        setViewState({ ...viewState, longitude: latest.lon, latitude: latest.lat }, true);
+        if (fit) return setViewState(fit, false);
+        render();
+      // Keyed on the drawn position, not just the filename: when a course lands
+      // and the newest ping jumps onto it, the camera should go with it.
+      } else if (follow && String([lon, lat]) !== previousAt) {
+        setViewState({ ...viewState, longitude: lon, latitude: lat }, true);
       } else {
         render();
       }
+    },
+
+    /**
+     * The run's course, or null. Drawn even before any ping has arrived.
+     *
+     * A course almost always arrives after the cached points have painted and
+     * the camera has already fitted to them, so a new one re-fits — otherwise
+     * you'd be looking at three dots with the race off-screen. Only while
+     * following, so it can't yank the view out from under someone panning.
+     */
+    setCourse(next) {
+      const changed = (course?.sha ?? null) !== (next?.sha ?? null);
+      course = next;
+
+      if (changed && next && follow) {
+        const fit = fitView(points);
+        if (fit) {
+          fitted = true;
+          return setViewState(fit, true);
+        }
+      }
+      render();
     },
 
     /** Fit the next setPoints() again — a different run is a different place. */
@@ -124,10 +178,11 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
       setFollow(true);
       const latest = latestOf(points);
       if (!latest) return;
+      const [longitude, latitude] = posOf(latest);
       setViewState({
         ...viewState,
-        longitude: latest.lon,
-        latitude: latest.lat,
+        longitude,
+        latitude,
         zoom: Math.max(viewState.zoom, 14)
       }, true);
     },
@@ -137,9 +192,7 @@ export function createMap(container, { onFollowChange = () => {} } = {}) {
     /** Drive the halo animation. Called once per frame from main.js. */
     tick() {
       pulse = (Math.sin(Date.now() / 500) + 1) / 2;
-      if (points.length) {
-        deckgl.setProps({ layers: [basemapLayer(), ...pointLayers(points, pulse)] });
-      }
+      if (points.length) deckgl.setProps({ layers: allLayers() });
     }
   };
 }

@@ -16,7 +16,16 @@
     --text-secondary: #52514e;
     --text-muted:     #83817b;
     --accent:         #eb6834;
+    /* The course. Deliberately off the blue ramp — the route is context, and it
+       must never be mistaken for a reading. */
+    --course:         #7b6cc4;
     --shadow:         0 1px 2px rgba(11,11,11,.08), 0 8px 24px rgba(11,11,11,.10);
+
+    /* How much of the bottom of the window the profile strip is covering. Both
+       are set by profile.js from config.js; everything anchored to the bottom
+       of the window reads --profile-h so nothing can disagree about it. */
+    --profile-h: 0px;
+    --profile-min-w: 640px;
 
     /* Sequential ramp, oldest -> newest. Validated (ordinal, light surface):
        monotone L, adjacent dL >= .06, light end 2.06:1, hue spread 4 deg. */
@@ -35,6 +44,7 @@
       --text-secondary: #c3c2b7;
       --text-muted:     #8f8e85;
       --accent:         #d95926;
+      --course:         #a99af0;
       --shadow:         0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
       /* Same hue, stepped for the dark surface; oldest is the dimmest. */
@@ -147,8 +157,43 @@
   }
   #error:empty { display: none; }
 
+  /* --- the height profile ------------------------------------------------ */
+  /* An overlay, so the map keeps its full height and a run without a course
+     looks exactly as it did before this existed. */
+  #profile {
+    left: 0; right: 0;
+    bottom: 0;
+    height: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px));
+    padding: 0;
+    border-radius: 0;
+    border-left: 0; border-right: 0; border-bottom: 0;
+    overflow: hidden;
+  }
+  #profile[hidden] { display: none; }
+  /* On a phone the strip would compress a 20 km course into 375 px of mush, so
+     below --profile-min-w it keeps its width and pans instead. */
+  #profile-scroll {
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+  }
+  #profile-canvas {
+    display: block;
+    height: var(--profile-h);
+    width: max(100%, var(--profile-min-w));
+  }
+  #profile-readout {
+    position: absolute;
+    top: 6px; right: 10px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    pointer-events: none;
+  }
+
   #legend {
-    bottom: max(12px, env(safe-area-inset-bottom));
+    bottom: calc(var(--profile-h) + max(12px, env(safe-area-inset-bottom)));
     left: max(12px, env(safe-area-inset-left));
     padding: 9px 11px;
   }
@@ -168,7 +213,7 @@
   }
 
   #follow {
-    bottom: max(12px, env(safe-area-inset-bottom));
+    bottom: calc(var(--profile-h) + max(12px, env(safe-area-inset-bottom)));
     right: max(12px, env(safe-area-inset-right));
     padding: 8px 12px;
     font: inherit;
@@ -242,6 +287,11 @@
 </div>
 
 <button id="follow" class="panel" type="button" aria-pressed="true">Follow latest</button>
+
+<div id="profile" class="panel" hidden>
+  <div id="profile-scroll"><canvas id="profile-canvas"></canvas></div>
+  <div id="profile-readout"></div>
+</div>
 
 <script type="module" src="src/main.js"></script>
 </body>
