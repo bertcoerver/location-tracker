@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/config.js';
-import { buildCourse, courseBounds, nearestOnCourse } from '../src/course.js';
+import {
+  buildCourse, courseBounds, courseHoverAt, gainAt, nearestOnCourse, pointAt
+} from '../src/course.js';
+import { elevationAt } from '../src/profile.js';
 
 // Everything here works in metres, so the fixtures are built from metres too:
 // at this latitude these are the degree sizes the projection uses.
@@ -182,4 +185,138 @@ test('a course needs at least two points to exist', () => {
   assert.equal(buildCourse({ segments: [[{ lat: 1, lon: 1, ele: 0 }]] }, 'sha'), null);
   assert.equal(buildCourse({ segments: [] }, 'sha'), null);
   assert.equal(buildCourse(null, 'sha'), null);
+});
+
+// --- climb along the course ---------------------------------------------------
+
+/** A course running due east, one vertex every 100 m, with the given heights. */
+function hills(eles) {
+  const segments = [eles.map((ele, i) => ({ lat: LAT0, lon: (i * 100) / M_LON, ele }))];
+  return buildCourse({ segments, waypoints: [], hasElevation: true }, 'sha');
+}
+
+test('a steady climb is all ascent and no descent', () => {
+  const course = hills(Array.from({ length: 101 }, (_, i) => 100 + i));
+
+  // 100 m of rise, less at most one threshold left uncommitted at the top.
+  const total = gainAt(course, course.length);
+  assert.ok(Math.abs(total.up - 100) <= CONFIG.eleThresholdM, `${total.up}`);
+  assert.equal(total.down, 0);
+});
+
+test('an up-and-over hill records both directions', () => {
+  // 100 m up, then 60 m back down.
+  const course = hills([
+    ...Array.from({ length: 101 }, (_, i) => 100 + i),
+    ...Array.from({ length: 61 }, (_, i) => 200 - i)
+  ]);
+  const total = gainAt(course, course.length);
+
+  assert.ok(Math.abs(total.up - 100) <= CONFIG.eleThresholdM * 2, `up ${total.up}`);
+  assert.ok(Math.abs(total.down - 60) <= CONFIG.eleThresholdM * 2, `down ${total.down}`);
+});
+
+test('elevation noise on flat ground accumulates NOTHING', () => {
+  // The whole reason for the threshold. Summing these differences naively gives
+  // about 200 m of "climb" on a road that does not go anywhere.
+  const course = hills(Array.from({ length: 200 }, (_, i) => 100 + (i % 2 ? 1 : -1)));
+  const total = gainAt(course, course.length);
+
+  assert.equal(total.up, 0, `invented ${total.up} m of climb`);
+  assert.equal(total.down, 0);
+});
+
+test('a slow steady climb is not thrown away by the threshold', () => {
+  // The other way to get hysteresis wrong: 1 m per vertex never clears a 3 m
+  // threshold in one step, but 200 m of real climbing is still 200 m.
+  const course = hills(Array.from({ length: 201 }, (_, i) => 100 + i));
+  const total = gainAt(course, course.length);
+
+  assert.ok(total.up > 190, `only counted ${total.up} m of 200`);
+});
+
+test('the cumulative climb arrays never decrease', () => {
+  // Differencing two of them is how a leg's climb is measured, so a dip would
+  // hand back negative metres.
+  const course = hills(Array.from({ length: 300 }, (_, i) => 100 + Math.sin(i / 7) * 40));
+
+  for (let i = 1; i < course.cumUp.length; i++) {
+    assert.ok(course.cumUp[i] >= course.cumUp[i - 1], `up dipped at ${i}`);
+    assert.ok(course.cumDown[i] >= course.cumDown[i - 1], `down dipped at ${i}`);
+  }
+});
+
+test('gainAt is zero at the start and interpolates on the way up', () => {
+  const course = hills(Array.from({ length: 101 }, (_, i) => 100 + i));
+
+  assert.deepEqual(gainAt(course, 0), { up: 0, down: 0 });
+
+  const half = gainAt(course, course.length / 2);
+  const full = gainAt(course, course.length);
+  assert.ok(half.up > 40 && half.up < 60, `${half.up}`);
+  assert.ok(half.up < full.up);
+});
+
+test('a course without elevation reports no climb rather than a wrong one', () => {
+  const segments = [[{ lat: LAT0, lon: 0 }, { lat: LAT0, lon: 0.01 }]];
+  const course = buildCourse({ segments, waypoints: [], hasElevation: false }, 'sha');
+
+  assert.deepEqual(gainAt(course, course.length), { up: 0, down: 0 });
+});
+
+// --- locating a distance on the course ---------------------------------------
+
+test('pointAt lands exactly on a vertex and interpolates between two', () => {
+  const course = courseFrom([[0, 0], [1000, 0], [1000, 1000]]);
+
+  const start = pointAt(course, 0);
+  assert.ok(Math.abs(start.lon - course.path[0].lon) < 1e-12);
+  assert.ok(Math.abs(start.lat - course.path[0].lat) < 1e-12);
+
+  // Half way along the first leg: 500 m east, still on the same parallel.
+  const mid = pointAt(course, 500);
+  assert.ok(Math.abs(mid.lon * M_LON - 500) < 1, `${mid.lon * M_LON}`);
+  assert.ok(Math.abs(mid.lat - LAT0) < 1e-12);
+});
+
+test('pointAt clamps rather than extrapolating off either end', () => {
+  const course = courseFrom([[0, 0], [1000, 0]]);
+  const last = course.path[course.path.length - 1];
+
+  assert.ok(Math.abs(pointAt(course, course.length + 5000).lon - last.lon) < 1e-12);
+  assert.ok(Math.abs(pointAt(course, -5000).lon - course.path[0].lon) < 1e-12);
+});
+
+test('pointAt and elevationAt agree — they are the same search', () => {
+  const course = hills(Array.from({ length: 50 }, (_, i) => 100 + i * 3));
+
+  for (const d of [0, 137, 2200, course.length]) {
+    assert.ok(Math.abs(pointAt(course, d).ele - elevationAt(course, d)) < 1e-9, `${d}`);
+  }
+});
+
+// --- pointing at the course from the map -------------------------------------
+
+test('courseHoverAt returns the distance along under the cursor', () => {
+  const course = courseFrom([[0, 0], [1000, 0], [2000, 0]]);
+  const along = courseHoverAt(course, at(1500, 30).lon, at(1500, 30).lat);
+
+  assert.ok(Math.abs(along - 1500) < 5, `${along}`);
+});
+
+test('courseHoverAt gives null when the cursor is nowhere near the course', () => {
+  const course = courseFrom([[0, 0], [1000, 0]]);
+  const far = at(500, CONFIG.snapMeters * 4);
+
+  assert.equal(courseHoverAt(course, far.lon, far.lat), null);
+});
+
+test('courseHoverAt takes the nearest branch, with no history to weigh', () => {
+  // Unlike snapping: a cursor is AT a place rather than being a noisy guess at
+  // one, so the plain nearest candidate is the right answer.
+  const course = courseFrom([[0, 0], [1000, 0], [1000, 40], [0, 40], [0, 0]]);
+  // Just above the outbound leg, well clear of the return leg 40 m north.
+  const along = courseHoverAt(course, at(500, 2).lon, at(500, 2).lat);
+
+  assert.ok(Math.abs(along - 500) < 10, `took the far branch: ${along}`);
 });

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ago, escapeHtml, parseTime, persistedAt, pool, throttle } from '../src/util.js';
+import {
+  ago, escapeHtml, fmtDuration, fmtElapsed, parseTime, persistedAt, pool, throttle
+} from '../src/util.js';
 
 test('parseTime recovers the ISO timestamp from a filename', () => {
   // Underscores stand in for colons — in the time AND in the UTC offset.
@@ -208,3 +210,43 @@ function fakeStorage() {
     removeItem: k => map.delete(k)
   };
 }
+
+// --- exact spans, as opposed to `ago`'s "roughly how stale" ------------------
+
+test('fmtDuration keeps the seconds that ago() throws away', () => {
+  assert.equal(fmtDuration(0), '0s');
+  assert.equal(fmtDuration(12000), '12s');
+  assert.equal(fmtDuration(252000), '4m 12s');
+  assert.equal(fmtDuration(300000), '5m');
+});
+
+test('fmtDuration drops to two units once it passes an hour', () => {
+  assert.equal(fmtDuration(3600000), '1h');
+  assert.equal(fmtDuration(4980000), '1h 23m');
+  assert.equal(fmtDuration(8130000), '2h 16m');
+});
+
+test('fmtDuration never reports sixty minutes past the hour', () => {
+  // 1h 59m 40s rounds the minutes to 60, which must carry rather than print.
+  assert.equal(fmtDuration(7180000), '2h');
+});
+
+test('fmtDuration treats a negative span as zero', () => {
+  assert.equal(fmtDuration(-5000), '0s');
+});
+
+test('fmtElapsed is always h:mm:ss, so the digits do not shuffle as it ticks', () => {
+  assert.equal(fmtElapsed(0), '0:00:00');
+  assert.equal(fmtElapsed(9000), '0:00:09');
+  assert.equal(fmtElapsed(252000), '0:04:12');
+  assert.equal(fmtElapsed(8047000), '2:14:07');
+});
+
+test('fmtElapsed truncates rather than rounding, so the clock never runs fast', () => {
+  assert.equal(fmtElapsed(1999), '0:00:01');
+  assert.equal(fmtElapsed(-1), '0:00:00');
+});
+
+test('fmtElapsed keeps counting past a day rather than wrapping', () => {
+  assert.equal(fmtElapsed(90000000), '25:00:00');
+});

@@ -34,9 +34,14 @@ Each run keeps its own point cache, and **switching runs costs no API requests a
 
 ## On screen
 
-There is one number on the page: **how long since the last ping**, sitting beside the run name.
-Not how many pings there are, and not what second the browser last checked GitHub — that second is
-the page's business, and the dot already says whether polling is healthy.
+Two numbers. **How long since the last ping**, beside the run name, and **how long the run has been
+going**, in the top right. Not how many pings there are, and not what second the browser last
+checked GitHub — that second is the page's business, and the dot already says whether polling is
+healthy.
+
+The clock counts from the first ping and ticks each second while the run is live. Once the run goes
+quiet — nothing for an hour — it **stops**, and its label changes from "Elapsed" to "Total". A clock
+still counting hours after the finish would be claiming the race is still on.
 
 **One dot, two signals.** Its colour is the last poll's outcome — green for fine, red for failed,
 with the reason spelled out underneath — and it pulses while the run is live, meaning it has pinged
@@ -84,6 +89,31 @@ With a course present, three things change:
   The terrain line is drawn from one elevation sample per pixel column, then blurred by
   `profileSmoothPx` columns — about 100 m of ground, which settles GPS noise without flattening
   anything real. The underlying summary keeps every peak; only the drawing is smoothed.
+
+- **Each ping carries its climb**, in the tooltip: metres up and down since the run started, and
+  over the stretch since the previous ping.
+
+### Hovering works both ways
+
+The map and the profile are two views of one run, so pointing at a place in either marks it in the
+other. Hovering the strip puts a ring on the route; hovering the route — or a ping — moves the
+strip's crosshair to it. Whichever view the pointer is actually over owns the crosshair, so the two
+can't fight over it.
+
+### Counting the climb
+
+Ascent is **integrated along the course**, not taken as the difference between two snapped
+elevations. Pings arrive minutes apart, and a hill climbed and descended in between would otherwise
+count as nothing at all.
+
+Raw GPX elevations wobble by a metre or two whatever the ground is doing, and adding that wobble up
+is how a flat road comes out as a mountain range — reported gains from naive summing are routinely
+double the truth. So a rise or fall only counts once it has moved `eleThresholdM` (3 m) clear of the
+last committed height, and then it counts in full. On the 8.8 km test loop that is the difference
+between 95 m of "climb" and 61 m of real one.
+
+The totals are accumulated once per course, when the GPX is parsed, so a ping's figures are two
+array lookups and a subtraction.
 
 ### Circular courses
 
@@ -219,8 +249,9 @@ src/
   github.js         data layer: the tree request, the run index, the point cache
   points.js         cache -> sorted array, time position, bounding box
   gpx.js            reads a .gpx into segments and waypoints (no dependencies)
-  course.js         projects it to metres: distance along, loop detection, grid index
+  course.js         projects it to metres: distance along, climb, loop detection, grid index
   snap.js           puts each ping on the course, once, and remembers where
+  stats.js          per-ping elapsed time and climb, derived on each paint
   profile.js        the height profile strip (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
@@ -252,6 +283,9 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - Different repo, poll rate, or snap threshold → `config.js` only.
 - Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
 - Changing how a ping picks its place on the course → the cost function in `snap.js`.
+- Another figure derived per ping → `stats.js`, then a row in `tooltipHtml`.
+- Linking the two views further → `map.js` and `profile.js` each expose `setHover`; `main.js`
+  is where they are joined up.
 
 ## Running it
 
@@ -289,6 +323,13 @@ The profile's arithmetic is tested without a canvas anywhere near it: that smoot
 settles column-to-column noise without moving a summit or sagging the ends of the
 course towards sea level, and that hovering picks the dot you are actually pointing at
 rather than its neighbour — a mistake that looks fine in a screenshot.
+
+The climb figures get the same treatment, and the tests are written around the ways
+the arithmetic could quietly lie: that a flat course dressed in a metre of noise
+accumulates **nothing**, that a slow steady climb is not thrown away by the same
+threshold that discards the noise, that a leg spanning a ping which missed the course
+still counts the ground underneath it, and that a ping landing *behind* its predecessor
+reports positive metres with ascent and descent swapped rather than negative ones.
 
 ## Publishing
 
