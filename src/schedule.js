@@ -80,6 +80,11 @@ export function pingIntervalMs(btry) {
  * @returns {number} milliseconds to wait.
  */
 export function nextPollMs(latest, now = Date.now()) {
+  // The run has declared itself over, so nothing more is coming and the whole
+  // ladder below is beside the point. Straight to the cap — which is still a
+  // poll, because a NEW run starting is the one thing left worth noticing.
+  if (latest?.is_finish) return CONFIG.maxPollMs;
+
   // Nothing to go on: no points yet, or a ping written before `btry` existed.
   // Fall back to the fixed rate, which is what the whole page used to do.
   if (!latest || !Number.isFinite(latest.btry)) return CONFIG.pollMs;
@@ -113,6 +118,7 @@ export function nextPollMs(latest, now = Date.now()) {
  * @returns {number|null} milliseconds until the next ping, or null.
  */
 export function dueInMs(latest, now = Date.now()) {
-  if (!latest || !Number.isFinite(latest.btry)) return null;
+  // A finished run has no next ping to predict, whatever its battery said.
+  if (!latest || latest.is_finish || !Number.isFinite(latest.btry)) return null;
   return latest.t + pingIntervalMs(latest.btry) - now;
 }

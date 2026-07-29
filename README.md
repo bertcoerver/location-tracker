@@ -53,9 +53,36 @@ without this a long silence is indistinguishable from a broken tracker. With it,
 reads as a system working exactly as designed, and says how long to wait. A finished run drops the
 clause entirely; an expectation is a claim about a phone that is still out there.
 
-The clock counts from the first ping and ticks each second while the run is live. Once the run goes
-quiet — nothing for an hour — it **stops**, and its label changes from "Elapsed" to "Total". A clock
-still counting hours after the finish would be claiming the race is still on.
+Once the phone says it is done, the line says that instead:
+
+```
+● Finished 12m ago
+```
+
+The clock counts from the first ping and ticks each second while the run is live. It **stops** when
+the run finishes — either because the phone said so, or because nothing has arrived for an hour —
+and its label changes from "Elapsed" to "Total". A clock still counting hours after the finish would
+be claiming the race is still on.
+
+### Knowing a run is over
+
+Without being told, the page can only guess from the clock: no ping for an hour means finished. That
+guess cannot tell a finished race from a phone in a tunnel, and it is an hour late either way.
+
+So the phone marks its last upload. It is an **ordinary ping** — coordinates, battery and all — with
+one extra field, `"is_finish": true`. Three things change the moment it lands:
+
+- the dot stops pulsing, the clock freezes to "Total", and the ticker reads `Finished 12m ago`;
+- polling drops straight to one request every 15 minutes, skipping the whole overdue ladder;
+- if the run has a course, the finish is pinned to the **end** of it — see "The course" below.
+
+Only the newest ping counts. A finish with pings after it is a phone that was restarted, and the run
+is plainly going again, so the page treats it as live once more. That rule is why the panel and the
+poll schedule can never disagree: both read the same last point.
+
+One limit worth knowing: a finished run that is *not* the one on screen keeps its `●` in the run
+picker for the usual hour. The index comes from GitHub's tree API, which lists paths and never file
+contents, so a run has to be opened before its finish is visible.
 
 **One dot, two signals.** Its colour is the last poll's outcome — green for fine, red for failed,
 with the reason spelled out underneath — and it pulses while the run is live, meaning it has pinged
@@ -199,6 +226,17 @@ one got: moving backwards along the course is heavily penalised, jumping forward
 from zero, the first ping therefore lands at the start line and a late one at the finish, from
 identical coordinates.
 
+A ping marked `is_finish` skips all of that and is pinned to the **last vertex of the course**, so
+the run's total distance reads the full course length. This is where the flag earns the most: the
+last ping of a lap is exactly the case the cost function has the least margin on, and an explicit
+finish settles it outright rather than arguing about it.
+
+The 500 m threshold does **not** apply to a finish. For an ordinary ping, being that far off is
+evidence the phone is not on the course, and leaving the fix where it is says so honestly; a finish
+is not evidence but an assertion by the device, so it is pinned whatever the geometry says. The
+"snapped 640 m" figure in its tooltip, and the dashed line back to the raw fix, are then what tell
+you how far away it actually was.
+
 The tuning lives in [`src/config.js`](src/config.js) (`snapMeters`, `snapBackPenalty`,
 `snapForwardBias`, `loopMeters`). Two consequences worth knowing:
 
@@ -231,8 +269,14 @@ The timestamp lives *only* in the filename — there is no time field in the bod
 {"lat":46.57352593732256,"lon":-0.7721662634749413,"btry":49}
 ```
 
-Only `lat` and `lon` are required. `btry` (battery %), `msg` and `img` are optional and the map
-handles files that carry any, all, or none of them. Files are never edited once written.
+Only `lat` and `lon` are required. `btry` (battery %), `msg`, `img` and `is_finish` are optional and
+the map handles files that carry any, all, or none of them. Files are never edited once written.
+
+`is_finish: true` marks the phone's **last upload of a run**. It is deliberately a normal ping rather
+than a separate marker file with no coordinates: every consumer of a point assumes a fix, so a
+coordinate-less record would have to be kept out of the array by hand at half a dozen call sites. A
+flag on a real ping is read in the four places that care and ignored everywhere else. See
+"Knowing a run is over".
 
 `btry` does double duty: as well as appearing in the tooltip it is what tells the page **when to
 expect the next ping**, since the phone picks its interval from its own battery — see
@@ -315,6 +359,11 @@ Two things stop this being fragile:
 
   End to end, a phone that goes quiet costs about nine requests to establish the silence and four
   an hour after that, against fifteen an hour forever.
+
+- **A finished run skips the ladder entirely.** If the newest ping carries `is_finish`, nothing more
+  is coming and there is nothing to establish — the very next poll is already at the 15-minute cap.
+  That is the nine requests above reduced to none. It stays at the cap rather than stopping, because
+  a *new* run starting is the one thing left worth noticing.
 
 A ping written before `btry` existed leaves nothing to predict from, and the page falls back to the
 old fixed `pollMs`.
@@ -523,6 +572,16 @@ to the fixed rate when a ping predates `btry` — and for being **pure**, which 
 it safe for `main.js` to recompute after every refresh. One test walks the whole backoff
 ladder and asserts a long silence costs fewer than fifteen requests in total rather than
 fifteen every hour.
+
+The finish is tested at each place it is read. That it survives the round trip through
+`localStorage` as a real boolean, since it goes through JSON on every reload; that
+`finishOf` ignores a finish with pings after it, which is what keeps the panel and the poll
+schedule from ever disagreeing; that a finished run polls at the cap whatever its age or
+battery, and predicts no next ping; and that its tooltip says "finish" in place of "latest".
+The snapping tests state the two claims worth stating out loud — that a finish is pinned to
+the course end even from **beyond** the 500 m threshold, where the identical fix without the
+flag snaps nowhere at all, and that on a closed loop it resolves to the end rather than the
+start, which is the ambiguity the whole cost function exists to fight.
 
 ## A note on waypoint labels
 

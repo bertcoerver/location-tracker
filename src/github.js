@@ -209,6 +209,11 @@ export async function fetchPoint(run, name, sha) {
 
   const point = { name, sha, t: parseTime(name), lat, lon };
   if (Number.isFinite(body.btry)) point.btry = Number(body.btry);
+  // The phone's last upload of a run. An ordinary ping in every other respect,
+  // which is the whole trick: a file with no coordinates would have to be kept
+  // out of the points array by hand, and every consumer of it assumes a fix.
+  // Normalised to a boolean so it round-trips through JSON the same way twice.
+  if (body.is_finish) point.is_finish = true;
   if (body.msg) point.msg = String(body.msg);
   if (body.img) point.img = String(body.img);
   return point;

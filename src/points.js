@@ -17,6 +17,19 @@ export function latestOf(points) {
 }
 
 /**
+ * The run's finish, if it has one — the ping the phone marked as its last.
+ *
+ * Deliberately only the NEWEST point, not `points.some(...)`: a finish with
+ * pings after it is a phone that was restarted, and the run is plainly going
+ * again. Reading it off the last element is also what stops the panel and the
+ * poll schedule ever disagreeing, since both are looking at the same point.
+ */
+export function finishOf(points) {
+  const last = latestOf(points);
+  return last?.is_finish ? last : null;
+}
+
+/**
  * Where a point is DRAWN: its place on the course if it snapped there, otherwise
  * the raw fix. Everything that positions a point goes through this — layers, the
  * camera, the fit — so "focus on the snapped points" holds for the map as a

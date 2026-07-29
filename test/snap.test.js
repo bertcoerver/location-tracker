@@ -44,6 +44,72 @@ test('a ping too far from the course is left where it is', () => {
   assert.equal(snapOne(STRAIGHT, p, 0), null);
 });
 
+// --- the finish -------------------------------------------------------------
+
+test('a finish is pinned to the end of the course, not to the nearest point', () => {
+  // Half way along, but the phone says the course is done — so the end is where
+  // it goes, and `along` reads the full course length rather than 1000 m.
+  const [p] = pings([[1000, 50]]);
+  const snap = snapOne(STRAIGHT, { ...p, is_finish: true }, 0);
+
+  assert.equal(snap.along, STRAIGHT.length);
+  // `off` is the distance to where it was PINNED — 1000 m up the course and 50
+  // aside — not the 50 m perpendicular a normal snap would have reported. That
+  // is the number the tooltip and the dashed link both need.
+  assert.ok(Math.abs(snap.off - Math.hypot(1000, 50)) < 1, `off ${snap.off}`);
+});
+
+test('a finish is pinned even from beyond snapMeters, where a ping would not be', () => {
+  // The threshold exists because a distant fix is EVIDENCE the phone is not on
+  // the course. A finish is not evidence, it is an assertion, so it overrides —
+  // and `off` is left telling the truth about how far away it was.
+  const [p] = pings([[2000, CONFIG.snapMeters + 400]]);
+
+  assert.equal(snapOne(STRAIGHT, p, 0), null, 'the same fix without the flag');
+
+  const snap = snapOne(STRAIGHT, { ...p, is_finish: true }, 0);
+  assert.equal(snap.along, STRAIGHT.length);
+  assert.ok(Math.abs(snap.off - (CONFIG.snapMeters + 400)) < 1, `off ${snap.off}`);
+});
+
+test('on a loop, a finish at the start/finish resolves to the END', () => {
+  // The payoff. Geometrically this fix is equidistant from `along = 0` and
+  // `along = length`, and as the FIRST ping of the run the cost function would
+  // rightly call it the start (see the tests below). The flag settles it
+  // outright instead of leaving it to `snapForwardBias`.
+  const [p] = pings([[0, 20]]);
+  const snap = snapOne(LOOP, { ...p, is_finish: true }, 0);
+
+  assert.equal(snap.along, LOOP.length);
+  assert.ok(LOOP.closed, 'and this is genuinely the ambiguous case');
+});
+
+test('a finish takes its position and elevation from the last vertex', () => {
+  const [p] = pings([[1500, 200]]);
+  const snap = snapOne(STRAIGHT, { ...p, is_finish: true }, 0);
+  const end = STRAIGHT.path[STRAIGHT.path.length - 1];
+
+  assert.equal(snap.lon, end.lon);
+  assert.equal(snap.lat, end.lat);
+  assert.equal(snap.ele, end.ele);
+});
+
+test('a finish goes through the cache like any other snap', () => {
+  // It is stored by name alongside the rest, so a reload must not recompute it
+  // or, worse, recompute it differently.
+  const [a, b] = pings([[100, 20], [1900, 30]]);
+  const points = [a, { ...b, is_finish: true }];
+
+  const warm = snapAll(STRAIGHT, points, null).cache;
+  assert.equal(warm.byName['p1.json'].along, STRAIGHT.length);
+  assert.equal(warm.last.along, STRAIGHT.length, 'and it moves progress to the end');
+
+  const nearest = counting();
+  const again = snapAll(STRAIGHT, points, JSON.parse(JSON.stringify(warm)), nearest);
+  assert.equal(nearest.calls, 0);
+  assert.deepEqual(again.cache.byName['p1.json'], warm.byName['p1.json']);
+});
+
 // --- the circular course ----------------------------------------------------
 
 test('on a loop, the FIRST ping at the start/finish snaps to the start', () => {

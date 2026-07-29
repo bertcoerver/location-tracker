@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { boundsOf, buildPoints, latestOf, posOf, unionBounds } from '../src/points.js';
+import {
+  boundsOf, buildPoints, finishOf, latestOf, posOf, unionBounds
+} from '../src/points.js';
 
 const cache = {
   'b.json': { name: 'b.json', t: 200, lat: 1, lon: 2 },
@@ -20,6 +22,29 @@ test('buildPoints and latestOf handle an empty cache', () => {
 
 test('boundsOf returns [[minLon, minLat], [maxLon, maxLat]]', () => {
   assert.deepEqual(boundsOf(buildPoints(cache)), [[-4, -5], [6, 3]]);
+});
+
+// --- the end of a run ---------------------------------------------------------
+
+test('finishOf finds the finish when the phone signed off', () => {
+  const points = buildPoints({ ...cache, 'd.json': { name: 'd.json', t: 400, is_finish: true } });
+  assert.equal(finishOf(points).name, 'd.json');
+});
+
+test('a ping after the finish means the run is going again', () => {
+  // The phone was restarted. Reading only the LAST point is what makes this fall
+  // out for free — and what stops the panel and the poll schedule disagreeing,
+  // since they are both looking at this one element.
+  const points = buildPoints({
+    'c.json': { name: 'c.json', t: 300, is_finish: true },
+    'd.json': { name: 'd.json', t: 400, lat: 1, lon: 2 }
+  });
+  assert.equal(finishOf(points), null);
+});
+
+test('finishOf has nothing to say about a run in progress, or an empty one', () => {
+  assert.equal(finishOf(buildPoints(cache)), null);
+  assert.equal(finishOf([]), null);
 });
 
 // --- where a point is actually drawn -----------------------------------------

@@ -188,6 +188,34 @@ test('the phone`s own grid is never checked more than once', () => {
   }
 });
 
+// --- a run that has declared itself over ---------------------------------------
+
+test('a finished run goes straight to the cap, skipping the whole ladder', () => {
+  // The saving this feature is for. Without the flag, a run that has just ended
+  // spends nine requests climbing the overdue ladder before it settles; with it,
+  // the first poll after the finish lands is already at four an hour.
+  assert.equal(nextPollMs({ ...ping(0, 90), is_finish: true }, NOW), CONFIG.maxPollMs);
+  assert.equal(nextPollMs({ ...ping(9, 90), is_finish: true }, NOW), CONFIG.maxPollMs);
+  assert.equal(nextPollMs({ ...ping(7 * 24 * 60, 5), is_finish: true }, NOW), CONFIG.maxPollMs);
+});
+
+test('a finished run is still polled, because a NEW run could start', () => {
+  // The cap rather than never: this page is left open, and the thing worth
+  // noticing after a race ends is the next one beginning.
+  assert.ok(nextPollMs({ ...ping(1, 90), is_finish: true }, NOW) < Infinity);
+  assert.ok(nextPollMs({ ...ping(1, 90), is_finish: true }, NOW) >= CONFIG.minRefreshMs);
+});
+
+test('the finish is checked before the battery, so a finish with no battery still counts', () => {
+  assert.equal(nextPollMs({ t: NOW - MIN, is_finish: true }, NOW), CONFIG.maxPollMs);
+});
+
+test('dueInMs has nothing to predict once the run has finished', () => {
+  // Whatever the battery said, there is no next ping. The panel says "Finished
+  // 12m ago" instead, and an expectation beside it would be a contradiction.
+  assert.equal(dueInMs({ ...ping(1, 90), is_finish: true }, NOW), null);
+});
+
 // --- nothing to predict from --------------------------------------------------
 
 test('nextPollMs falls back to the fixed rate for a ping with no battery', () => {

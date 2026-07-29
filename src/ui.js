@@ -2,7 +2,7 @@
 
 import { LS_LAYERS } from './config.js';
 import { isLive } from './github.js';
-import { latestOf } from './points.js';
+import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
 import { ago, coarse, fmtElapsed, storage } from './util.js';
 
@@ -21,6 +21,9 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const boxes = { waypoints: el('t-waypoints'), raw: el('t-raw') };
 
   let points = [];
+  // The ping the phone marked as its last, when there is one. Derived rather
+  // than pushed in, so there is no second source of truth about it.
+  let finish = null;
   let index = {};
   let run = null;
   // Which toggles have anything to toggle: no waypoints in the GPX, no
@@ -61,6 +64,22 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   }
 
   /**
+   * Is the phone still out there?
+   *
+   * Two conditions, and the second is the one worth having. `isLive` can only
+   * guess from the clock — a run stays "live" for an hour after its last ping —
+   * so it cannot tell a finished race from a phone in a tunnel. A finish marker
+   * can, and it says so the instant it lands rather than an hour later.
+   *
+   * Only for the run on screen. The picker's per-run marker keeps plain
+   * `isLive`, because the index is built from the tree API and knows nothing
+   * about file contents; a run has to be opened before its finish is visible.
+   */
+  function live(now = Date.now()) {
+    return !finish && isLive(index[run], now);
+  }
+
+  /**
    * What the phone is doing: how long since the last ping, when the next one is
    * due, and the battery that decides the gap between them.
    *
@@ -73,13 +92,19 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
    * 30-minute silence is indistinguishable from a broken tracker; with them it
    * reads as a system working exactly as designed, and says how long to wait.
    *
+   * A finished run says so instead. The finish is the most recent thing that
+   * happened, so how old the last ping is has stopped being the question.
+   *
    *   ● Last ping 1m ago · next ~16m · 25%
    *   ● Last ping 34m ago · overdue · 25%
+   *   ● Finished 12m ago
    */
   function renderTicker(state) {
     if (points.length) {
       const last = latestOf(points);
-      tickerTextEl.textContent = `Last ping ${ago(last.t)}${expectation(last)}`;
+      tickerTextEl.textContent = finish
+        ? `Finished ${ago(finish.t)}`
+        : `Last ping ${ago(last.t)}${expectation(last)}`;
     } else if (state === 'loading') {
       tickerTextEl.textContent = 'Loading…';
     } else {
@@ -97,7 +122,7 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
    * existed; there is simply no schedule to predict from.
    */
   function expectation(last) {
-    if (!isLive(index[run], Date.now())) return '';
+    if (!live()) return '';
     const due = dueInMs(last);
     if (due === null) return '';
     return `${due > 0 ? ` · next ~${coarse(due)}` : ' · overdue'} · ${last.btry}%`;
@@ -119,11 +144,14 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     clockEl.hidden = !on;
     if (!on) return;
 
-    const live = isLive(index[run], Date.now());
+    const running = live();
     const from = points[0].t;
-    const to = live ? Date.now() : latestOf(points).t;
+    // The finish rather than the newest point, which is the same thing unless a
+    // ping that failed to upload turns up after it — then the race still ended
+    // when the phone said it did.
+    const to = running ? Date.now() : (finish || latestOf(points)).t;
 
-    clockLabelEl.textContent = live ? 'Elapsed' : 'Total';
+    clockLabelEl.textContent = running ? 'Elapsed' : 'Total';
     clockTimeEl.textContent = fmtElapsed(to - from);
   }
 
@@ -142,7 +170,7 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     // The status dot doubles as the live indicator: its COLOUR is whether the
     // last poll worked, and it PULSES while the run is still going. Two dots
     // side by side read as decoration rather than as two separate signals.
-    dotEl.dataset.live = String(isLive(index[run], now));
+    dotEl.dataset.live = String(live(now));
     // Liveness is also what decides whether the clock runs or shows a total.
     renderClock();
 
@@ -160,8 +188,11 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   return {
     setPoints(next) {
       points = next;
+      finish = finishOf(points);
       renderTicker(document.body.dataset.state);
-      renderClock();
+      // The dot and the picker's markers are downstream of liveness too, and a
+      // finish changes that without the index having moved at all.
+      renderRuns();
     },
 
     /** The seconds hand. Called once a second; it touches one text node. */

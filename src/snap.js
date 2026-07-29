@@ -47,8 +47,37 @@ function pick(candidates, prevAlong) {
   return best;
 }
 
+/**
+ * The last vertex of the course, in the shape of a snap.
+ *
+ * `CONFIG.snapMeters` deliberately does NOT apply here. For an ordinary ping,
+ * being half a kilometre off the route is evidence the phone isn't on it, and
+ * leaving the fix where it is says so honestly. A finish is not evidence — it is
+ * an assertion by the device that the course is done — so it is pinned whatever
+ * the geometry says, and `off` is left to tell the truth about the distance.
+ *
+ * On a CIRCULAR course this is the whole ballgame. The junction where start and
+ * finish coincide is precisely the ambiguity this file exists to fight, and the
+ * last ping of a lap is the case where `snapForwardBias` has the least margin.
+ * An explicit finish settles it outright instead of arguing about it.
+ */
+function courseEnd(course, point) {
+  const { path, proj } = course;
+  const end = path[path.length - 1];
+  return {
+    along: course.length,
+    lon: end.lon,
+    lat: end.lat,
+    ele: end.ele,
+    // Measured the same way `buildCourse` measures the start/finish gap.
+    off: Math.hypot(proj.x(point.lon) - proj.x(end.lon), proj.y(point.lat) - proj.y(end.lat))
+  };
+}
+
 /** One ping -> its place on the course, or null if it's simply not near it. */
 export function snapOne(course, point, prevAlong, nearest = nearestOnCourse) {
+  if (point.is_finish) return courseEnd(course, point);
+
   const best = pick(nearest(course, point.lon, point.lat, CONFIG.snapMeters), prevAlong);
   if (!best) return null;
   return { along: best.along, lon: best.lon, lat: best.lat, ele: best.ele, off: best.perp };

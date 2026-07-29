@@ -79,7 +79,14 @@ export const CONFIG = {
 
 // localStorage keys. Bump the version suffix when the cached shape changes —
 // old entries are then ignored instead of misread.
-const V = 'v5';
+//
+// v6: points carry `is_finish`. The bump is load-bearing rather than tidy. A
+// finish file is an ordinary ping, so a browser that cached it BEFORE this code
+// shipped stored it without the flag — and since `hydrate` diffs on sha, and the
+// sha never changes, it would never be refetched and the finish would stay
+// invisible on that browser forever. One forced re-hydrate fixes it, and costs
+// nothing against the API budget: every body comes from the CDN.
+const V = 'v6';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

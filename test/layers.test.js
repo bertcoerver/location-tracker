@@ -106,6 +106,16 @@ test('the newest fix is marked, and a message and battery still come through', (
   assert.ok(out.includes('over the top'));
 });
 
+test('the finish says so, and says it instead of "latest"', () => {
+  // It is almost always both, and "finish" is the more useful of the two — and
+  // the one that is still true tomorrow, once a newer run has taken "latest".
+  const finish = { ...point, is_finish: true, stats: { sinceStart: 0 } };
+
+  assert.ok(text(tooltipHtml(finish, true)).includes('· finish'));
+  assert.ok(!text(tooltipHtml(finish, true)).includes('· latest'));
+  assert.ok(text(tooltipHtml(finish, false)).includes('· finish'), 'even when it is not newest');
+});
+
 test('a waypoint is described as a place, not as a moment', () => {
   const tooltip = makeTooltip(() => []);
   const out = tooltip({

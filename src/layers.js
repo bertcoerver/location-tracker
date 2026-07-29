@@ -267,9 +267,10 @@ export function hoverLayers(position) {
 
 /** Tooltip markup for one fix. Pure and DOM-free, so it's directly testable. */
 export function tooltipHtml(point, isLatest) {
-  const rows = [
-    `<div class="t">${fmtTime.format(point.t)}${isLatest ? ' &middot; latest' : ''}</div>`
-  ];
+  // A finish beats "latest" — it is almost always both, and it says more. It is
+  // also the one tag that stays true: this fix is still the finish tomorrow.
+  const tag = point.is_finish ? ' &middot; finish' : isLatest ? ' &middot; latest' : '';
+  const rows = [`<div class="t">${fmtTime.format(point.t)}${tag}</div>`];
 
   // The raw coordinates are the truth, and "snapped 12 m" belongs beside them
   // because that is what it qualifies: how far the drawn dot is from the fix.

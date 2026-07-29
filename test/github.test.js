@@ -370,6 +370,27 @@ test('optional fields are carried through and absent ones stay absent', async ()
   assert.equal(withBtry.msg, undefined);
 });
 
+test('a finish is flagged, and normalised so it survives the cache', async () => {
+  // The phone's last upload is an ordinary ping with one extra field. It has to
+  // come out as a real boolean, because this record goes through JSON on its way
+  // to localStorage and back on every reload.
+  gh.files.set(`${RUN}/2026-07-28T13_00_00+02_00.json`,
+    { lat: 46.57, lon: -0.77, btry: 41, is_finish: true });
+
+  const { cache } = await poll('vendee-10k');
+  const finish = cache['2026-07-28T13_00_00+02_00.json'];
+
+  assert.equal(finish.is_finish, true);
+  assert.equal(finish.lat, 46.57, 'and it is still a fix like any other');
+  assert.equal(finish.btry, 41);
+  assert.equal(JSON.parse(JSON.stringify(finish)).is_finish, true);
+});
+
+test('an ordinary ping is not a finish', async () => {
+  const { cache } = await poll('vendee-10k');
+  assert.equal(cache['2026-07-28T11_23_25+02_00.json'].is_finish, undefined);
+});
+
 test('timestamps come from the filename, since the body has none', async () => {
   const { cache } = await poll('vendee-10k');
   assert.equal(
