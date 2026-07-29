@@ -49,6 +49,14 @@ it, as the old separate picker did, would now take the run's name off the screen
 the open list a `●` marks the runs that are still live; the one already on screen never gets one,
 because its own liveness is the pulsing dot one line above.
 
+The heading is sized by an invisible span rather than by the control itself. A `<select>` is laid
+out from the browser's own metrics, not from the width of its option text, so at 20 px it comes out
+a few pixels too narrow and quietly clips the end of a longer name; the span carries the same string
+at the same type and the control is stretched over it. The two box models have to match exactly,
+borders included, or the ruler is short by precisely the border. The one cap on how wide a name may
+make the panel lives on that span, in viewport units — a percentage there would resolve against the
+width it is itself deciding, and clip by the heading's own negative margin.
+
 While a run is live the top line also says **when the next ping is due**:
 
 ```

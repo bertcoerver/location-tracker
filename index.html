@@ -102,10 +102,39 @@
     font-weight: 500;
     line-height: 1.2;
     color: var(--text-primary);
-    /* It holds the run picker and the chevron that sits over it. */
+    /* It holds the run picker, its sizer, and the chevron over them both. */
     position: relative;
     display: inline-block;
-    max-width: 100%;
+    /* Cancels the sizer's left padding, so the name stays flush with the rest
+       of the panel while the control still has somewhere to draw its border.
+       Deliberately NO `max-width: 100%` here: this margin makes the heading
+       measure 6 px narrower than it wants, the panel shrinks to that, and a
+       percentage cap would then resolve against the smaller answer and clip the
+       name by exactly those 6 px. The sizer below is capped instead, in units
+       that don't depend on the box being measured. */
+    margin-left: -6px;
+  }
+  /* The sizer, and the reason the heading is built this way at all.
+     A <select> is laid out from the browser's own metrics rather than from the
+     width of its option text, so at 20 px it comes out several pixels too narrow
+     and quietly clips the end of a longer run name. This span carries the same
+     string at the same type, gives the heading its width, and the control is
+     stretched over it. Invisible, never read aloud, purely a ruler. */
+  #title-text {
+    display: block;
+    padding: 1px 22px 1px 6px;
+    /* The control has one, and the two box models have to match to the pixel or
+       the ruler is short by exactly the border and the name clips again. */
+    border: 1px solid transparent;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    visibility: hidden;
+    /* The one cap on how wide a run name may make this panel. In viewport units
+       rather than a percentage, so it cannot depend on the width it is deciding.
+       Leaves room for the panel's own padding and its margin from the edge, so
+       an absurd name ellipsizes here rather than pushing the box off screen. */
+    max-width: calc(100vw - 80px);
   }
   /* The ping age, and the control that flies back to it. There is no separate
      Follow button: the thing you want to look at and the way to get there are
@@ -180,6 +209,10 @@
      it grows a border and a chevron only when pointed at, so it stops looking
      like a widget until you go looking for one. */
   #run {
+    /* Laid over the sizer, so the two always agree about how wide the name is. */
+    position: absolute;
+    inset: 0;
+    width: 100%;
     appearance: none;
     -webkit-appearance: none;
     font: inherit;
@@ -192,11 +225,12 @@
        sideways by a pixel the moment the cursor arrives. */
     border: 1px solid transparent;
     border-radius: 7px;
+    /* Matches the sizer's, so the visible text lands exactly where it measured. */
     padding: 1px 22px 1px 6px;
-    /* ...and pulled back by the same amount, so the text still sits flush with
-       everything else in the panel. */
-    margin-left: -6px;
-    max-width: 100%;
+    /* Only reachable by a name long enough to hit the sizer's cap. Without it
+       such a name ends on a half-drawn letter, which reads as a rendering bug
+       rather than as "there is more of this". */
+    text-overflow: ellipsis;
     cursor: pointer;
   }
   #run:hover, #run:focus-visible {
@@ -249,6 +283,10 @@
     cursor: pointer;
   }
   #toggles label:hover { color: var(--text-primary); }
+  /* A toggle for something this run hasn't got. This rule is not optional: the
+     `display: flex` above outranks the UA's `[hidden] { display: none }`, so
+     without it `hidden` sets an attribute and changes nothing on screen. */
+  #toggles label[hidden] { display: none; }
   #toggles input {
     margin: 0;
     accent-color: var(--accent);
@@ -391,8 +429,12 @@
       <span id="dot"></span><span id="ticker-text">Loading&hellip;</span>
     </button>
     <div id="course-label">Course</div>
-    <!-- The heading and the run picker are one control; ui.js fills it in. -->
-    <h1 id="title" data-single="true"><select id="run" aria-label="Course"></select></h1>
+    <!-- The heading and the run picker are one control; ui.js fills both in.
+         The span is a hidden sizer — see the CSS — not a second copy of the name. -->
+    <h1 id="title" data-single="true">
+      <span id="title-text" aria-hidden="true"></span>
+      <select id="run" aria-label="Course"></select>
+    </h1>
   </div>
   <div id="clock" hidden>
     <div id="clock-label">Elapsed</div>

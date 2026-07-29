@@ -8,9 +8,11 @@ import { ago, coarse, fmtElapsed, storage } from './util.js';
 
 export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const el = id => document.getElementById(id);
-  // The heading IS the run picker — see `renderRuns`. This is its wrapper, and
-  // it carries the flag that decides whether the control looks like a control.
+  // The heading IS the run picker — see `renderRuns`. `titleEl` is its wrapper,
+  // carrying the flag that decides whether the control looks like a control;
+  // `titleTextEl` is the hidden sizer that gives the wrapper its width.
   const titleEl  = el('title');
+  const titleTextEl = el('title-text');
   const dotEl    = el('dot');
   const tickerEl = el('ticker');
   const tickerTextEl = el('ticker-text');
@@ -203,9 +205,15 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     // Nothing to list yet: the heading still has to say something, and the
     // option carries no value because there is no run to navigate to.
     if (!names.length) {
-      runEl.add(new Option(run || 'Location Tracker', '', false, true));
+      const label = run || 'Location Tracker';
+      runEl.add(new Option(label, '', false, true));
+      titleTextEl.textContent = label;
       return;
     }
+
+    // What the closed control will be showing, which is what has to be measured.
+    // The live marker is deliberately not part of it — see the loop below.
+    titleTextEl.textContent = run || names[0];
 
     for (const name of names) {
       // The live marker, but never on the run being shown. Its own liveness is
