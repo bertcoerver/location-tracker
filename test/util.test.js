@@ -263,6 +263,31 @@ test('mapsUrl keeps six decimals, negatives included', () => {
 
 test('mapsUrl uses the documented search form, not a scraped /maps/@ URL', () => {
   // The @lat,lon,zoom shape out of the address bar is not a supported API and
-  // has changed before; `search/?api=1` is the one Google commits to.
+  // has changed before; `search/?api=1` is the one Google commits to, and it is
+  // what an unlabelled link stays on.
   assert.match(mapsUrl(46.5, 8.1), /^https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/);
+  assert.match(mapsUrl(46.5, 8.1, '   '), /\?api=1&query=/, 'a blank label is no label');
+});
+
+test('a labelled mapsUrl names the pin, at the cost of the older URL form', () => {
+  // `api=1` takes EITHER a coordinate or a place name: pass a name and the pin
+  // moves to whatever Google matched, which is worse than a blank card. The
+  // `?q=lat,lon(Label)` form is the only one that does both, so a label buys a
+  // URL scheme Google no longer documents.
+  assert.equal(
+    mapsUrl(46.5, 8.1, 'Feed station'),
+    'https://maps.google.com/?q=46.500000,8.100000(Feed%20station)'
+  );
+});
+
+test('mapsUrl keeps a label from breaking out of its own delimiters', () => {
+  // The parentheses ARE the delimiters, so one inside the label would end it
+  // early and leave the rest as junk query text.
+  assert.equal(
+    mapsUrl(46.5, 8.1, 'Col (north side)'),
+    'https://maps.google.com/?q=46.500000,8.100000(Col%20north%20side)'
+  );
+  // And everything else is percent-encoded rather than trusted — waypoint names
+  // come out of a GPX file somebody else wrote.
+  assert.ok(mapsUrl(46.5, 8.1, 'a&b="c"').endsWith('(a%26b%3D%22c%22)'));
 });

@@ -12,6 +12,7 @@ import { applySnaps, snapAll } from './snap.js';
 import { deriveStats } from './stats.js';
 import { createMap } from './map.js';
 import { createProfile } from './profile.js';
+import { same } from './pin.js';
 import { createUi } from './ui.js';
 import { pinnedRun, urlFor } from './route.js';
 import { fmtClock, persistedAt, storage, throttle } from './util.js';
@@ -38,11 +39,38 @@ let courseError = '';
 const map = createMap(document.getElementById('map'), {
   // The map turns following off when the user pans; keep the button in sync.
   onFollowChange: on => ui.setFollowPressed(on),
-  onCourseHover: along => profile.setHover(along)
+  onCourseHover: along => profile.setHover(along),
+  onSelect: select
 });
 
 const profile = createProfile(document.getElementById('profile'), {
-  onHover: along => map.setHover(along)
+  onHover: along => map.setHover(along),
+  onSelect: select
+});
+
+// The pinned point, if any. Hover is a fine way to glance at a point and a poor
+// way to READ one — the cursor has to be held still, and the Google Maps link
+// inside can't be reached before the tooltip evaporates. On a phone there is no
+// hover at all. So a click pins the tooltip, and hovering is suspended in both
+// views until it's put down.
+//
+// It lives here for the same reason the hover does: it is one fact about one
+// place, and both views have to agree about it.
+let selection = null;
+
+/** @param {import('./pin.js').Selection|null} next */
+function select(next) {
+  // Clicking a point you have already pinned is how you put it down. Clicking
+  // bare basemap arrives here as null, which does the same.
+  selection = same(selection, next) ? null : next;
+  map.setSelection(selection);
+  profile.setSelection(selection);
+}
+
+// The keyboard way out, for when the thing you'd have to click is under the
+// tooltip you're trying to dismiss.
+addEventListener('keydown', event => {
+  if (event.key === 'Escape' && selection) select(null);
 });
 
 const ui = createUi({
@@ -150,6 +178,8 @@ async function reconcile() {
   if (next !== run) {
     run = next;
     map.refit();              // a different run is a different place
+    select(null);             // and a point pinned on the old one is gone
+
     course = null;
     courseSha = null;
     map.setCourse(null);

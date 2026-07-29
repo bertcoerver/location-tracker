@@ -64,15 +64,27 @@ export function fmtElapsed(ms) {
 }
 
 /**
- * A Google Maps deep link for a coordinate.
+ * A Google Maps deep link for a coordinate, optionally naming the pin.
  *
- * `search/?api=1&query=` is the documented, supported URL form — the
- * `/maps/@lat,lon,z` one that comes out of the address bar is not, and it has
- * changed shape before. Six decimals is about 10 cm, which is well past what a
- * phone's GPS knows.
+ * Six decimals is about 10 cm, which is well past what a phone's GPS knows.
+ *
+ * Two URL forms, and the choice is forced. `search/?api=1&query=` is the
+ * documented one, but `query` takes EITHER a coordinate or a place name: pass a
+ * name and Google moves the pin to whatever it matched, which is worse than the
+ * blank info card you get from a coordinate. The `?q=lat,lon(Label)` form is the
+ * older scheme Google no longer documents, and it is the only one that drops a
+ * pin at an exact coordinate and labels it. So: labelled links take the old
+ * form, and anything without a label stays on the supported one.
+ *
+ * The parentheses are the delimiters, so a label containing one would break the
+ * parse — those come out. Everything else is percent-encoded.
  */
-export function mapsUrl(lat, lon) {
-  return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}`;
+export function mapsUrl(lat, lon, label = '') {
+  const at = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+  const name = label.replace(/[()]/g, '').trim();
+  return name
+    ? `https://maps.google.com/?q=${at}(${encodeURIComponent(name)})`
+    : `https://www.google.com/maps/search/?api=1&query=${at}`;
 }
 
 /** Run `fn` over `items` with at most `n` in flight. Order of results is not guaranteed. */

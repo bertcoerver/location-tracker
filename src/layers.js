@@ -5,7 +5,7 @@ import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
 import { courseHoverAt } from './course.js';
 import { interpolateAt } from './stats.js';
-import { escapeHtml, fmtDuration, fmtTime, mapsUrl } from './util.js';
+import { escapeHtml, fmtClock, fmtDuration, fmtTime, mapsUrl } from './util.js';
 import { latestOf, posOf } from './points.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
@@ -300,7 +300,11 @@ export function tooltipHtml(point, isLatest) {
   if (point.btry !== undefined) rows.push(`<div class="r">Battery ${point.btry}%</div>`);
   if (point.msg) rows.push(`<div class="m">${escapeHtml(point.msg)}</div>`);
   if (point.img) rows.push(`<img src="${encodeURI(point.img)}" alt="">`);
-  rows.push(mapsLink(point.lat, point.lon));
+  // Distance and time of day, which is what makes one ping's pin tellable from
+  // the next one's once you're looking at it in Google Maps.
+  rows.push(mapsLink(point.lat, point.lon, stats && stats.distTotal !== undefined
+    ? `${fmtDistance(stats.distTotal)} · ${fmtClock.format(point.t)}`
+    : fmtClock.format(point.t)));
   return rows.join('');
 }
 
@@ -311,7 +315,7 @@ export function waypointTooltipHtml(waypoint) {
     rows.push(`<div class="r">${Math.round(waypoint.ele)} m</div>`);
   }
   rows.push(`<div class="r">${waypoint.lat.toFixed(6)}, ${waypoint.lon.toFixed(6)}</div>`);
-  rows.push(mapsLink(waypoint.lat, waypoint.lon));
+  rows.push(mapsLink(waypoint.lat, waypoint.lon, waypoint.name || waypoint.sym || 'Waypoint'));
   return rows.join('');
 }
 
@@ -339,7 +343,7 @@ export function hoverTooltipHtml(at) {
   if (at.upTotal !== undefined) {
     rows.push(`<div class="r">${climbHtml(at.upTotal, at.downTotal)}</div>`);
   }
-  rows.push(mapsLink(at.lat, at.lon));
+  rows.push(mapsLink(at.lat, at.lon, `${fmtDistance(at.along)} in`));
   return rows.join('');
 }
 
@@ -353,12 +357,16 @@ function sincePair(total, since) {
 /**
  * The one thing in a tooltip you can click.
  *
- * Both tooltips have to opt out of `pointer-events: none` for this to be
+ * Every tooltip names its pin, so the card that opens says which point you
+ * followed rather than sitting blank — see `mapsUrl` for why that costs a URL
+ * form Google no longer documents.
+ *
+ * All three tooltips have to opt out of `pointer-events: none` for this to be
  * reachable — deck.gl's default style sets it, and `#profile-tip` did too. See
- * `makeTooltip` and profile.js.
+ * `makeTooltip`, profile.js and pin.js.
  */
-function mapsLink(lat, lon) {
-  return `<a class="g" href="${mapsUrl(lat, lon)}" target="_blank" rel="noopener noreferrer">` +
+function mapsLink(lat, lon, label) {
+  return `<a class="g" href="${mapsUrl(lat, lon, label)}" target="_blank" rel="noopener noreferrer">` +
     'Open in Google Maps</a>';
 }
 
@@ -368,7 +376,7 @@ function climbHtml(up, down) {
   return `&uarr;&#8202;${m(up)} m &nbsp;&darr;&#8202;${m(down)} m`;
 }
 
-/** "850 m" / "12.4 km" — the same wording the profile readout uses. */
+/** "850 m" / "12.4 km" — one wording for distance, wherever it is shown. */
 export function fmtDistance(m) {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
 }
@@ -381,11 +389,17 @@ export function fmtDistance(m) {
  * the Google Maps link visible but dead. It also keeps the tooltip up long
  * enough to reach: deck only listens for pointer events on its own canvas, so
  * once the cursor is over the tooltip div deck never learns it left the object.
+ *
+ * @param {() => boolean} isPinned whether a point is currently selected. Hover
+ *   is suspended while one is — a hover tooltip appearing beside the pinned one
+ *   would be two answers to a question the user has already settled.
  */
-export function makeTooltip(getPoints, getCourse = () => null) {
+export function makeTooltip(getPoints, getCourse = () => null, isPinned = () => false) {
   const tip = html => (html ? { html, className: 'tip', style: { pointerEvents: 'auto' } } : null);
 
   return ({ object, layer, coordinate }) => {
+    if (isPinned()) return null;
+
     // The hit band is pickable so that hovering the route drives the profile
     // crosshair. What comes back as `object` is a segment — an array of
     // vertices, not a fix — so the coordinate is what's worth describing.

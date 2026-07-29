@@ -34,10 +34,11 @@ Each run keeps its own point cache, and **switching runs costs no API requests a
 
 ## On screen
 
-Two numbers, both in the panel top left. **How long since the last ping**, beside the run name, and
-**how long the run has been going**, on its own line below. Not how many pings there are, and not
+Two numbers, both in the panel top left. **How long since the last ping**, on the top line, and
+**how long the run has been going**, below the run name. Not how many pings there are, and not
 what second the browser last checked GitHub — that second is the page's business, and the dot
-already says whether polling is healthy.
+already says whether polling is healthy. The run's name is set in the same type as the clock: they
+are the two things worth reading at a glance, so neither is a caption for the other.
 
 The clock counts from the first ping and ticks each second while the run is live. Once the run goes
 quiet — nothing for an hour — it **stops**, and its label changes from "Elapsed" to "Total". A clock
@@ -52,16 +53,37 @@ That ticker is also the main control. **Click it to fly back to the newest fix**
 turns following off, and the ticker dims to say so. There is no separate Follow button because
 "where is the runner" and "take me there" were never two questions.
 
-Below it, when a run has a course, two checkboxes decide what else is drawn: its **waypoints** (on
-the map and on the height strip both — one switch, or it would be lying about half the screen) and
-the **raw pings and snap lines**, the audit trail showing where each fix really was before it
-snapped. The snapped dots themselves have no switch: they are the reading, not a decoration. The
-choice is remembered across visits, and a checkbox for something the current run hasn't got stays
-hidden.
+Below it, when a run has a course, two checkboxes decide what else is drawn: its **points of
+interest** (on the map and on the height strip both — one switch, or it would be lying about half
+the screen) and the **raw points**, the audit trail showing where each fix really was before it
+snapped, joined to it by a dashed line. The snapped dots themselves have no switch: they are the
+reading, not a decoration. The choice is remembered across visits, and a checkbox for something the
+current run hasn't got stays hidden.
 
-**Every tooltip ends with a Google Maps link**, opening that exact spot in a new tab. For a ping it
-points at the raw fix rather than the snapped one — the snap moves the dot onto the course, it does
-not move the runner, and a link to the snapped position would be a place nobody has been.
+### Click to keep a tooltip
+
+Hovering is a fine way to glance at a point and a poor way to **read** one: the cursor has to be
+held still, the link inside can only be reached by a careful diagonal move, and on a phone there is
+no hover at all. So **clicking a point pins its tooltip** — a ping, a point of interest, or any spot
+on the course, in either view. While one is pinned, hovering is suspended everywhere: no second
+tooltip chases the cursor, and the crosshair stays on the point you asked about.
+
+The tooltip appears in the view you clicked and stays attached to the place, riding along as the map
+pans and zooms or the strip scrolls. It goes away when you click the same point again, click bare
+basemap, or press Escape. The other view still marks the spot, which is what makes a click in one
+view legible in the other.
+
+**Every tooltip ends with a Google Maps link**, opening that exact spot in a new tab, with a label
+on the pin — how far in and at what time for a ping, its own name for a point of interest. For a
+ping the link points at the raw fix rather than the snapped one: the snap moves the dot onto the
+course, it does not move the runner, and a link to the snapped position would be a place nobody has
+been.
+
+That label costs a URL form Google no longer documents. The supported `search/?api=1&query=` takes
+**either** a coordinate or a place name — pass a name and the pin jumps to whatever Google matched,
+which is worse than a blank card. The older `?q=lat,lon(Label)` is the only form that pins an exact
+coordinate *and* names it. Links without a label stay on the documented one. See `mapsUrl` in
+[`util.js`](src/util.js).
 
 Every ping is one colour, with the newest in the accent colour and a pulsing halo. There used to
 be a time ramp and a legend to decode it, but the only thing anyone read off it was how fresh the
@@ -97,7 +119,13 @@ With a course present, three things change:
   plots the whole course with each snapped ping on it, under a minimal distance axis ticked at
   round numbers — 500 m, 2 km, whatever is coarse enough to leave the labels legible. On a narrow
   screen it keeps its width and scrolls sideways rather than compressing a 20 km race into 375
-  pixels.
+  pixels; there is no scrollbar, because on the platforms that lay one out it eats into a 112 px
+  strip and on the ones that overlay it it sits on top of the distance labels. Instead the strip
+  **fades at whichever end has more course**, which says both that there is more and which way.
+
+  It is translucent, so the course carries on underneath the chart of it — a solid band across the
+  bottom of the map hides the very thing you are reading about. `--surface-3`, deliberately not the
+  same value as a tooltip's: a tooltip is small and transient and wants legibility above all else.
 
   The terrain line is drawn from one elevation sample per pixel column, then blurred by
   `profileSmoothPx` columns — about 100 m of ground, which settles GPS noise without flattening
@@ -121,13 +149,18 @@ With a course present, three things change:
 The map and the profile are two views of one run, so pointing at a place in either marks it in the
 other. Hovering the strip puts a ring on the route; hovering the route — or a ping — moves the
 strip's crosshair to it. Whichever view the pointer is actually over owns the crosshair, so the two
-can't fight over it.
+can't fight over it, and a **pinned** point outranks both.
 
 The drawn route is 3 px wide, which is a game of skill to hit with a mouse and hopeless with a
 thumb, so what you actually point at is a **transparent band `courseHoverPx` wide** laid over it.
 deck.gl's picking pass renders geometry whatever its fill alpha, so the band catches the cursor
 while showing nothing. It is the only pickable one of the two; the visible line is not, because two
 pickable layers over the same geometry would be two answers to one question.
+
+The band can be generous — it is 34 px — because deck picks the **topmost** layer under the cursor
+and the ping dots are drawn after it, so widening it never starts swallowing hovers meant for a fix.
+Measured: the crosshair still tracks 24 px off the drawn line, and a ping under the cursor still
+answers as a ping.
 
 ### Counting the climb
 
@@ -284,6 +317,7 @@ src/
   profile.js        the height profile strip and its distance axis (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
+  pin.js            the tooltip a click pins in place, shared by both views
   colors.js         reads the CSS colour tokens
   util.js           time parsing, formatting, concurrency pool, storage guard
 test/
@@ -315,8 +349,11 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - Another figure derived per ping → `stats.js`, then a row in `tooltipHtml`.
 - Something new to say about a spot on the course → `interpolateAt` in `stats.js`, then
   `hoverTooltipHtml` in `layers.js`. Both views render from those two, so neither can drift.
-- Linking the two views further → `map.js` and `profile.js` each expose `setHover`; `main.js`
-  is where they are joined up.
+- Linking the two views further → `map.js` and `profile.js` each expose `setHover` and
+  `setSelection`; `main.js` is where they are joined up and where the pinned point lives.
+- Something else clickable → `describe()` in `map.js` (the map's side) or `readAt()` in
+  `profile.js` (the strip's). Both return the same small `Selection`, so neither view needs to
+  know how the other one found it.
 - Another optional layer → a checkbox in `index.html`, a flag through `ui.js`'s `onLayers`, and
   `setLayers` on `map.js` and/or `profile.js`. Nothing that carries a reading should get one.
 
@@ -374,6 +411,16 @@ The axis ladder is tested at course lengths from 500 m to 250 km — that the ti
 pack closer than the minimum spacing, always land on 1, 2 or 5 × 10ⁿ rather than
 `length / 8`, and that a zero-length course returns a single tick instead of looping
 forever.
+
+Pinning is tested through its two pure pieces. `same()` decides whether a click is a
+re-click — the rule that makes clicking a pinned point put it down — and it is checked
+that a rebuilt tooltip for the same place still counts as the same point, that two spots
+on a lap sharing a coordinate do not, and that the same place clicked from the *other*
+view is a move rather than a dismissal. `clampLeft` keeps a tooltip on screen at either
+edge and when it is wider than the window at all.
+
+The Maps link is tested for the thing that would silently break it: a label containing a
+parenthesis, which is the delimiter of the URL form that carries it.
 
 ## A note on waypoint labels
 

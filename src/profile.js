@@ -11,8 +11,9 @@
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface } from './colors.js';
 import { pointAt } from './course.js';
-import { fmtDistance, hoverTooltipHtml, tooltipHtml } from './layers.js';
-import { latestOf } from './points.js';
+import { hoverTooltipHtml, tooltipHtml } from './layers.js';
+import { clampLeft, createPin } from './pin.js';
+import { latestOf, posOf } from './points.js';
 import { interpolateAt } from './stats.js';
 
 // Room above the terrain for the waypoint labels.
@@ -232,18 +233,22 @@ export function elevationAt(course, distance) {
 /**
  * @param {HTMLElement} root  the `#profile` panel
  */
-export function createProfile(root, { onHover = () => {} } = {}) {
+export function createProfile(root, { onHover = () => {}, onSelect = () => {} } = {}) {
   const scroller = root.querySelector('#profile-scroll');
   const canvas = root.querySelector('#profile-canvas');
-  const readout = root.querySelector('#profile-readout');
   // Outside the panel: the strip has `overflow: hidden`, so a tooltip parented
-  // to it would be clipped to a 104 px band.
+  // to it would be clipped to a 112 px band.
   const tip = document.getElementById('profile-tip');
+  const pin = createPin();
   const ctx = canvas.getContext('2d');
 
   let course = null;
   let points = [];
   let hover = null;      // distance in metres under the cursor, or null
+  // The pinned point, from a click in either view. While one is held, hovering
+  // is suspended everywhere: the user has said which point they want to read,
+  // and a crosshair chasing the cursor across it is just noise.
+  let selection = null;
   // Whether the cursor is on the strip itself. The map can also drive `hover`,
   // and without this the two would overwrite each other on every mouse move —
   // whoever the pointer is actually over has to win.
@@ -269,6 +274,17 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     return Boolean(course?.hasElevation && course.length > 0);
   }
 
+  /**
+   * Whether there is more course off either end, which is what the fading edges
+   * say now that there is no scrollbar to say it. Both ends are reported, so the
+   * fade appears only where there is something to reach.
+   */
+  function syncFades() {
+    const slack = scroller.scrollWidth - scroller.clientWidth;
+    root.dataset.moreLeft = String(scroller.scrollLeft > 1);
+    root.dataset.moreRight = String(scroller.scrollLeft < slack - 1);
+  }
+
   function sync() {
     const on = visible();
     root.hidden = !on;
@@ -277,7 +293,10 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     const style = document.documentElement.style;
     style.setProperty('--profile-h', on ? `${CONFIG.profileHeight}px` : '0px');
     style.setProperty('--profile-min-w', `${CONFIG.profileMinWidth}px`);
-    if (on) draw();
+    if (on) {
+      draw();
+      syncFades();
+    }
   }
 
   function draw() {
@@ -330,6 +349,24 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     if (layers.waypoints) drawWaypoints(scale);
     drawHover(scale, scale.floor, ridge);
     drawPoints(scale);
+    placePin(scale);
+  }
+
+  /**
+   * Keep the pinned tooltip over its point.
+   *
+   * Only when the pin was set from THIS view — the map owns it otherwise, and
+   * two views writing one element is how you get a tooltip that flickers
+   * between two positions. Called from `draw` and on scroll, because the canvas
+   * slides under a fixed-position tooltip when the strip is panned.
+   */
+  function placePin(scale) {
+    if (selection?.view !== 'profile' || selection.along === null) return;
+    const rect = canvas.getBoundingClientRect();
+    pin.place(
+      rect.left + scale.x(selection.along),
+      rect.top + scale.y(elevationAt(course, selection.along))
+    );
   }
 
   /**
@@ -366,9 +403,8 @@ export function createProfile(root, { onHover = () => {} } = {}) {
    * Waypoints as faint ticks with their names above them, so a feed station is
    * both findable and identifiable on the profile.
    *
-   * No collision extension here as there is on the map, so overlap is handled by
-   * the one rule that matters: a label that would run into the previous one is
-   * dropped rather than drawn on top of it.
+   * Overlap is handled by the one rule that matters: a label that would run into
+   * the previous one is dropped rather than drawn on top of it.
    */
   function drawWaypoints(scale) {
     if (!course.waypoints.length) return;
@@ -473,16 +509,8 @@ export function createProfile(root, { onHover = () => {} } = {}) {
 
     // Centred on the cursor, then pushed back inside the window — at the far
     // end of a scrolled strip the dot is near the edge and the tip would
-    // otherwise hang off it.
-    const width = tip.offsetWidth;
-    const left = Math.max(8, Math.min(innerWidth - width - 8, clientX - width / 2));
-    tip.style.left = `${left}px`;
-  }
-
-  /** One ping's markup — the very same function the map's tooltip uses. */
-  function pingTip(point) {
-    const latest = latestOf(points);
-    return tooltipHtml(point, !!latest && latest.name === point.name);
+    // otherwise hang off it. Same rule the pinned tooltip uses.
+    tip.style.left = `${clampLeft(clientX, tip.offsetWidth, innerWidth)}px`;
   }
 
   function hideTip() {
@@ -490,29 +518,68 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     tip.innerHTML = '';
   }
 
-  canvas.addEventListener('pointermove', event => {
-    if (!visible()) return;
-    owned = true;
+  /**
+   * What is under the cursor: a ping if there's one close enough, otherwise the
+   * ground itself. The two branches differ only in where the numbers come from,
+   * so hovering and clicking ask this the same question and can't disagree
+   * about the answer.
+   *
+   * @returns {{along: number, html: string, lat: number, lon: number}}
+   */
+  function readAt(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const scale = scaleFor(course, rect.width, rect.height);
-    const x = event.clientX - rect.left;
 
-    // A dot under the cursor wins over the terrain reading: it's the specific
-    // thing being pointed at, and the readout would just be the same numbers.
-    const hit = hitTest(points, course, scale, x, event.clientY - rect.top);
+    const hit = hitTest(points, course, scale, clientX - rect.left, clientY - rect.top);
     if (hit) {
-      hover = hit.snap.along;
-      readout.textContent = '';
-      showTip(pingTip(hit), event.clientX);
-    } else {
-      // Not on a ping, so describe the ground itself: how far in, how high, and
-      // — interpolated between the pings either side — when the run was here.
-      hover = scale.distanceAt(x);
-      readout.textContent = `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
-      showTip(hoverTooltipHtml(interpolateAt(points, course, hover)), event.clientX);
+      const latest = latestOf(points);
+      // The DRAWN position, so that pinning the same ping from either view
+      // means the same thing. The raw fix is inside the tooltip.
+      const [lon, lat] = posOf(hit);
+      return {
+        along: hit.snap.along,
+        html: tooltipHtml(hit, !!latest && latest.name === hit.name),
+        lat,
+        lon
+      };
     }
+
+    // Not on a ping, so describe the ground: how far in, how high, and —
+    // interpolated between the pings either side — when the run was here.
+    const along = scale.distanceAt(clientX - rect.left);
+    const at = interpolateAt(points, course, along);
+    return { along, html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon };
+  }
+
+  canvas.addEventListener('pointermove', event => {
+    if (!visible() || selection) return;
+    owned = true;
+
+    const at = readAt(event.clientX, event.clientY);
+    hover = at.along;
+    showTip(at.html, event.clientX);
     onHover(hover);
     draw();
+  });
+
+  /**
+   * Pin what's under the cursor. Every click on the strip selects something —
+   * a ping if there is one, the ground if there isn't — so there is nothing to
+   * miss. Putting a selection down again is a click on the same point, or
+   * Escape, or a click on empty map; main.js owns that rule.
+   */
+  canvas.addEventListener('click', event => {
+    if (!visible()) return;
+    const at = readAt(event.clientX, event.clientY);
+    onSelect({ view: 'profile', html: at.html, lat: at.lat, lon: at.lon, along: at.along });
+  });
+
+  scroller.addEventListener('scroll', () => {
+    syncFades();
+    // A fixed-position tooltip doesn't move with the canvas underneath it.
+    if (selection?.view === 'profile') {
+      placePin(scaleFor(course, canvas.clientWidth, canvas.clientHeight));
+    }
   });
 
   /**
@@ -524,9 +591,11 @@ export function createProfile(root, { onHover = () => {} } = {}) {
   function leave(event) {
     if (event?.relatedTarget && tip.contains(event.relatedTarget)) return;
     owned = false;
-    hover = null;
-    readout.textContent = '';
     hideTip();
+    // A pinned point outlives the cursor — that is the whole point of pinning
+    // it — so the crosshair stays where the selection put it.
+    if (selection) return;
+    hover = null;
     onHover(null);
     draw();
   }
@@ -538,7 +607,10 @@ export function createProfile(root, { onHover = () => {} } = {}) {
   // And leaving the tooltip itself, for anywhere that isn't back on the canvas.
   tip.addEventListener('pointerleave', leave);
   document.addEventListener('pointerdown', event => {
-    if (!canvas.contains(event.target) && !tip.contains(event.target)) leave();
+    // The pin is exempt as well as the hover tip: clicking the Google Maps link
+    // inside it must not be read as a click somewhere else.
+    if (!canvas.contains(event.target) && !tip.contains(event.target) &&
+        !pin.contains(event.target)) leave();
   });
 
   addEventListener('resize', sync);
@@ -551,7 +623,6 @@ export function createProfile(root, { onHover = () => {} } = {}) {
       // course to measure against, and it never changes after that.
       if (course) locateWaypoints(course);
       hover = null;
-      readout.textContent = '';
       hideTip();
       sync();
     },
@@ -572,6 +643,34 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     },
 
     /**
+     * The pinned point, or null. Told to BOTH views whichever one was clicked:
+     * the one that owns it draws the tooltip, and the other still marks the
+     * place, which is what makes a click in one view legible in the other.
+     *
+     * @param {import('./pin.js').Selection|null} next
+     */
+    setSelection(next) {
+      selection = next;
+      hideTip();      // no hover tooltip beside a pinned one
+      owned = false;
+
+      if (!selection) {
+        pin.hide();
+        hover = null;
+        draw();
+        return;
+      }
+
+      // The crosshair goes to the selection and stays there. An unsnapped ping
+      // has no place on a chart of distance along the course, so there is
+      // nothing to mark — the map still shows it.
+      hover = selection.along;
+      // Only this view's own selections get a tooltip here; the map owns its.
+      if (selection.view === 'profile') pin.show(selection.html);
+      draw();
+    },
+
+    /**
      * Mark a distance along the course, or clear it with null. This is the map
      * pointing at the strip.
      *
@@ -581,14 +680,13 @@ export function createProfile(root, { onHover = () => {} } = {}) {
      * @param {number|null} along metres along the course.
      */
     setHover(along) {
-      if (owned || !visible()) return;
+      // A selection outranks a hover from either view — it is the point the
+      // user asked to keep looking at.
+      if (owned || selection || !visible()) return;
       const next = along === null || along === undefined ? null : along;
       if (next === hover) return;
 
       hover = next;
-      readout.textContent = hover === null
-        ? ''
-        : `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
       draw();
     },
 
@@ -605,6 +703,7 @@ export function createProfile(root, { onHover = () => {} } = {}) {
       const target = scale.x(latest.snap.along) - scroller.clientWidth / 2;
       const max = canvas.clientWidth - scroller.clientWidth;
       if (max > 0) scroller.scrollLeft = Math.max(0, Math.min(max, target));
+      syncFades();
     }
   };
 }

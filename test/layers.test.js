@@ -5,7 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCourse } from '../src/course.js';
-import { fmtDistance, hoverTooltipHtml, makeTooltip, tooltipHtml } from '../src/layers.js';
+import {
+  fmtDistance, hoverTooltipHtml, makeTooltip, tooltipHtml, waypointTooltipHtml
+} from '../src/layers.js';
 import { interpolateAt } from '../src/stats.js';
 
 const point = {
@@ -115,7 +117,7 @@ test('a waypoint is described as a place, not as a moment', () => {
   assert.ok(!out.html.includes('since last'));
 });
 
-test('fmtDistance switches units where the profile readout does', () => {
+test('fmtDistance switches units the same way everywhere it is shown', () => {
   assert.equal(fmtDistance(850), '850 m');
   assert.equal(fmtDistance(12400), '12.4 km');
 });
@@ -130,14 +132,14 @@ test('every tooltip carries a link to the place it describes', () => {
   }).html;
 
   for (const html of [ping, waypoint]) {
-    assert.match(html, /href="https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/, html);
+    assert.match(html, /href="https:\/\/maps\.google\.com\/\?q=/, html);
     // New tab, and `noopener` so the opened page can't reach back through
     // window.opener into this one.
     assert.match(html, /target="_blank"/, html);
     assert.match(html, /rel="noopener noreferrer"/, html);
   }
-  assert.ok(ping.includes('query=46.500000,8.100000'), ping);
-  assert.ok(waypoint.includes('query=46.400000,-0.700000'), waypoint);
+  assert.ok(ping.includes('q=46.500000,8.100000('), ping);
+  assert.ok(waypoint.includes('q=46.400000,-0.700000(Col)'), waypoint);
 });
 
 test('a ping links to where the phone was, not to where it was drawn', () => {
@@ -146,8 +148,34 @@ test('a ping links to where the phone was, not to where it was drawn', () => {
   const html = tooltipHtml(
     { ...point, snap: { along: 8800, off: 300, lon: 8.2, lat: 46.6, ele: 900 } }, false);
 
-  assert.ok(html.includes('query=46.500000,8.100000'), html);
+  assert.ok(html.includes('q=46.500000,8.100000('), html);
   assert.ok(!html.includes('46.600000,8.200000'), html);
+});
+
+// The pin Google Maps drops used to open with a blank info card, so following a
+// link from four different pings gave you four identical anonymous markers.
+
+test('a ping names its pin with how far in it was and the time of day', () => {
+  const html = tooltipHtml(rich, false);
+  const label = decodeURIComponent(html.match(/\(([^)]*)\)/)[1]);
+
+  assert.match(label, /^8\.8 km · /, label);
+  // The time of day, in whatever form the runtime's locale gives it.
+  assert.match(label, /\d/, label);
+});
+
+test('a ping with no distance yet falls back to naming the time alone', () => {
+  // Before a course lands there are no stats, and "undefined km" would be worse
+  // than a shorter label.
+  const label = decodeURIComponent(tooltipHtml(point, false).match(/\(([^)]*)\)/)[1]);
+
+  assert.ok(!label.includes('km'), label);
+  assert.ok(!label.includes('undefined'), label);
+});
+
+test('a waypoint names its pin after itself', () => {
+  const html = waypointTooltipHtml({ name: 'Feed station', lat: 46.5, lon: 8.1 });
+  assert.ok(html.includes('(Feed%20station)'), html);
 });
 
 // --- the hovered spot on the course -------------------------------------------
@@ -197,7 +225,10 @@ test('the hovered spot links to itself on the course, interpolated', () => {
   const c = course();
   const html = hoverTooltipHtml(interpolateAt([ping('a', 0, 0)], c, 2000));
 
-  assert.match(html, /href="https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/);
+  assert.match(html, /href="https:\/\/maps\.google\.com\/\?q=/);
+  // And names the pin after the one thing that identifies a bare spot on a
+  // course: how far along it is.
+  assert.ok(html.includes('(2.0%20km%20in)'), html);
 });
 
 test('hoverTooltipHtml renders nothing at all when there is nothing to describe', () => {
@@ -246,4 +277,24 @@ test('every tooltip opts out of deck.gl\'s pointer-events: none', () => {
   const out = tooltip({ object: point, layer: { id: 'trail' } });
 
   assert.equal(out.style.pointerEvents, 'auto');
+});
+
+test('hover produces no tooltip at all while a point is pinned', () => {
+  // The user has said which point they want to read. A second tooltip chasing
+  // the cursor beside the pinned one is two answers to a settled question.
+  const c = course();
+  const points = [ping('a', 0, 0), ping('b', 20, 2000)];
+  const at = c.path[10];
+
+  const free = makeTooltip(() => points, () => c, () => false);
+  const pinned = makeTooltip(() => points, () => c, () => true);
+
+  for (const info of [
+    { object: point, layer: { id: 'trail' } },
+    { object: { kind: 'waypoint', name: 'Col', lat: 46.4, lon: -0.7 }, layer: { id: 'waypoints' } },
+    { object: c.segments[0], layer: { id: 'course-hit' }, coordinate: [at.lon, at.lat] }
+  ]) {
+    assert.ok(free(info), 'this case answers when nothing is pinned');
+    assert.equal(pinned(info), null);
+  }
 });

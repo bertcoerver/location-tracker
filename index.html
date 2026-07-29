@@ -11,6 +11,12 @@
 
     --surface-1:      #fcfcfb;
     --surface-2:      rgba(252, 252, 251, 0.88);
+    /* The height strip only. More see-through than a tooltip, because it lies
+       across the bottom of the map and the course it describes runs underneath
+       it — a solid band hides the very thing you're reading about. Tooltips are
+       small and transient and want to be legible above all else, so the two
+       deliberately don't share a value. */
+    --surface-3:      rgba(252, 252, 251, 0.72);
     --border:         rgba(11, 11, 11, 0.12);
     --text-primary:   #0b0b0b;
     --text-secondary: #52514e;
@@ -36,6 +42,7 @@
     :root:where(:not([data-theme="light"])) {
       --surface-1:      #1a1a19;
       --surface-2:      rgba(26, 26, 25, 0.88);
+      --surface-3:      rgba(26, 26, 25, 0.72);
       --border:         rgba(255, 255, 255, 0.14);
       --text-primary:   #ffffff;
       --text-secondary: #c3c2b7;
@@ -77,21 +84,23 @@
     min-width: 176px;
     max-width: calc(100vw - 24px);
   }
-  /* Run name and ping age on one line: they answer "which race" and "is it
-     still going", which is one question really. */
+  /* The dot and the ping age sit ABOVE the run name: "is it still going" is the
+     live signal and belongs at the top, and the name is the headline under it
+     rather than a label over it. */
   #head {
     display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 4px 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
   }
+  /* Same type as the clock below — they are the two things worth reading at a
+     glance, so they carry the same weight. */
   #status h1 {
     margin: 0;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .07em;
-    text-transform: uppercase;
-    color: var(--text-muted);
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--text-primary);
   }
   /* The ping age, and the control that flies back to it. There is no separate
      Follow button: the thing you want to look at and the way to get there are
@@ -216,6 +225,10 @@
     border-radius: 0;
     border-left: 0; border-right: 0; border-bottom: 0;
     overflow: hidden;
+    /* See-through, so the course carries on underneath the chart of it. The
+       blur stays: it is what keeps the axis labels readable over a basemap that
+       could be anything. */
+    background: var(--surface-3);
   }
   #profile[hidden] { display: none; }
   /* On a phone the strip would compress a 20 km course into 375 px of mush, so
@@ -225,19 +238,32 @@
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
+    /* No scrollbar. On the platforms that lay one out it eats into a 112 px
+       strip, and on the ones that overlay it it sits directly on top of the
+       distance labels. The fades below say the same thing from the margins. */
+    scrollbar-width: none;
   }
+  #profile-scroll::-webkit-scrollbar { display: none; }
+  /* "There is more course this way." Only the end that HAS more fades, so this
+     also says which way to go — which is the half of a scrollbar worth keeping. */
+  #profile::before, #profile::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 28px;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .18s;
+  }
+  #profile::before { left: 0;  background: linear-gradient(to right, var(--surface-3), transparent); }
+  #profile::after  { right: 0; background: linear-gradient(to left,  var(--surface-3), transparent); }
+  #profile[data-more-left="true"]::before,
+  #profile[data-more-right="true"]::after { opacity: 1; }
   #profile-canvas {
     display: block;
     height: var(--profile-h);
     width: max(100%, var(--profile-min-w));
-  }
-  #profile-readout {
-    position: absolute;
-    top: 6px; right: 10px;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-    font-size: 11px;
-    pointer-events: none;
   }
 
   .tip {
@@ -289,6 +315,17 @@
        profile.js allows exactly that move and dismisses on any other. */
   }
   #profile-tip[hidden] { display: none; }
+
+  /* The pinned tooltip: the one that stays up after a click. Placed in client
+     coordinates by whichever view was clicked — the map re-projects its anchor
+     every frame so it rides along with a pan, and the strip follows its scroll.
+     Above the map tooltip's own z-index, since only one of them is ever up. */
+  #pin {
+    position: fixed;
+    z-index: 3;
+    pointer-events: auto;
+  }
+  #pin[hidden] { display: none; }
 </style>
 </head>
 <body data-state="loading">
@@ -297,10 +334,10 @@
 
 <div id="status" class="panel">
   <div id="head">
-    <h1 id="title"><span id="title-text">Location Tracker</span></h1>
     <button id="ticker" type="button" aria-pressed="true" title="Fly to the latest ping">
       <span id="dot"></span><span id="ticker-text">Loading&hellip;</span>
     </button>
+    <h1 id="title"><span id="title-text">Location Tracker</span></h1>
   </div>
   <div id="clock" hidden>
     <div id="clock-label">Elapsed</div>
@@ -310,17 +347,17 @@
     <select id="run" aria-label="Run"></select>
   </div>
   <div id="toggles" hidden>
-    <label><input type="checkbox" id="t-waypoints" checked> Waypoints</label>
-    <label><input type="checkbox" id="t-raw" checked> Raw pings &amp; snap lines</label>
+    <label><input type="checkbox" id="t-waypoints" checked> Points of interest</label>
+    <label><input type="checkbox" id="t-raw" checked> Raw points</label>
   </div>
   <div id="error"></div>
 </div>
 
 <div id="profile" class="panel" hidden>
   <div id="profile-scroll"><canvas id="profile-canvas"></canvas></div>
-  <div id="profile-readout"></div>
 </div>
 <div id="profile-tip" class="tip" hidden></div>
+<div id="pin" class="tip" hidden></div>
 
 <script type="module" src="src/main.js"></script>
 </body>

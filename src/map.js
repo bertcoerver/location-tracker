@@ -3,16 +3,26 @@
 
 import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
-import { basemapLayer, courseLayers, hoverLayers, makeTooltip, pointLayers } from './layers.js';
+import {
+  basemapLayer, courseLayers, hoverLayers, hoverTooltipHtml, makeTooltip, pointLayers,
+  tooltipHtml, waypointTooltipHtml
+} from './layers.js';
+import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
+import { interpolateAt } from './stats.js';
 
 export function createMap(container, {
   onFollowChange = () => {},
-  onCourseHover = () => {}
+  onCourseHover = () => {},
+  onSelect = () => {}
 } = {}) {
   let points = [];
   let course = null;
   let hover = null;      // [lon, lat] on the course, from the profile strip
+  // The pinned point, from a click in either view. While one is held the map's
+  // hover tooltip is suspended and the crosshair stops chasing the cursor.
+  let selection = null;
+  const pin = createPin();
   let layerFlags = { waypoints: true, raw: true };
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
@@ -30,12 +40,92 @@ export function createMap(container, {
     ];
   }
 
+  /**
+   * What a click landed on, as a selection — or null for bare basemap.
+   *
+   * The same three cases `onHover` dispatches on, and the markup comes from the
+   * same functions the hover tooltip uses, so a pinned point reads exactly like
+   * a hovered one.
+   *
+   * @param {object} info deck.gl's picking info.
+   * @returns {import('./pin.js').Selection|null}
+   */
+  function describe(info) {
+    const { object, layer, coordinate } = info;
+
+    if (object?.kind === 'waypoint') {
+      return {
+        view: 'map',
+        html: waypointTooltipHtml(object),
+        lat: object.lat,
+        lon: object.lon,
+        along: object.along ?? null
+      };
+    }
+
+    // A ping. `t` is what a fix has and nothing else here does.
+    if (object?.t !== undefined) {
+      const latest = latestOf(points);
+      // The DRAWN position, snapped where it snapped: the tooltip has to point
+      // at the dot that was clicked. The raw fix is inside the tooltip, and its
+      // Maps link goes there.
+      const [lon, lat] = posOf(object);
+      return {
+        view: 'map',
+        html: tooltipHtml(object, !!latest && latest.name === object.name),
+        lat,
+        lon,
+        along: object.snap ? object.snap.along : null
+      };
+    }
+
+    // The course itself, via its transparent hit band.
+    if (layer?.id === 'course-hit' && course && coordinate) {
+      const along = courseHoverAt(course, coordinate[0], coordinate[1]);
+      if (along === null) return null;
+      const at = interpolateAt(points, course, along);
+      return { view: 'map', html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon, along };
+    }
+
+    return null;
+  }
+
+  /**
+   * Keep the pinned tooltip over its point as the map moves under it.
+   *
+   * The anchor is a coordinate, not a screen position, so it has to be
+   * re-projected — every frame, since a fly-to animates the camera without
+   * anything else telling us it moved. One point through one viewport is
+   * nothing next to the layer stack being rebuilt beside it.
+   */
+  function placePin() {
+    if (selection?.view !== 'map') return;
+    const rect = container.getBoundingClientRect();
+    const viewport = new deck.WebMercatorViewport({
+      ...viewState,
+      width: rect.width || 1,
+      height: rect.height || 1
+    });
+    const [x, y] = viewport.project([selection.lon, selection.lat]);
+    pin.place(rect.left + x, rect.top + y);
+  }
+
   const deckgl = new deck.DeckGL({
     container,
     viewState,
     controller: true,
     layers: [basemapLayer()],
-    getTooltip: makeTooltip(() => points, () => course),
+    getTooltip: makeTooltip(() => points, () => course, () => Boolean(selection)),
+
+    /**
+     * Pin what was clicked, so its tooltip stays up and can be read — and its
+     * Google Maps link reached — without holding the cursor still. A click on
+     * bare basemap selects nothing, which is how you put a selection down
+     * without having to find it again.
+     */
+    onClick: info => {
+      onSelect(describe(info));
+    },
 
     /**
      * Report what the cursor is pointing at on the course, so the height profile
@@ -44,6 +134,9 @@ export function createMap(container, {
      */
     onHover: info => {
       if (!course) return;
+      // A pinned point outranks the cursor: it is the place the user asked to
+      // keep looking at, so the crosshair stays on it.
+      if (selection) return;
       // A ping already knows where it sits on the course; no need to re-solve
       // geometry that snap.js worked out with the benefit of history.
       if (info.object?.snap) return onCourseHover(info.object.snap.along);
@@ -206,6 +299,9 @@ export function createMap(container, {
      * @param {number|null} along metres along the course.
      */
     setHover(along) {
+      // A selection outranks a hover from either view — it is the point the
+      // user asked to keep looking at.
+      if (selection) return;
       let next = null;
       if (course && along !== null && along !== undefined) {
         const at = pointAt(course, along);
@@ -227,6 +323,30 @@ export function createMap(container, {
     setLayers(next) {
       layerFlags = { ...layerFlags, ...next };
       render();
+    },
+
+    /**
+     * The pinned point, or null. Told to BOTH views whichever one was clicked:
+     * the one that owns it draws the tooltip, and the other still marks the
+     * place, which is what makes a click in one view legible in the other.
+     *
+     * @param {import('./pin.js').Selection|null} next
+     */
+    setSelection(next) {
+      selection = next;
+
+      if (!selection) {
+        pin.hide();
+        hover = null;
+        return render();
+      }
+
+      // The ring goes on the selection and stays there, in either view's case:
+      // clicking a point on the strip should mark it on the map.
+      hover = [selection.lon, selection.lat];
+      if (selection.view === 'map') pin.show(selection.html);
+      render();
+      placePin();
     },
 
     /** Fit the next setPoints() again — a different run is a different place. */
@@ -254,6 +374,10 @@ export function createMap(container, {
     tick() {
       pulse = (Math.sin(Date.now() / 500) + 1) / 2;
       if (points.length) deckgl.setProps({ layers: allLayers() });
+      // Here rather than in render(): a fly-to moves the camera for a second
+      // without anything calling render, and a pinned tooltip left behind at
+      // the old screen position would be pointing at nothing.
+      placePin();
     }
   };
 }

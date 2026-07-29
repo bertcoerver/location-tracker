@@ -31,10 +31,13 @@ export const CONFIG = {
   // between adjacent vertices, and summing that wobble is how a 600 m course
   // comes to report 1,400 m of climb. See course.js.
   eleThresholdM: 3,
-  // Half-width, in pixels, of the invisible band that makes the course
-  // hoverable. The drawn line is 3 px, which is a game of skill to hit with a
+  // Width, in pixels, of the invisible band that makes the course hoverable and
+  // clickable. The drawn line is 3 px, which is a game of skill to hit with a
   // mouse and impossible with a thumb — this is the part you actually point at.
-  courseHoverPx: 22,
+  // Safe to be this generous because deck picks the TOPMOST layer under the
+  // cursor and the ping dots are drawn after it, so a wider band never starts
+  // swallowing hovers meant for a fix.
+  courseHoverPx: 34,
 
   // --- the height profile strip --------------------------------------------
   profileHeight: 112,
