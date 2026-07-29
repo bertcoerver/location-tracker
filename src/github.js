@@ -180,23 +180,43 @@ export function loadCache(run) {
 }
 
 /**
- * Fetches one location file from raw.githubusercontent.com — the CDN, which is
- * NOT subject to the API's 60 requests/hour limit. A brand-new path can't be
- * stale in the CDN, so there's no freshness concern.
+ * Where a file lives on raw.githubusercontent.com — the CDN, which is NOT
+ * subject to the API's 60 requests/hour limit.
  *
- * The URL is built rather than read off the listing: a tree entry carries only
- * a path. This is byte-for-byte the `download_url` the Contents API returns,
- * `+` in the UTC offset included — raw.githubusercontent.com wants it literal.
+ * The path is built rather than read off the listing: a tree entry carries only
+ * a path. It is byte-for-byte the `download_url` the Contents API returns, `+`
+ * in the UTC offset included — raw.githubusercontent.com wants it literal.
+ *
+ * The blob's sha goes on as a query string, which the CDN ignores and which
+ * makes the URL **content-addressed**. That is what makes the `force-cache`
+ * below both safe and free: one sha is one immutable body, so a cached entry
+ * stays valid forever and never needs revalidating, while a file edited in
+ * place gets a genuinely new address.
+ *
+ * Without it, an edit changes a file's sha but not its URL. `hydrate` sees the
+ * new sha and dutifully refetches; `force-cache` means "use the cached entry
+ * whatever its freshness", so the browser hands back the OLD bytes; and the
+ * record is then written with the new sha and the old body — so it looks up to
+ * date and never corrects itself. Append-only pings never hit this. Adding
+ * `is_finish` to a file that already existed is the first edit this repo has
+ * ever made, and it found it. See the `V` note in config.js.
+ *
+ * @param {string} [sha] omit only when there is genuinely no sha to hand.
+ */
+export function rawUrl(run, name, sha) {
+  const { owner, repo, branch, dir } = CONFIG;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${run}/${name}`;
+  return sha ? `${url}?${encodeURIComponent(sha)}` : url;
+}
+
+/**
+ * Fetches one location file.
  *
  * @returns a point record, or null if the file isn't usable.
  */
-export function rawUrl(run, name) {
-  const { owner, repo, branch, dir } = CONFIG;
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${dir}/${run}/${name}`;
-}
 
 export async function fetchPoint(run, name, sha) {
-  const url = rawUrl(run, name);
+  const url = rawUrl(run, name, sha);
 
   const res = await fetch(url, { cache: 'force-cache' });
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
@@ -234,7 +254,9 @@ export async function fetchCourse(run, index) {
   const course = index[run]?.course;
   if (!course) return null;
 
-  const res = await fetch(rawUrl(run, course.name), { cache: 'force-cache' });
+  // With the sha, so re-drawing a route after editing the GPX shows the edit —
+  // same content-addressing as a ping. See `rawUrl`.
+  const res = await fetch(rawUrl(run, course.name, course.sha), { cache: 'force-cache' });
   if (!res.ok) throw new Error(`${course.name}: HTTP ${res.status}`);
   return { sha: course.sha, text: await res.text() };
 }

@@ -74,7 +74,9 @@ function fakeGitHub(files) {
         { status: 200, headers: { etag } });
     }
 
-    const path = String(url).split(`/${CONFIG.branch}/`)[1];
+    // The blob sha rides along as a query string, which the real CDN ignores —
+    // it is there to make the URL content-addressed, not to select anything.
+    const path = String(url).split(`/${CONFIG.branch}/`)[1].split('?')[0];
     if (!state.files.has(path)) return new Response('', { status: 404 });
     const body = state.files.get(path);
     // A string is served as-is: that's how a .gpx is held in these fixtures.
@@ -389,6 +391,42 @@ test('a finish is flagged, and normalised so it survives the cache', async () =>
 test('an ordinary ping is not a finish', async () => {
   const { cache } = await poll('vendee-10k');
   assert.equal(cache['2026-07-28T11_23_25+02_00.json'].is_finish, undefined);
+});
+
+// --- editing a file that already exists ---------------------------------------
+//
+// Pings are append-only, so for most of this repo's life no file ever changed
+// after it was written. Adding `is_finish` to the last ping of a finished run is
+// the first edit there has been, and it exposed the one assumption that made:
+// that a path and its contents were the same thing.
+
+test('a body is fetched from a URL carrying its sha, not from the bare path', async () => {
+  const { index } = await poll('vendee-10k');
+  await fetchCourse('vendee-10k', index);
+
+  const raw = gh.calls.filter(c => c.kind === 'RAW');
+  assert.ok(raw.length > 1, 'pings and the course were both fetched');
+  for (const call of raw) assert.match(call.url, /\?[^?]+$/, `no sha on ${call.url}`);
+});
+
+test('editing a file in place changes the URL it is fetched from', async () => {
+  // The bug this exists for: `force-cache` returns the cached body for a URL
+  // whatever its freshness, so if an edit does not change the address, the
+  // browser serves the pre-edit bytes and the new sha is stored against them.
+  const name = '2026-07-28T11_23_25+02_00.json';
+
+  await poll('vendee-10k');
+  const before = gh.calls.find(c => c.kind === 'RAW' && c.url.includes(name)).url;
+
+  // Same path, new contents — exactly what adding `is_finish` by hand does.
+  gh.files.set(`${RUN}/${name}`, { lat: 46.5735, lon: -0.7721, btry: 53, is_finish: true });
+  gh.reset();
+
+  const { cache } = await poll('vendee-10k');
+  const after = gh.calls.find(c => c.kind === 'RAW' && c.url.includes(name)).url;
+
+  assert.notEqual(after, before, 'the edit has to produce a different URL');
+  assert.equal(cache[name].is_finish, true, 'and the new body has to land');
 });
 
 test('timestamps come from the filename, since the body has none', async () => {

@@ -351,10 +351,21 @@ not already have:
 2. **Build the index** from that one response. Because a ping's capture time is in its *filename*,
    the listing alone says which runs exist, when each last moved, and what's in the one on screen.
    That is why the request count doesn't grow with the number of runs.
-3. **Diff against `localStorage`**, which caches each point keyed by filename + blob SHA. Because
-   files are immutable, a cached entry is never refetched.
+3. **Diff against `localStorage`**, which caches each point keyed by filename + blob SHA. A file
+   whose SHA hasn't moved is never refetched.
 4. **Fetch only the new files** from `raw.githubusercontent.com`, which is not subject to the
-   API's 60 requests/hour limit.
+   API's 60 requests/hour limit. **The SHA goes on the URL as a query string**, which the CDN
+   ignores — that makes each URL content-addressed, so `cache: 'force-cache'` is both safe and free:
+   one SHA is one immutable body, valid forever, never revalidated.
+
+   That last part is not decoration. Pings are append-only, so for most of this project's life no
+   file ever changed after it was written, and a path and its contents were the same thing. Adding
+   `is_finish` to the last ping of an already-finished run is the first edit there has been, and it
+   broke that assumption: the SHA moved but the address didn't, `force-cache` returned the pre-edit
+   bytes, and the record was then stored with the *new* SHA against the *old* body — so it looked
+   current and would never correct itself. The run you had open most recently was the one that
+   stayed wrong, because it was the one still in the browser's HTTP cache. Content-addressing the
+   URL fixes it; the `v7` cache bump discards the records the old scheme had already poisoned.
 
 Steady state is one cheap request per ping the phone actually sends, plus one ~70-byte fetch for
 the point itself. Reloading the page costs a single `304` and zero data fetches. Polling pauses

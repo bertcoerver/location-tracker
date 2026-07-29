@@ -98,7 +98,14 @@ export const CONFIG = {
 // sha never changes, it would never be refetched and the finish would stay
 // invisible on that browser forever. One forced re-hydrate fixes it, and costs
 // nothing against the API budget: every body comes from the CDN.
-const V = 'v6';
+//
+// v7: raw URLs carry the blob sha, and this bump is what repairs the damage the
+// old ones did. A file edited in place kept its address, so `hydrate` refetched
+// on the new sha and `force-cache` returned the old body — and the record was
+// then stored with the NEW sha and the OLD content. Those records look current
+// to the diff, so they would never be refetched, and the content-addressed URL
+// would never even be tried. Discarding them is the only way out.
+const V = 'v7';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the
