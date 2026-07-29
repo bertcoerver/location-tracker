@@ -66,10 +66,22 @@ export const CONFIG = {
   // cursor and the ping dots are drawn after it, so a wider band never starts
   // swallowing hovers meant for a fix.
   courseHoverPx: 34,
+  // How close, in pixels, the pointer has to be to a pinned point before it can
+  // be picked up and dragged along the course. Smaller than `courseHoverPx`:
+  // there is exactly one selection on screen and it is already marked, so this
+  // is aim rather than search — and a generous radius on the map would start
+  // stealing pans from the camera.
+  dragGrabPx: 22,
 
   // --- the height profile strip --------------------------------------------
   profileHeight: 112,
   profileMinWidth: 640, // narrower than this and the profile scrolls rather than squashes
+  // The narrowest a kilometre of course may be drawn. Without it the x-axis is
+  // simply the window, so a 150 km run and a 2 km run get the same pixels and
+  // the long one arrives as a smear with no readable hills in it. Below
+  // `profileMinWidth` this loses — a 3 km course must not be rendered 72 px
+  // wide just because it is short.
+  profilePxPerKm: 24,
   // Blur radius in pixel columns, applied when drawing the terrain line. One
   // column is a few tens of metres of course, so this smooths over ~100 m of
   // ground: enough to settle GPS elevation noise, far too little to flatten a

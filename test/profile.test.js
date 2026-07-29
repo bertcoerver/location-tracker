@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { CONFIG } from '../src/config.js';
 import { buildCourse } from '../src/course.js';
 import {
-  axisTicks, columns, elevationAt, hitTest, scaleFor, smooth, tickLabel
+  axisTicks, columns, elevationAt, hitTest, scaleFor, smooth, stripWidth, tickLabel
 } from '../src/profile.js';
 
 const LAT0 = 46.5;
@@ -14,6 +15,36 @@ function ramp(eles, step = 100) {
   const segments = [eles.map((ele, i) => ({ lat: LAT0, lon: (i * step) / M_LON, ele }))];
   return buildCourse({ segments, waypoints: [], hasElevation: true }, 'sha');
 }
+
+// --- how wide the strip wants to be -------------------------------------------
+
+test('a long course gets a fixed number of pixels per kilometre', () => {
+  // 150 km — the case the floor exists for. Squeezed into a window it is a
+  // smear; at a fixed scale it is a chart you scroll.
+  assert.equal(stripWidth({ length: 150_000 }), 150 * CONFIG.profilePxPerKm);
+});
+
+test('a short course keeps the minimum width rather than shrinking to fit', () => {
+  // Honouring px/km here would draw a 3 km course a couple of hundred pixels
+  // wide on a desktop, which obeys the rule and shows nothing.
+  const short = stripWidth({ length: 3000 });
+  assert.equal(short, CONFIG.profileMinWidth);
+  assert.ok(3 * CONFIG.profilePxPerKm < CONFIG.profileMinWidth, 'and px/km really is the smaller');
+});
+
+test('the two rules cross over exactly where the widths are equal', () => {
+  const crossover = (CONFIG.profileMinWidth / CONFIG.profilePxPerKm) * 1000;
+  assert.equal(stripWidth({ length: crossover }), CONFIG.profileMinWidth);
+  assert.ok(stripWidth({ length: crossover + 1000 }) > CONFIG.profileMinWidth);
+});
+
+test('no course, or one of no length, still asks for the minimum', () => {
+  // `sync` calls this before a course has loaded and on a run that has none.
+  // Returning 0 would collapse the canvas rather than leave it window-width.
+  assert.equal(stripWidth(null), CONFIG.profileMinWidth);
+  assert.equal(stripWidth(undefined), CONFIG.profileMinWidth);
+  assert.equal(stripWidth({ length: 0 }), CONFIG.profileMinWidth);
+});
 
 test('columns produces exactly one min/max pair per pixel', () => {
   const course = ramp(Array.from({ length: 500 }, (_, i) => i));

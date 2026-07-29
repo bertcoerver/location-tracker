@@ -14,7 +14,8 @@ import { interpolateAt } from './stats.js';
 export function createMap(container, {
   onFollowChange = () => {},
   onCourseHover = () => {},
-  onSelect = () => {}
+  onSelect = () => {},
+  onScrub = () => {}
 } = {}) {
   let points = [];
   let course = null;
@@ -29,6 +30,16 @@ export function createMap(container, {
   let fitted = false;
   let flying = false;
   let pulse = 0;
+  // Mid-drag: the pinned point is being slid along the course. While this is
+  // true the camera controller is switched off entirely — see `pointerdown`.
+  let dragging = false;
+  // The last place on the course the drag reached. Dragging the pointer off the
+  // route must leave the marker ON the route rather than dropping it, so when
+  // `courseHoverAt` comes back empty this is what stands.
+  let dragAlong = null;
+  // Whether this drag has actually moved the point yet. A press that goes
+  // nowhere is not a drag — it is the click that puts the point down.
+  let dragMoved = false;
 
   /** The whole stack, in draw order. One place, so nothing can disagree. */
   function allLayers() {
@@ -82,12 +93,36 @@ export function createMap(container, {
     // The course itself, via its transparent hit band.
     if (layer?.id === 'course-hit' && course && coordinate) {
       const along = courseHoverAt(course, coordinate[0], coordinate[1]);
-      if (along === null) return null;
-      const at = interpolateAt(points, course, along);
-      return { view: 'map', html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon, along };
+      return along === null ? null : atAlong(along);
     }
 
     return null;
+  }
+
+  /**
+   * A place on the course, as a selection.
+   *
+   * Shared by the click path and the drag path deliberately: if they built these
+   * differently, picking a point up would rewrite the very tooltip you grabbed.
+   *
+   * @param {number} along metres from the start of the course.
+   */
+  function atAlong(along) {
+    const at = interpolateAt(points, course, along);
+    return { view: 'map', html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon, along };
+  }
+
+  /** The current camera as a viewport, for going between coordinates and pixels. */
+  function viewport() {
+    const rect = container.getBoundingClientRect();
+    return {
+      rect,
+      viewport: new deck.WebMercatorViewport({
+        ...viewState,
+        width: rect.width || 1,
+        height: rect.height || 1
+      })
+    };
   }
 
   /**
@@ -100,14 +135,26 @@ export function createMap(container, {
    */
   function placePin() {
     if (selection?.view !== 'map') return;
-    const rect = container.getBoundingClientRect();
-    const viewport = new deck.WebMercatorViewport({
-      ...viewState,
-      width: rect.width || 1,
-      height: rect.height || 1
-    });
-    const [x, y] = viewport.project([selection.lon, selection.lat]);
+    const { rect, viewport: view } = viewport();
+    const [x, y] = view.project([selection.lon, selection.lat]);
     pin.place(rect.left + x, rect.top + y);
+  }
+
+  /**
+   * How far, in pixels, the pointer is from the pinned point — or null when
+   * there is nothing to be near.
+   *
+   * A selection with no `along` is not draggable: it is a ping the snapper left
+   * alone, so it has a place on the map but none on the course, and there is no
+   * line to slide it down.
+   *
+   * @param {number} x pointer position relative to the container, which deck's
+   * @param {number} y picking info reports directly and a raw event does not.
+   */
+  function grabDistance(x, y) {
+    if (!course || selection?.along == null) return null;
+    const [px, py] = viewport().viewport.project([selection.lon, selection.lat]);
+    return Math.hypot(x - px, y - py);
   }
 
   const deckgl = new deck.DeckGL({
@@ -116,6 +163,20 @@ export function createMap(container, {
     controller: true,
     layers: [basemapLayer()],
     getTooltip: makeTooltip(() => points, () => course, () => Boolean(selection)),
+
+    /**
+     * Deck rewrites the cursor on every hover, so a scrub has to be declared
+     * here rather than assigned — assigning it would survive about one frame.
+     *
+     * Only the drag itself needs saying. There is no separate "you may pick this
+     * up" cursor because the map's resting state is already `grab`: the pinned
+     * point sits on a surface that has advertised itself as draggable all along,
+     * and the gesture simply turns out to move the point instead of the camera.
+     */
+    getCursor: ({ isDragging, isHovering }) => {
+      if (dragging) return 'grabbing';
+      return isDragging ? 'grabbing' : isHovering ? 'pointer' : 'grab';
+    },
 
     /**
      * Pin what was clicked, so its tooltip stays up and can be read — and its
@@ -135,7 +196,9 @@ export function createMap(container, {
     onHover: info => {
       if (!course) return;
       // A pinned point outranks the cursor: it is the place the user asked to
-      // keep looking at, so the crosshair stays on it.
+      // keep looking at, so the crosshair stays on it. It is also the only thing
+      // on this map that can be picked up, so say so on approach — nothing else
+      // would hint that the gesture exists.
       if (selection) return;
       // A ping already knows where it sits on the course; no need to re-solve
       // geometry that snap.js worked out with the benefit of history.
@@ -167,6 +230,75 @@ export function createMap(container, {
       deckgl.setProps({ viewState });
     }
   });
+
+  /**
+   * Dragging a pinned point along the course.
+   *
+   * Listened for on the container rather than through deck, and in the CAPTURE
+   * phase, because the thing being fought for is the gesture itself: deck's
+   * controller reads a press-and-move as a pan, and there is no way to ask it
+   * politely for one drag back. So the press is stopped before mjolnir sees it
+   * and the controller is switched off outright for the duration — belt and
+   * braces, because intercepting events alone has proved fragile against that
+   * recogniser before.
+   *
+   * The marker follows the COURSE, not the cursor: the pointer is turned into a
+   * coordinate, and `courseHoverAt` turns that into a distance along the route.
+   * Past `snapMeters` it returns nothing, and then the last good distance stands
+   * — dragging away from the route should leave the point on the route rather
+   * than flinging it into a field.
+   *
+   * Note what stopping the press costs: deck never recognises a tap either, so
+   * no `onClick` is coming for this gesture at all — not at the end of a drag,
+   * and not for a press that never moved. Both outcomes have to be produced
+   * here, in `endDrag`.
+   */
+  container.addEventListener('pointerdown', event => {
+    const rect = container.getBoundingClientRect();
+    const near = grabDistance(event.clientX - rect.left, event.clientY - rect.top);
+    if (near === null || near > CONFIG.dragGrabPx) return;
+
+    dragging = true;
+    dragMoved = false;
+    dragAlong = selection.along;
+    deckgl.setProps({ controller: false });
+    container.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+    event.preventDefault();
+  }, true);
+
+  container.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    dragMoved = true;
+    const rect = container.getBoundingClientRect();
+    const [lon, lat] = viewport().viewport.unproject([
+      event.clientX - rect.left, event.clientY - rect.top
+    ]);
+
+    const along = courseHoverAt(course, lon, lat);
+    if (along !== null) dragAlong = along;
+    onScrub(atAlong(dragAlong));
+    event.stopPropagation();
+  }, true);
+
+  function endDrag(event) {
+    if (!dragging) return;
+    dragging = false;
+    deckgl.setProps({ controller: true });
+    if (container.hasPointerCapture(event.pointerId)) {
+      container.releasePointerCapture(event.pointerId);
+    }
+
+    // A press that went nowhere is the click that puts the point down, and no
+    // click is coming to do it. Handing the CURRENT selection back to
+    // `onSelect` is how: `same()` matches it against itself and main.js reads
+    // that as a dismissal, so there is still exactly one rule in the codebase
+    // about what putting a point down means.
+    if (!dragMoved) onSelect(selection);
+  }
+
+  container.addEventListener('pointerup', endDrag, true);
+  container.addEventListener('pointercancel', endDrag, true);
 
   function render() {
     deckgl.setProps({ viewState, layers: allLayers() });

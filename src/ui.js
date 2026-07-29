@@ -8,7 +8,9 @@ import { ago, coarse, fmtElapsed, storage } from './util.js';
 
 export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const el = id => document.getElementById(id);
-  const titleEl  = el('title-text');
+  // The heading IS the run picker — see `renderRuns`. This is its wrapper, and
+  // it carries the flag that decides whether the control looks like a control.
+  const titleEl  = el('title');
   const dotEl    = el('dot');
   const tickerEl = el('ticker');
   const tickerTextEl = el('ticker-text');
@@ -37,14 +39,17 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
    * The layer toggles, restored from the last visit.
    *
    * Not per-run: whether you want to see the raw fixes behind the snapped ones
-   * is a preference about how you read a map, not a fact about a race. Missing
-   * or unreadable storage means both on, which is what the map looked like
-   * before this existed.
+   * is a preference about how you read a map, not a fact about a race.
+   *
+   * The two defaults are deliberately opposite ways round. Waypoints are part
+   * of the course and belong on it, so they are on unless switched off. The raw
+   * fixes are an audit of the SNAPPING — the thing to look at when a dot seems
+   * wrong, and clutter the rest of the time — so they are off unless asked for.
    */
   const saved = storage.get(LS_LAYERS) || {};
   const flags = {
     waypoints: saved.waypoints !== false,
-    raw: saved.raw !== false
+    raw: saved.raw === true
   };
 
   for (const [name, box] of Object.entries(boxes)) {
@@ -80,23 +85,24 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   }
 
   /**
-   * What the phone is doing: how long since the last ping, when the next one is
-   * due, and the battery that decides the gap between them.
+   * What the phone is doing: how long since the last ping, and when the next
+   * one is due.
    *
    * Not how long since the BROWSER last talked to GitHub: that is the page's
    * business, not the viewer's, and the coloured dot beside this already says
    * whether it's healthy.
    *
-   * The last two parts are there because the phone slows down as it drains —
-   * five minutes on a full charge, half an hour on a dying one. Without them a
-   * 30-minute silence is indistinguishable from a broken tracker; with them it
-   * reads as a system working exactly as designed, and says how long to wait.
+   * The second part is there because the phone slows down as it drains — five
+   * minutes on a full charge, half an hour on a dying one. Without it a
+   * 30-minute silence is indistinguishable from a broken tracker; with it the
+   * same silence reads as a system working exactly as designed, and says how
+   * long to wait.
    *
    * A finished run says so instead. The finish is the most recent thing that
    * happened, so how old the last ping is has stopped being the question.
    *
-   *   ● Last ping 1m ago · next ~16m · 25%
-   *   ● Last ping 34m ago · overdue · 25%
+   *   ● Last ping 1m ago · next ~16m
+   *   ● Last ping 34m ago · overdue
    *   ● Finished 12m ago
    */
   function renderTicker(state) {
@@ -113,19 +119,24 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   }
 
   /**
-   * The " · next ~16m · 25%" half of the ticker, or nothing at all.
+   * The " · next ~16m" half of the ticker, or nothing at all.
    *
    * Nothing for a run that has finished: an expectation is a claim about a phone
    * that is still out there, and one saying "overdue" a week later is noise —
    * "3d ago" has already said everything there is to say. Nothing either for a
    * ping with no battery in it, which is every file written before the field
    * existed; there is simply no schedule to predict from.
+   *
+   * The battery itself is not shown. It is what DECIDES this number rather than
+   * something to act on, and "next ~16m" is already the useful half of that
+   * answer; the figure is still in each ping's own tooltip for anyone who wants
+   * it. See `dueInMs` in [schedule.js](./schedule.js).
    */
   function expectation(last) {
     if (!live()) return '';
     const due = dueInMs(last);
     if (due === null) return '';
-    return `${due > 0 ? ` · next ~${coarse(due)}` : ' · overdue'} · ${last.btry}%`;
+    return due > 0 ? ` · next ~${coarse(due)}` : ' · overdue';
   }
 
   /**
@@ -156,9 +167,16 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   }
 
   /**
-   * Rebuild the picker. Newest run first, so whatever is happening now is at the
-   * top, and a live one is marked — a plain `<select>` can't be styled per
-   * option in any portable way, so the marker has to be in the text.
+   * Rebuild the picker, which is also the heading.
+   *
+   * The name of the run and the way to change it used to be two stacked
+   * controls saying the same word twice. They are one now: the `<select>` is
+   * styled as the h1, and only grows a border and a chevron when pointed at, so
+   * at rest it reads as a title and on approach it admits to being a menu.
+   *
+   * Newest run first, so whatever is happening now is at the top, and a live one
+   * is marked — a plain `<select>` can't be styled per option in any portable
+   * way, so the marker has to be in the text.
    *
    * Re-rendered on a timer as well as on new data, so a run stops claiming to be
    * live an hour after its last ping without waiting for a poll.
@@ -174,14 +192,30 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     // Liveness is also what decides whether the clock runs or shows a total.
     renderClock();
 
-    // One run is not a choice. Two are.
-    runEl.parentElement.hidden = names.length < 2;
-    if (names.length < 2) return;
+    // One run is not a choice — but it is still the heading, so the control
+    // stays and merely stops being one. Hiding it, as the old separate picker
+    // did, would now take the run's name off the screen with it.
+    const single = names.length < 2;
+    runEl.disabled = single;
+    titleEl.dataset.single = String(single);
 
     runEl.innerHTML = '';
+    // Nothing to list yet: the heading still has to say something, and the
+    // option carries no value because there is no run to navigate to.
+    if (!names.length) {
+      runEl.add(new Option(run || 'Location Tracker', '', false, true));
+      return;
+    }
+
     for (const name of names) {
-      const label = isLive(index[name], now) ? `● ${name}` : name;
-      runEl.add(new Option(label, name, false, name === run));
+      // The live marker, but never on the run being shown. Its own liveness is
+      // already the pulsing dot one line above, and a `●` in the closed control
+      // sits directly under that dot — two marks for one fact, which is what the
+      // panel has always refused to do. Inside the open list it earns its place:
+      // there it is the only thing saying which of the others is still running.
+      const current = name === run;
+      const label = !current && isLive(index[name], now) ? `● ${name}` : name;
+      runEl.add(new Option(label, name, false, current));
     }
   }
 
@@ -213,8 +247,9 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     /** @param {string|null} next the run now on screen, null when there are none. */
     setRun(next) {
       run = next;
-      titleEl.textContent = run || 'Location Tracker';
       document.title = run ? `${run} · Location Tracker` : 'Location Tracker';
+      // The visible name is the picker's own selected option now, so there is
+      // one place it comes from rather than a text node to keep in step.
       renderRuns();
     },
 

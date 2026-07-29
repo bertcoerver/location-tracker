@@ -38,20 +38,32 @@ Two numbers, both in the panel top left. **How long since the last ping**, on th
 **how long the run has been going**, below the run name. Not how many pings there are, and not
 what second the browser last checked GitHub — that second is the page's business, and the dot
 already says whether polling is healthy. The run's name is set in the same type as the clock: they
-are the two things worth reading at a glance, so neither is a caption for the other.
+are the two things worth reading at a glance, so neither is a caption for the other. Each sits under
+a small caption of its own — `COURSE` and `ELAPSED` — in the same 11 px uppercase.
 
-While a run is live the top line also says **when the next ping is due, and the battery deciding
-that**:
+**The run name is also the run picker.** There used to be a name and, stacked underneath it, a
+dropdown listing that same name; now there is one control. At rest it is typeset exactly as the
+heading was, and it grows a border and a chevron only when pointed at, so it stops looking like a
+widget until you go looking for one. With a single run it is inert and visually identical — hiding
+it, as the old separate picker did, would now take the run's name off the screen with it. Inside
+the open list a `●` marks the runs that are still live; the one already on screen never gets one,
+because its own liveness is the pulsing dot one line above.
+
+While a run is live the top line also says **when the next ping is due**:
 
 ```
-● Last ping 1m ago · next ~16m · 25%
-● Last ping 34m ago · overdue · 25%
+● Last ping 1m ago · next ~16m
+● Last ping 34m ago · overdue
 ```
 
 The phone slows down as it drains — five minutes on a full charge, half an hour on a dying one — so
 without this a long silence is indistinguishable from a broken tracker. With it, the same silence
 reads as a system working exactly as designed, and says how long to wait. A finished run drops the
 clause entirely; an expectation is a claim about a phone that is still out there.
+
+The battery itself is not shown here. It is what *decides* that number rather than something to act
+on, and "next ~16m" is already the useful half of the answer; the figure is still in each ping's own
+tooltip for anyone who wants it.
 
 Once the phone says it is done, the line says that instead:
 
@@ -97,8 +109,17 @@ Below it, when a run has a course, two checkboxes decide what else is drawn: its
 interest** (on the map and on the height strip both — one switch, or it would be lying about half
 the screen) and the **raw points**, the audit trail showing where each fix really was before it
 snapped, joined to it by a dashed line. The snapped dots themselves have no switch: they are the
-reading, not a decoration. The choice is remembered across visits, and a checkbox for something the
-current run hasn't got stays hidden.
+reading, not a decoration.
+
+The two defaults are deliberately opposite ways round. Waypoints are part of the course and belong
+on it, so they are **on** unless switched off. The raw fixes are an audit of the *snapping* — the
+thing to look at when a dot seems wrong, and clutter the rest of the time — so they are **off**
+unless asked for. Either choice is remembered across visits.
+
+A checkbox for something the current run hasn't got stays hidden, and the whole block disappears
+when neither applies. The points-of-interest switch appears only when the GPX actually carries
+`<wpt>` elements, which costs nothing to know: the waypoints are already parsed out of the course
+file, so it is a length check on an array that is in hand either way.
 
 ### Click to keep a tooltip
 
@@ -112,6 +133,26 @@ The tooltip appears in the view you clicked and stays attached to the place, rid
 pans and zooms or the strip scrolls. It goes away when you click the same point again, click bare
 basemap, or press Escape. The other view still marks the spot, which is what makes a click in one
 view legible in the other.
+
+### Drag a pinned point along the course
+
+A pinned point can be **picked up and slid along the route**, in either view — grab it on the map
+or on the height strip and the reading updates continuously: distance in, elevation, estimated time,
+climb so far. Both views stay in step throughout, so dragging on the strip walks the marker around
+the map and vice versa.
+
+The marker follows the **course**, not the cursor. The pointer is turned into a coordinate and the
+course answers with a distance along itself; drag away from the route and the last good distance
+stands, so the point stays on the route rather than being flung into a field. Only a point that has
+a place on the course can be dragged — a ping the snapper left alone has a position on the map and
+none on a chart of distance, so there is no line to slide it down.
+
+On the map this means taking the gesture away from the camera. deck's controller reads press-and-move
+as a pan and cannot be asked politely for one drag back, so the press is stopped in the capture phase
+and the controller is switched off outright for the duration. That has a consequence worth knowing:
+deck never recognises a tap either, so **no click is coming** — not at the end of a drag, and not for
+a press that never moved. Both outcomes are produced when the drag ends, and a press that went
+nowhere is handed back to the ordinary selection rule so that it still puts the point down.
 
 **Every tooltip ends with a Google Maps link**, opening that exact spot in a new tab, with a label
 on the pin — how far in and at what time for a ping, its own name for a point of interest. For a
@@ -157,15 +198,22 @@ With a course present, three things change:
   that is left exactly where it is.
 - **A height profile appears** along the bottom, if the GPX carries elevation for every point. It
   plots the whole course with each snapped ping on it, under a minimal distance axis ticked at
-  round numbers — 500 m, 2 km, whatever is coarse enough to leave the labels legible. On a narrow
-  screen it keeps its width and scrolls sideways rather than compressing a 20 km race into 375
-  pixels; there is no scrollbar, because on the platforms that lay one out it eats into a 112 px
-  strip and on the ones that overlay it it sits on top of the distance labels. Instead the strip
-  **fades at whichever end has more course**, which says both that there is more and which way.
+  round numbers — 500 m, 2 km, whatever is coarse enough to leave the labels legible.
 
-  It is translucent, so the course carries on underneath the chart of it — a solid band across the
-  bottom of the map hides the very thing you are reading about. `--surface-3`, deliberately not the
-  same value as a tooltip's: a tooltip is small and transient and wants legibility above all else.
+  **A kilometre is never drawn narrower than `profilePxPerKm` (24 px).** The x-axis used to be
+  simply the window, which quietly made distance mean something different for every course: 150 km
+  and 2 km got the same pixels, so on the long one a climb worth twenty minutes of somebody's day
+  arrived as three pixels of noise. Now the scale is fixed and the strip scrolls when it runs past
+  the window — a 150 km run is 3600 px wide on any screen. `profileMinWidth` (640 px) is still the
+  floor for anything short, since a 3 km course drawn 72 px wide would be obeying the rule and
+  showing nothing. There is no scrollbar, because on the platforms that lay one out it eats into a
+  112 px strip and on the ones that overlay it it sits on top of the distance labels. Instead the
+  strip **fades at whichever end has more course**, which says both that there is more and which way.
+
+  It is frosted rather than solid, so the course carries on underneath the chart of it — a solid
+  band across the bottom of the map hides the very thing you are reading about. It shares
+  `--surface-2` and the panel blur with the status box: they are two windows onto the same map, and
+  reading as two different materials made the page look assembled rather than designed.
 
   The terrain line is drawn from one elevation sample per pixel column, then blurred by
   `profileSmoothPx` columns — about 100 m of ground, which settles GPS noise without flattening
@@ -530,7 +578,11 @@ results to snapping it all at once, at one projection per ping.
 The profile's arithmetic is tested without a canvas anywhere near it: that smoothing
 settles column-to-column noise without moving a summit or sagging the ends of the
 course towards sea level, and that hovering picks the dot you are actually pointing at
-rather than its neighbour — a mistake that looks fine in a screenshot.
+rather than its neighbour — a mistake that looks fine in a screenshot. How wide the
+strip asks to be is pinned down at both ends of its rule: a long course gets its fixed
+pixels per kilometre, a short one keeps the minimum width instead, the two agree exactly
+at the crossover, and a missing or zero-length course still asks for the minimum rather
+than collapsing the canvas to nothing.
 
 The climb figures get the same treatment, and the tests are written around the ways
 the arithmetic could quietly lie: that a flat course dressed in a metre of noise
@@ -556,6 +608,15 @@ that a rebuilt tooltip for the same place still counts as the same point, that t
 on a lap sharing a coordinate do not, and that the same place clicked from the *other*
 view is a move rather than a dismissal. `clampLeft` keeps a tooltip on screen at either
 edge and when it is wider than the window at all.
+
+Dragging a pinned point is deliberately **not** unit-tested. It is pointer plumbing over
+functions that are already covered — the same `readAt`, `interpolateAt` and `courseHoverAt`
+the hover and click paths use — and everything that could actually break is a property of
+a real browser: whether the camera stays still under the gesture, whether it pans again
+afterwards, whether the press that goes nowhere still puts the point down. Faking
+`PointerEvent`s would test the fake. It is verified in headless Chrome instead, and that
+run is what caught the two defects worth catching: a still press swallowing its own
+dismissal, and a leftover "just dragged" flag eating the *next* genuine click.
 
 The Maps link is tested for the thing that would silently break it: a label containing a
 parenthesis, which is the delimiter of the URL form that carries it.

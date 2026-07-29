@@ -10,13 +10,12 @@
     color-scheme: light dark;
 
     --surface-1:      #fcfcfb;
-    --surface-2:      rgba(252, 252, 251, 0.88);
-    /* The height strip only. More see-through than a tooltip, because it lies
-       across the bottom of the map and the course it describes runs underneath
-       it — a solid band hides the very thing you're reading about. Tooltips are
-       small and transient and want to be legible above all else, so the two
-       deliberately don't share a value. */
-    --surface-3:      rgba(252, 252, 251, 0.72);
+    /* Every panel: the status box and the height strip. One value, because they
+       are two windows onto the same map and reading as two different materials
+       made the page look assembled rather than designed. Frosted rather than
+       merely translucent — the heavy blur in `.panel` is what does that, and it
+       is why the alpha can stay low enough to see the course underneath. */
+    --surface-2:      rgba(252, 252, 251, 0.75);
     --border:         rgba(11, 11, 11, 0.12);
     --text-primary:   #0b0b0b;
     --text-secondary: #52514e;
@@ -41,8 +40,7 @@
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
       --surface-1:      #1a1a19;
-      --surface-2:      rgba(26, 26, 25, 0.88);
-      --surface-3:      rgba(26, 26, 25, 0.72);
+      --surface-2:      rgba(26, 26, 25, 0.75);
       --border:         rgba(255, 255, 255, 0.14);
       --text-primary:   #ffffff;
       --text-secondary: #c3c2b7;
@@ -67,11 +65,14 @@
   }
   #map { position: fixed; inset: 0; }
 
+  /* Frosted glass. The saturate is not decoration: a blur this heavy averages
+     the basemap towards grey, and lifting saturation back up is what keeps the
+     map underneath looking like a map rather than like fog. */
   .panel {
     position: fixed;
     background: var(--surface-2);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--border);
     border-radius: 10px;
     box-shadow: var(--shadow);
@@ -101,6 +102,10 @@
     font-weight: 500;
     line-height: 1.2;
     color: var(--text-primary);
+    /* It holds the run picker and the chevron that sits over it. */
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
   }
   /* The ping age, and the control that flies back to it. There is no separate
      Follow button: the thing you want to look at and the way to get there are
@@ -146,7 +151,12 @@
      window to spend on it. */
   #clock { margin-top: 6px; }
   #clock[hidden] { display: none; }
-  #clock-label {
+  /* The two small captions in this panel — "COURSE" over the run name and
+     "ELAPSED" over the clock. One rule rather than two identical ones, so the
+     pair can't drift apart. */
+  /* A little air under the ping line, which is a different kind of statement. */
+  #course-label { margin-top: 4px; }
+  #clock-label, #course-label {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: .07em;
@@ -164,19 +174,62 @@
     color: var(--text-primary);
   }
 
-  #run-picker { margin-top: 8px; }
-  #run-picker[hidden] { display: none; }
+  /* The run picker IS the heading. There used to be a name and, underneath it, a
+     dropdown listing that same name — the same word twice, one of them inert.
+     Now there is one control: at rest it is typeset exactly as the h1 was, and
+     it grows a border and a chevron only when pointed at, so it stops looking
+     like a widget until you go looking for one. */
   #run {
+    appearance: none;
+    -webkit-appearance: none;
     font: inherit;
-    width: 100%;
-    padding: 5px 7px;
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1.2;
     color: var(--text-primary);
     background: transparent;
-    border: 1px solid var(--border);
+    /* Reserved in the layout even when invisible, so the name does not shift
+       sideways by a pixel the moment the cursor arrives. */
+    border: 1px solid transparent;
     border-radius: 7px;
+    padding: 1px 22px 1px 6px;
+    /* ...and pulled back by the same amount, so the text still sits flush with
+       everything else in the panel. */
+    margin-left: -6px;
+    max-width: 100%;
     cursor: pointer;
   }
-  #run:hover { border-color: var(--text-muted); }
+  #run:hover, #run:focus-visible {
+    border-color: var(--border);
+    background: var(--surface-1);
+  }
+  /* A disabled select is greyed by the browser. This one is disabled only
+     because there is nothing to choose, and it is still the heading — it has to
+     look identical whether or not a second run exists. */
+  #run:disabled {
+    color: var(--text-primary);
+    opacity: 1;
+    cursor: default;
+  }
+  #title::after {
+    content: '⌄';
+    position: absolute;
+    right: 5px;
+    /* The glyph hangs low in its own em box, so centring it needs a nudge above
+       the halfway line rather than exactly on it. */
+    top: 50%;
+    transform: translateY(-68%);
+    font-size: 15px;
+    line-height: 1;
+    color: var(--text-muted);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .15s;
+  }
+  #title:hover::after, #title:focus-within::after { opacity: .7; }
+  /* One run is not a choice: no chevron, no hover border, nothing to promise. */
+  #title[data-single="true"]::after { content: none; }
+  #title[data-single="true"] #run:hover { border-color: transparent; background: transparent; }
 
   /* Which of the optional layers are drawn. Not the snapped pings — those are
      the reading, and there is no view of this map without them. */
@@ -225,14 +278,10 @@
     border-radius: 0;
     border-left: 0; border-right: 0; border-bottom: 0;
     overflow: hidden;
-    /* See-through, so the course carries on underneath the chart of it. The
-       blur stays: it is what keeps the axis labels readable over a basemap that
-       could be anything. */
-    background: var(--surface-3);
   }
   #profile[hidden] { display: none; }
-  /* On a phone the strip would compress a 20 km course into 375 px of mush, so
-     below --profile-min-w it keeps its width and pans instead. */
+  /* The strip is wider than the window whenever the course is long enough to
+     need it — see `stripWidth` in profile.js — and then this pans it. */
   #profile-scroll {
     height: 100%;
     overflow-x: auto;
@@ -256,8 +305,8 @@
     opacity: 0;
     transition: opacity .18s;
   }
-  #profile::before { left: 0;  background: linear-gradient(to right, var(--surface-3), transparent); }
-  #profile::after  { right: 0; background: linear-gradient(to left,  var(--surface-3), transparent); }
+  #profile::before { left: 0;  background: linear-gradient(to right, var(--surface-2), transparent); }
+  #profile::after  { right: 0; background: linear-gradient(to left,  var(--surface-2), transparent); }
   #profile[data-more-left="true"]::before,
   #profile[data-more-right="true"]::after { opacity: 1; }
   #profile-canvas {
@@ -265,6 +314,10 @@
     height: var(--profile-h);
     width: max(100%, var(--profile-min-w));
   }
+  /* Dragging a pinned point along the course. `touch-action: none` is what makes
+     it work on a phone: without it the strip's own horizontal scroll claims the
+     gesture and the marker never moves. */
+  #profile[data-dragging="true"] #profile-canvas { touch-action: none; cursor: grabbing; }
 
   .tip {
     font: inherit;
@@ -337,18 +390,17 @@
     <button id="ticker" type="button" aria-pressed="true" title="Fly to the latest ping">
       <span id="dot"></span><span id="ticker-text">Loading&hellip;</span>
     </button>
-    <h1 id="title"><span id="title-text">Location Tracker</span></h1>
+    <div id="course-label">Course</div>
+    <!-- The heading and the run picker are one control; ui.js fills it in. -->
+    <h1 id="title" data-single="true"><select id="run" aria-label="Course"></select></h1>
   </div>
   <div id="clock" hidden>
     <div id="clock-label">Elapsed</div>
     <div id="clock-time">0:00:00</div>
   </div>
-  <div id="run-picker" hidden>
-    <select id="run" aria-label="Run"></select>
-  </div>
   <div id="toggles" hidden>
     <label><input type="checkbox" id="t-waypoints" checked> Points of interest</label>
-    <label><input type="checkbox" id="t-raw" checked> Raw points</label>
+    <label><input type="checkbox" id="t-raw"> Raw points</label>
   </div>
   <div id="error"></div>
 </div>

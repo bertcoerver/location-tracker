@@ -45,12 +45,14 @@ const map = createMap(document.getElementById('map'), {
   // The map turns following off when the user pans; keep the button in sync.
   onFollowChange: on => ui.setFollowPressed(on),
   onCourseHover: along => profile.setHover(along),
-  onSelect: select
+  onSelect: select,
+  onScrub: scrub
 });
 
 const profile = createProfile(document.getElementById('profile'), {
   onHover: along => map.setHover(along),
-  onSelect: select
+  onSelect: select,
+  onScrub: scrub
 });
 
 // The pinned point, if any. Hover is a fine way to glance at a point and a poor
@@ -68,6 +70,22 @@ function select(next) {
   // Clicking a point you have already pinned is how you put it down. Clicking
   // bare basemap arrives here as null, which does the same.
   selection = same(selection, next) ? null : next;
+  map.setSelection(selection);
+  profile.setSelection(selection);
+}
+
+/**
+ * The same selection, moved: a pinned point being dragged along the course.
+ *
+ * Separate from `select` for one reason, and it is the whole reason. `select`
+ * treats "the same place again" as a dismissal, which is what makes a click a
+ * toggle — and a drag passes through its own starting point constantly. Routing
+ * a scrub through it would put the pin down mid-gesture.
+ *
+ * @param {import('./pin.js').Selection} next
+ */
+function scrub(next) {
+  selection = next;
   map.setSelection(selection);
   profile.setSelection(selection);
 }

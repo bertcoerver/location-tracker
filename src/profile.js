@@ -136,6 +136,26 @@ export function hitTest(points, course, scale, px, py, radius = HIT_RADIUS) {
 }
 
 /**
+ * How wide the strip wants to be, in CSS pixels, for a course of this length.
+ *
+ * The chart used to be exactly as wide as the window, which quietly made the
+ * x-axis mean something different for every course: 150 km and 2 km got the same
+ * pixels, so on the long one a climb worth twenty minutes of somebody's day was
+ * three pixels of noise. A floor on pixels-per-kilometre gives distance a fixed
+ * scale instead, and the strip scrolls when that runs past the window.
+ *
+ * `profileMinWidth` still wins for anything short — a 3 km course drawn 72 px
+ * wide would be honouring the rule and showing nothing.
+ *
+ * @param {object|null} course
+ * @returns {number} CSS pixels
+ */
+export function stripWidth(course) {
+  if (!course?.length) return CONFIG.profileMinWidth;
+  return Math.max(CONFIG.profileMinWidth, (course.length / 1000) * CONFIG.profilePxPerKm);
+}
+
+/**
  * The distance -> x and elevation -> y mappings for a strip of this size.
  *
  * The single place that knows about the strip's padding: everything that draws
@@ -233,7 +253,9 @@ export function elevationAt(course, distance) {
 /**
  * @param {HTMLElement} root  the `#profile` panel
  */
-export function createProfile(root, { onHover = () => {}, onSelect = () => {} } = {}) {
+export function createProfile(root, {
+  onHover = () => {}, onSelect = () => {}, onScrub = () => {}
+} = {}) {
   const scroller = root.querySelector('#profile-scroll');
   const canvas = root.querySelector('#profile-canvas');
   // Outside the panel: the strip has `overflow: hidden`, so a tooltip parented
@@ -253,6 +275,18 @@ export function createProfile(root, { onHover = () => {}, onSelect = () => {} } 
   // and without this the two would overwrite each other on every mouse move —
   // whoever the pointer is actually over has to win.
   let owned = false;
+  // Mid-drag: the pinned point is being slid along the course. Nothing else may
+  // touch `hover` while this is true — the whole gesture is one long statement
+  // about where the selection is.
+  let dragging = false;
+  // A drag ends with a `click`, and the click handler's job is to toggle the pin
+  // off. Without this flag, letting go of a point you had just dragged would put
+  // it down — the one thing the gesture must not do.
+  //
+  // Set only once the point has actually MOVED. A press on the pinned point that
+  // goes nowhere is not a drag, it is the click that puts it down, and swallowing
+  // that would take the toggle away from every pinned point on the strip.
+  let justDragged = false;
   // Which optional layers the panel's toggles have switched on. The waypoint
   // one governs both views, so a feed station is either shown in both or in
   // neither rather than only on the map.
@@ -292,7 +326,10 @@ export function createProfile(root, { onHover = () => {}, onSelect = () => {} } 
     // strip; it's the single place that says how tall it is right now.
     const style = document.documentElement.style;
     style.setProperty('--profile-h', on ? `${CONFIG.profileHeight}px` : '0px');
-    style.setProperty('--profile-min-w', `${CONFIG.profileMinWidth}px`);
+    // How wide the canvas wants to be for THIS course. The CSS takes it as a
+    // floor — `width: max(100%, var(--profile-min-w))` — so a short course on a
+    // wide screen still fills the window, and a long one overflows and scrolls.
+    style.setProperty('--profile-min-w', `${stripWidth(course)}px`);
     if (on) {
       draw();
       syncFades();
@@ -551,8 +588,42 @@ export function createProfile(root, { onHover = () => {}, onSelect = () => {} } 
     return { along, html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon };
   }
 
+  /**
+   * How far, in pixels, the pointer is from the pinned point — or null when
+   * there is nothing to be near.
+   *
+   * A selection with no `along` has no place on a chart of distance, so it can
+   * never be grabbed here. That is a ping the snapper left alone: it has a
+   * position on the map and none on the course.
+   */
+  function grabDistance(clientX) {
+    if (!visible() || selection?.along == null) return null;
+    const rect = canvas.getBoundingClientRect();
+    const scale = scaleFor(course, rect.width, rect.height);
+    return Math.abs(clientX - rect.left - scale.x(selection.along));
+  }
+
   canvas.addEventListener('pointermove', event => {
-    if (!visible() || selection) return;
+    // Sliding the pinned point along the course. It reads through `readAt`, the
+    // same function the hover and click paths use, so a scrub passing over a
+    // ping shows that ping rather than the ground beneath it.
+    if (dragging) {
+      justDragged = true;
+      const at = readAt(event.clientX, event.clientY);
+      onScrub({ view: 'profile', html: at.html, lat: at.lat, lon: at.lon, along: at.along });
+      return;
+    }
+
+    if (!visible()) return;
+
+    // A pinned point is pickable: say so before it is picked up, since nothing
+    // else on this strip can be dragged and there would otherwise be no hint.
+    if (selection) {
+      const near = grabDistance(event.clientX);
+      canvas.style.cursor = near !== null && near <= CONFIG.dragGrabPx ? 'grab' : '';
+      return;
+    }
+    canvas.style.cursor = '';
     owned = true;
 
     const at = readAt(event.clientX, event.clientY);
@@ -562,6 +633,32 @@ export function createProfile(root, { onHover = () => {}, onSelect = () => {} } 
     draw();
   });
 
+  /** Pick the pinned point up, if that is what this press is aimed at. */
+  canvas.addEventListener('pointerdown', event => {
+    const near = grabDistance(event.clientX);
+    if (near === null || near > CONFIG.dragGrabPx) return;
+
+    dragging = true;
+    justDragged = false;
+    root.dataset.dragging = 'true';
+    // So the gesture keeps arriving here even when the pointer runs off the
+    // canvas, which on a 112 px strip is most drags.
+    canvas.setPointerCapture(event.pointerId);
+    // And so the press doesn't start a text selection on the way past.
+    event.preventDefault();
+  });
+
+  function endDrag(event) {
+    if (!dragging) return;
+    dragging = false;
+    delete root.dataset.dragging;
+    canvas.style.cursor = 'grab';
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  }
+
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
   /**
    * Pin what's under the cursor. Every click on the strip selects something —
    * a ping if there is one, the ground if there isn't — so there is nothing to
@@ -570,6 +667,12 @@ export function createProfile(root, { onHover = () => {}, onSelect = () => {} } 
    */
   canvas.addEventListener('click', event => {
     if (!visible()) return;
+    // The click that ends a drag is the release, not a new choice. Swallow it
+    // once — letting it through would toggle off the point just dragged.
+    if (justDragged) {
+      justDragged = false;
+      return;
+    }
     const at = readAt(event.clientX, event.clientY);
     onSelect({ view: 'profile', html: at.html, lat: at.lat, lon: at.lon, along: at.along });
   });
