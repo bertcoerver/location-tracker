@@ -3,7 +3,8 @@
 import { LS_LAYERS } from './config.js';
 import { isLive } from './github.js';
 import { latestOf } from './points.js';
-import { ago, fmtElapsed, storage } from './util.js';
+import { dueInMs } from './schedule.js';
+import { ago, coarse, fmtElapsed, storage } from './util.js';
 
 export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const el = id => document.getElementById(id);
@@ -60,20 +61,46 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   }
 
   /**
-   * How long since the last ping — the only number on the page.
+   * What the phone is doing: how long since the last ping, when the next one is
+   * due, and the battery that decides the gap between them.
    *
-   * Not how long since the browser last talked to GitHub: that is the page's
+   * Not how long since the BROWSER last talked to GitHub: that is the page's
    * business, not the viewer's, and the coloured dot beside this already says
    * whether it's healthy.
+   *
+   * The last two parts are there because the phone slows down as it drains —
+   * five minutes on a full charge, half an hour on a dying one. Without them a
+   * 30-minute silence is indistinguishable from a broken tracker; with them it
+   * reads as a system working exactly as designed, and says how long to wait.
+   *
+   *   ● Last ping 1m ago · next ~16m · 25%
+   *   ● Last ping 34m ago · overdue · 25%
    */
   function renderTicker(state) {
     if (points.length) {
-      tickerTextEl.textContent = `Last ping ${ago(latestOf(points).t)}`;
+      const last = latestOf(points);
+      tickerTextEl.textContent = `Last ping ${ago(last.t)}${expectation(last)}`;
     } else if (state === 'loading') {
       tickerTextEl.textContent = 'Loading…';
     } else {
       tickerTextEl.textContent = run ? 'No locations yet' : 'No runs yet';
     }
+  }
+
+  /**
+   * The " · next ~16m · 25%" half of the ticker, or nothing at all.
+   *
+   * Nothing for a run that has finished: an expectation is a claim about a phone
+   * that is still out there, and one saying "overdue" a week later is noise —
+   * "3d ago" has already said everything there is to say. Nothing either for a
+   * ping with no battery in it, which is every file written before the field
+   * existed; there is simply no schedule to predict from.
+   */
+  function expectation(last) {
+    if (!isLive(index[run], Date.now())) return '';
+    const due = dueInMs(last);
+    if (due === null) return '';
+    return `${due > 0 ? ` · next ~${coarse(due)}` : ' · overdue'} · ${last.btry}%`;
   }
 
   /**

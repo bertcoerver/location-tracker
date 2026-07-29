@@ -40,6 +40,19 @@ what second the browser last checked GitHub — that second is the page's busine
 already says whether polling is healthy. The run's name is set in the same type as the clock: they
 are the two things worth reading at a glance, so neither is a caption for the other.
 
+While a run is live the top line also says **when the next ping is due, and the battery deciding
+that**:
+
+```
+● Last ping 1m ago · next ~16m · 25%
+● Last ping 34m ago · overdue · 25%
+```
+
+The phone slows down as it drains — five minutes on a full charge, half an hour on a dying one — so
+without this a long silence is indistinguishable from a broken tracker. With it, the same silence
+reads as a system working exactly as designed, and says how long to wait. A finished run drops the
+clause entirely; an expectation is a claim about a phone that is still out there.
+
 The clock counts from the first ping and ticks each second while the run is live. Once the run goes
 quiet — nothing for an hour — it **stops**, and its label changes from "Elapsed" to "Total". A clock
 still counting hours after the finish would be claiming the race is still on.
@@ -221,6 +234,11 @@ The timestamp lives *only* in the filename — there is no time field in the bod
 Only `lat` and `lon` are required. `btry` (battery %), `msg` and `img` are optional and the map
 handles files that carry any, all, or none of them. Files are never edited once written.
 
+`btry` does double duty: as well as appearing in the tooltip it is what tells the page **when to
+expect the next ping**, since the phone picks its interval from its own battery — see
+"Polling when a ping is due". A file without it still draws fine; the page just falls back to a
+fixed poll rate.
+
 ## How the map stays fresh cheaply
 
 Re-downloading every file on a timer would not scale, so the page only ever fetches what it does
@@ -238,9 +256,68 @@ not already have:
 4. **Fetch only the new files** from `raw.githubusercontent.com`, which is not subject to the
    API's 60 requests/hour limit.
 
-Steady state is one cheap request every 240 s plus one ~70-byte fetch per new point. Reloading the
-page costs a single `304` and zero data fetches. Polling pauses while the tab is hidden and
-resumes on focus, subject to the 30 s floor described under "Rate limit".
+Steady state is one cheap request per ping the phone actually sends, plus one ~70-byte fetch for
+the point itself. Reloading the page costs a single `304` and zero data fetches. Polling pauses
+while the tab is hidden and resumes on focus, subject to the 30 s floor described under
+"Rate limit".
+
+### Polling when a ping is due
+
+The page does not poll on a fixed timer, because the phone does not *ping* on one. It picks its
+interval from a logistic curve on its own battery — often five minutes, half an hour when it is
+nearly flat:
+
+```
+interval = 5min + (30min - 5min) / (1 + e^(0.3 × (battery - 25)))
+```
+
+| battery | 100–40% | 35% | 30% | 25% | 20% | 15% | ≤10% |
+|---|---|---|---|---|---|---|---|
+| interval | 5 min | 6 | 9 | 17 | 25 | 28 | 29 min |
+
+Whole minutes, **floored**, because that is what the phone's scheduler does — rounding would put
+every prediction up to half a minute after the ping it is predicting. Note the last column: the
+curve approaches 30 minutes without reaching it, so a flat battery pings every 29.
+
+Every ping already carries the battery it was sent on (`btry`), so
+[`src/schedule.js`](src/schedule.js) can work out when the next one is due and sleep until then
+instead of guessing. **Freshness and request rate stop being the same dial**: a phone on 5-minute
+cadence is read within ~30 s of committing rather than an average of two minutes later, *and* a
+phone at 12% is asked about four times an hour instead of fifteen.
+
+> ⚠️ The four constants in [`src/config.js`](src/config.js) — `minPingMs`, `maxPingMs`, `batteryK`,
+> `batteryMid` — **mirror the phone's script, which is the authority.** They are duplicated here
+> only because `btry` is what the ping carries. A mismatch is *silent*: the map keeps working and
+> just polls at the wrong times. Retune the phone, retune these.
+
+Two things stop this being fragile:
+
+- **`nextPollMs` is pure** — a function of the newest point and the clock, with no counter of
+  missed pings. So it cannot drift out of step with the refresh throttle, with a poll that got
+  dropped, or with a tab that was asleep for an hour, and it is safe to recompute after *every*
+  refresh however that refresh was triggered.
+- **A missed ping is not a failure.** Tunnels, battery saver and dead zones mean expectations get
+  missed routinely. A ping that is only seconds late is treated as jitter — the interval predicts
+  when the phone *wakes*, and it still has to take a fix, upload it and have the commit reach the
+  API — so it gets a cheap look 30 s later rather than a five-minute wait.
+
+  Past that, the page waits **a whole interval**, because of how the phone handles a failed upload:
+  it does not retry on its own, it retries *on its next poll*. So once a ping has properly missed
+  its slot, nothing can appear in the repo until the phone wakes again, and every request in
+  between is guaranteed to come back empty. (The estimate is a lower bound — an offline phone is
+  also draining, and a flatter battery means a longer interval — which is the safe direction:
+  being early costs one 304, being late costs staleness.)
+
+  For a longer silence `overdue / 2` takes over, so a run that ended yesterday backs off instead of
+  asking every five minutes forever. That carries no state either — "how overdue are we" already
+  encodes how many slots have gone by — and caps at `maxPollMs` (15 min), which doubles as a floor
+  poll so a *new* run starting is never invisible for longer than that.
+
+  End to end, a phone that goes quiet costs about nine requests to establish the silence and four
+  an hour after that, against fifteen an hour forever.
+
+A ping written before `btry` existed leaves nothing to predict from, and the page falls back to the
+old fixed `pollMs`.
 
 Steps 1–2 are the only rate-limited work, and they're independent of which run you're looking at.
 So **opening a run costs zero API requests**: the cached index already lists its files, and their
@@ -256,13 +333,19 @@ Unauthenticated GitHub API access is **60 requests/hour per IP address** — per
 per repo, so audience size on its own is not the problem. File bodies don't count (they come from
 the CDN), and a hidden tab doesn't poll.
 
-A 304 counts the same as a 200, so the poll interval *is* the request rate. At `pollMs` of 240 s
-that's **15 requests/hour per open tab**, a quarter of the budget:
+A 304 counts the same as a 200, so the poll interval *is* the request rate — which is why the page
+schedules its polls off the phone's battery rather than a fixed timer. What one open tab costs:
 
-| Viewers behind one IP | Requests/hour | Result |
-|---|---|---|
-| 1–4 | 15–60 | fine |
-| 5+ | 75+ | throttled until the hour rolls |
+| Situation | Fixed 240 s timer | Scheduled | Staleness |
+|---|---|---|---|
+| battery >45%, 5 min cadence | 15/hr | ~12/hr | 2 min → ~30 s |
+| battery 25%, 17 min cadence | 15/hr | ~6.7/hr | 2 min → ~30 s |
+| battery <15%, 30 min cadence | 15/hr | ~3.9/hr | 2 min → ~30 s |
+| run over, tab left open | 15/hr | ~4/hr | — |
+
+(The 15-minute cap costs one extra request per long interval; that is already in these numbers.)
+So the budget stretches to roughly five simultaneous viewers behind one IP on a fresh phone and
+fifteen on a dying one — which is when a long day out tends to have the most people watching.
 
 Distinct connections are unaffected, so a hundred people on their own phones is fine while five in
 one office is not. Four safeguards keep a tab from spending faster than that:
@@ -285,8 +368,9 @@ Measured cost of one page load, warm cache:
 | Cold load, empty cache | **1** |
 | Switching to a run you've never opened | **0** |
 
-Trading latency for headroom is a one-line change to `pollMs` in [`src/config.js`](src/config.js).
-Going further means removing the API from the read path entirely — a GitHub Action that aggregates
+Trading latency for headroom is a one-line change to `maxPollMs` in
+[`src/config.js`](src/config.js), which sets both the backoff cap and how long the page will go
+without looking. Going further means removing the API from the read path entirely — a GitHub Action that aggregates
 each run into one static file, which lifts the viewer ceiling completely but adds several minutes
 of delay before a new ping is visible.
 
@@ -313,6 +397,7 @@ src/
   gpx.js            reads a .gpx into segments and waypoints (no dependencies)
   course.js         projects it to metres: distance along, climb, loop detection, grid index
   snap.js           puts each ping on the course, once, and remembers where
+  schedule.js       when the next ping is due, from the battery the last one reported
   stats.js          per-ping time, distance and climb, and interpolating a hovered spot
   profile.js        the height profile strip and its distance axis (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
@@ -344,6 +429,10 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - New colour → a token in `index.html`, then read it in `colors.js`. Never a literal in a layer.
 - New URL parameter → `route.js`.
 - Different repo, poll rate, or snap threshold → `config.js` only.
+- The phone changed how often it pings → the four battery constants in `config.js`, which mirror
+  its script. If the *shape* of its rule changed, `pingIntervalMs` in `schedule.js` too.
+- A different rule for when to poll → `nextPollMs` in `schedule.js`. Keep it pure: `main.js`
+  recomputes it after every refresh, and that is only safe while it holds no state.
 - Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
 - Changing how a ping picks its place on the course → the cost function in `snap.js`.
 - Another figure derived per ping → `stats.js`, then a row in `tooltipHtml`.
@@ -421,6 +510,19 @@ edge and when it is wider than the window at all.
 
 The Maps link is tested for the thing that would silently break it: a label containing a
 parenthesis, which is the delimiter of the URL form that carries it.
+
+The poll schedule is entirely pure, so all of it is tested. `pingIntervalMs` is checked
+against the phone's own numbers at ten points on the curve — figures derived from the
+formula by hand, not from this implementation, so a drift from the phone's script shows up
+as a failure rather than as quietly wrong polling. Its *shape* is asserted too, since that
+shape is the reason the interval can't simply be inferred from the gaps between recent
+pings: flat at both ends and more than fifty times steeper through the knee, where each
+gap is minutes longer than the one before it. Then `nextPollMs` for waiting until a ping
+is due, for backing off geometrically once one is late, for both clamps, for falling back
+to the fixed rate when a ping predates `btry` — and for being **pure**, which is what makes
+it safe for `main.js` to recompute after every refresh. One test walks the whole backoff
+ladder and asserts a long silence costs fewer than fifteen requests in total rather than
+fifteen every hour.
 
 ## A note on waypoint labels
 

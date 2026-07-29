@@ -19,13 +19,29 @@ export const fmtTime = new Intl.DateTimeFormat(undefined, {
 
 export const fmtClock = new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' });
 
-/** "3m ago" — coarse on purpose; the exact time is in the tooltip. */
+/**
+ * A duration in one unit: "45s", "3m", "2h", "4d".
+ *
+ * Coarse on purpose. It answers "is this still warm", which needs one glanceable
+ * number, not a precise one — the exact time is in the tooltip. Both directions
+ * of that question share this rounding: [`ago`](#ago) looks backwards and the
+ * panel's "next ~17m" looks forwards, and two sets of thresholds that were meant
+ * to agree would eventually stop agreeing.
+ *
+ * Negative spans clamp to zero: a countdown that has run out reads "0s", and
+ * whoever asked is expected to say something better than that.
+ */
+export function coarse(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60)    return `${s}s`;
+  if (s < 3600)  return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+
+/** "3m ago" — see [`coarse`](#coarse) for why it's this rough. */
 export function ago(ms, now = Date.now()) {
-  const s = Math.max(0, Math.round((now - ms) / 1000));
-  if (s < 60)    return `${s}s ago`;
-  if (s < 3600)  return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
+  return `${coarse(now - ms)} ago`;
 }
 
 /**

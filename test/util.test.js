@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ago, escapeHtml, fmtDuration, fmtElapsed, mapsUrl, parseTime, persistedAt, pool, throttle
+  ago, coarse, escapeHtml, fmtDuration, fmtElapsed, mapsUrl, parseTime, persistedAt, pool, throttle
 } from '../src/util.js';
 
 test('parseTime recovers the ISO timestamp from a filename', () => {
@@ -28,6 +28,29 @@ test('parseTime honours the offset rather than assuming UTC', () => {
 
 test('parseTime returns NaN for a name it cannot read', () => {
   assert.ok(Number.isNaN(parseTime('README.json')));
+});
+
+// --- one rounding rule, used in both directions -------------------------------
+
+test('coarse picks one unit at each magnitude', () => {
+  assert.equal(coarse(30 * 1000), '30s');
+  assert.equal(coarse(5 * 60000), '5m');
+  assert.equal(coarse(3 * 3600000), '3h');
+  assert.equal(coarse(2 * 86400000), '2d');
+});
+
+test('coarse switches unit exactly at the boundary', () => {
+  assert.equal(coarse(59 * 1000), '59s');
+  assert.equal(coarse(60 * 1000), '1m');
+  assert.equal(coarse(3599 * 1000), '60m');   // rounds up in minutes, not to "1h"
+  assert.equal(coarse(3600 * 1000), '1h');
+  assert.equal(coarse(86400 * 1000), '1d');
+});
+
+test('coarse clamps a negative span to zero', () => {
+  // A countdown that has run out. The caller is expected to say something more
+  // useful than "0s" — the ticker says "overdue" — but it must not read "-3m".
+  assert.equal(coarse(-3 * 60000), '0s');
 });
 
 test('ago formats each magnitude', () => {

@@ -7,7 +7,8 @@ import {
   cachedIndex, defaultRun, fetchCourse, hydrate, loadCache, RateLimitError, refreshIndex
 } from './github.js';
 import { parseGpx } from './gpx.js';
-import { buildPoints } from './points.js';
+import { buildPoints, latestOf } from './points.js';
+import { nextPollMs } from './schedule.js';
 import { applySnaps, snapAll } from './snap.js';
 import { deriveStats } from './stats.js';
 import { createMap } from './map.js';
@@ -25,6 +26,10 @@ const pinned = pinnedRun();
 let index = cachedIndex();
 let run = null;
 let backoffUntil = 0;
+
+// The newest ping on screen. It carries the phone's battery, which is what says
+// when the next ping is due — see [schedule.js](./schedule.js).
+let latest = null;
 
 // The run's course, once its GPX has been fetched and parsed. Held in memory
 // only — the snap RESULTS are what's worth persisting, and they're much smaller.
@@ -113,6 +118,8 @@ function show(cache) {
   // Elapsed time and climb, hung off each point for the tooltip. Cheap, and it
   // depends on the snaps above, so it goes here rather than being cached.
   deriveStats(points, course);
+
+  latest = latestOf(points);
 
   map.setPoints(points);
   profile.setPoints(points);
@@ -242,6 +249,37 @@ async function poll() {
  */
 const refresh = throttle(poll, CONFIG.minRefreshMs, { store: persistedAt(LS_REFRESH) });
 
+/**
+ * The poll timer, which reschedules itself after every attempt.
+ *
+ * Not a fixed interval: `nextPollMs` works out when the phone's next ping is
+ * actually due from the battery the last one reported, so a phone at 12% is
+ * asked about twice an hour instead of fifteen times, and a live one is read
+ * within seconds of committing instead of an average of two minutes later.
+ *
+ * Rescheduling after EVERY refresh matters, including ones the throttle dropped
+ * and ones triggered by a tab coming forward: a poll changes the newest point,
+ * which is the thing the schedule is computed from. Since that computation is
+ * pure, recomputing it more often than necessary costs nothing and can't drift.
+ */
+let timer = 0;
+function schedule() {
+  clearTimeout(timer);
+  timer = setTimeout(tick, nextPollMs(latest));
+}
+
+async function tick() {
+  // A backgrounded tab still keeps its schedule, it just doesn't spend requests
+  // on it — `visibilitychange` below refreshes the moment it comes forward.
+  if (!document.hidden) await refresh();
+  schedule();
+}
+
+/** Refresh now, then work out when to do it next. Every entry point uses this. */
+function refreshNow() {
+  return refresh().finally(schedule);
+}
+
 function frame() {
   map.tick();
   requestAnimationFrame(frame);
@@ -251,16 +289,15 @@ function frame() {
 // and see whether GitHub has anything newer.
 ui.setState('loading');
 apply();
-refresh();
+refreshNow();
 
-setInterval(() => { if (!document.hidden) refresh(); }, CONFIG.pollMs);
 setInterval(() => ui.refreshRelativeTime(), 15000);
 // The elapsed clock separately, and faster: a seconds display that only moves
 // every 15 s is a broken clock, and running the 15 s job at 1 Hz would rebuild
 // the run picker sixty times a minute to no purpose.
 setInterval(() => ui.tickClock(), 1000);
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-addEventListener('focus', refresh);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNow(); });
+addEventListener('focus', refreshNow);
 
 requestAnimationFrame(frame);

@@ -9,13 +9,41 @@ export const CONFIG = {
 
   // GitHub allows 60 API requests/hour PER IP, and a 304 costs the same as a
   // 200 — measured, despite the docs saying conditional requests are free. One
-  // poll is one request whatever the run count, so this rate is a budget split
-  // between everyone behind the same connection: 240s = 15/hour, room for four.
+  // poll is one request whatever the run count, so the rate is a budget split
+  // between everyone behind the same connection.
+  //
+  // This is only the FALLBACK rate now, for a run whose newest ping predates the
+  // `btry` field. Normally schedule.js works out when the next ping is actually
+  // due and the page sleeps until then. 240s = 15/hour, room for four viewers.
   pollMs: 240000,
   minRefreshMs: 30000, // floor between refreshes, however they were triggered
   liveMs: 3600000,     // a run with a ping this recent is still running
   concurrency: 8,      // parallel file fetches on a cold start
   maxZoom: 17,         // this tracker often sits still; don't zoom into the void
+
+  // --- when the next ping is due -------------------------------------------
+  // The phone picks its own ping interval from a logistic on battery: flat at
+  // 5 min above ~45%, slewing hard through 15-35%, flat at 30 min below 15%.
+  //
+  //   interval = min + (max - min) / (1 + e^(k * (battery - mid)))
+  //
+  // These four constants MIRROR the phone's script, which is the authority.
+  // They live here only because `btry` is what the ping actually carries, and a
+  // mismatch is SILENT — the map would just poll at the wrong times, with no
+  // symptom anyone would notice. Retune the phone, retune these.
+  minPingMs: 300000,
+  maxPingMs: 1800000,
+  batteryK: 0.3,
+  batteryMid: 25,
+
+  pollGuardMs: 30000, // the commit still has to land AND reach the tree API
+  maxPollMs: 900000,  // backoff cap, and the floor poll on a long wait
+  // How late a ping can be before we stop treating it as jitter. The interval
+  // predicts when the phone WAKES; it then has to take a fix, upload it, and
+  // have the commit reach the API, so a little slippage means nothing. Past
+  // this it has genuinely missed its slot, and since a failed upload is retried
+  // on its NEXT poll rather than on its own, there is nothing to find until then.
+  lateJitterMs: 120000,
 
   // --- snapping pings onto a run's course, when it has a .gpx ---------------
   snapMeters: 500,     // further than this from the course and a ping is left where it is
