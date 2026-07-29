@@ -185,7 +185,7 @@
      pair can't drift apart. */
   /* A little air under the ping line, which is a different kind of statement. */
   #course-label { margin-top: 4px; }
-  #clock-label, #course-label {
+  #clock-label, #course-label, #finish-label {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: .07em;
@@ -201,6 +201,26 @@
     line-height: 1.2;
     margin-top: 1px;
     color: var(--text-primary);
+  }
+
+  /* The predicted finish. Typeset a size down from the elapsed clock and in the
+     secondary ink, because the two sit one above the other and only one of them
+     is a measurement — the hierarchy has to say which. */
+  #finish { margin-top: 6px; }
+  #finish[hidden] { display: none; }
+  #finish-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 1.2;
+    margin-top: 1px;
+    color: var(--text-secondary);
+  }
+  #finish-range {
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-muted);
   }
 
   /* The run picker IS the heading. There used to be a name and, underneath it, a
@@ -439,6 +459,15 @@
   <div id="clock" hidden>
     <div id="clock-label">Elapsed</div>
     <div id="clock-time">0:00:00</div>
+  </div>
+  <!-- The forecast finish. Deliberately the same shape as the clock above it —
+       one caption, one number — because they are the same question asked
+       forwards and backwards. The range underneath is what says the second one
+       is a guess. -->
+  <div id="finish" hidden>
+    <div id="finish-label">Finish</div>
+    <div id="finish-time"></div>
+    <div id="finish-range"></div>
   </div>
   <div id="toggles" hidden>
     <label><input type="checkbox" id="t-waypoints" checked> Points of interest</label>

@@ -7,6 +7,7 @@
 // only mean versioning a cache against `eleThresholdM`.
 
 import { gainAt, pointAt } from './course.js';
+import { predictAt } from './predict.js';
 
 /**
  * Hang a `stats` object off each point, in place.
@@ -85,21 +86,27 @@ export function deriveStats(points, course) {
  *   - Height and climb are properties of the COURSE. They are known everywhere
  *     on it, whether or not anyone has been there yet.
  *   - The time is a property of the RUN, and it is only known where the run has
- *     actually been. Between two pings it is interpolated; past the last one
- *     there is nothing to interpolate from, and `state` says so instead of
- *     extrapolating a number nobody measured.
+ *     actually been. Between two pings it is interpolated; past the last one it
+ *     is FORECAST, from a model fitted to this run and nothing else, and the
+ *     answer arrives with its own uncertainty attached rather than pretending to
+ *     be a measurement. See [predict.js](predict.js).
  *
  * @param {Array}       points sorted oldest-first
  * @param {object|null} course
  * @param {number|null} along  metres along the course
- * @returns {{along, lat, lon, ele, upTotal, downTotal, state, sinceStart?}|null}
+ * @param {object|null} forecast from `buildForecast`, when the run has one. Left
+ *   out, ground past the last ping simply reads as not reached — which is what
+ *   every caller did before there was a model, and still the right answer for a
+ *   run too young to fit one.
+ * @returns {{along, lat, lon, ele, upTotal, downTotal, state, sinceStart?, predicted?}|null}
  *   `state` is one of:
  *     'between' — bracketed by two pings; `sinceStart` is interpolated
- *     'beyond'  — past the furthest point the run has reached
+ *     'beyond'  — past the furthest point the run has reached; `predicted`
+ *                 carries the forecast when there is one
  *     'before'  — short of the earliest point it has reached
  *     'unknown' — no ping has landed on the course at all
  */
-export function interpolateAt(points, course, along) {
+export function interpolateAt(points, course, along, forecast = null) {
   if (!course || along === null || along === undefined || !Number.isFinite(along)) return null;
 
   const at = pointAt(course, along);
@@ -117,7 +124,16 @@ export function interpolateAt(points, course, along) {
   if (!snapped.length) return { ...base, state: 'unknown' };
 
   const alongs = snapped.map(p => p.snap.along);
-  if (along > Math.max(...alongs)) return { ...base, state: 'beyond' };
+  if (along > Math.max(...alongs)) {
+    // `predictAt` anchors at the newest ping rather than the furthest one, and
+    // returns null for anything already behind it — so on the rare course where
+    // a ping snapped backwards past the leader, the two agree by construction
+    // that there is nothing to forecast.
+    const predicted = predictAt(forecast, along);
+    return predicted
+      ? { ...base, state: 'beyond', predicted: { ...predicted, sinceStart: predicted.t - points[0].t } }
+      : { ...base, state: 'beyond' };
+  }
   if (along < Math.min(...alongs)) return { ...base, state: 'before' };
 
   // The LATEST straddling pair, not the first: on a lap course the cursor may

@@ -20,6 +20,15 @@ export const fmtTime = new Intl.DateTimeFormat(undefined, {
 export const fmtClock = new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' });
 
 /**
+ * A clock time without the seconds, for times nobody measured.
+ *
+ * Everything a ping reports is exact to the second and shown with `fmtClock`. A
+ * forecast is exact to about ten minutes, and quoting "13:24:40" for it would be
+ * claiming a precision the band printed beside it explicitly denies.
+ */
+export const fmtHm = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+
+/**
  * A duration in one unit: "45s", "3m", "2h", "4d".
  *
  * Coarse on purpose. It answers "is this still warm", which needs one glanceable

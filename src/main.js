@@ -8,6 +8,7 @@ import {
 } from './github.js';
 import { parseGpx } from './gpx.js';
 import { buildPoints, latestOf } from './points.js';
+import { buildForecast, deriveForecastErrors } from './predict.js';
 import { nextPollMs } from './schedule.js';
 import { applySnaps, snapAll } from './snap.js';
 import { deriveStats } from './stats.js';
@@ -137,12 +138,26 @@ function show(cache) {
   // depends on the snaps above, so it goes here rather than being cached.
   deriveStats(points, course);
 
+  // Then the pace model, fitted to THIS run and nothing else, and each ping's
+  // score against the forecast that was made before it arrived. Both derived on
+  // every paint rather than cached: they are a few hundred floating-point
+  // operations over arrays already in hand, and a cached forecast is one that
+  // can disagree with the pings it was fitted to.
+  //
+  // After `deriveStats`, because the errors are hung off the `stats` object it
+  // creates — and that object is rebuilt from scratch each time through.
+  const forecast = buildForecast(points, course);
+  deriveForecastErrors(points, course);
+
   latest = latestOf(points);
 
   map.setPoints(points);
+  map.setForecast(forecast);
   profile.setPoints(points);
+  profile.setForecast(forecast);
   profile.scrollToLatest();
   ui.setPoints(points);
+  ui.setForecast(forecast);
 }
 
 /**
@@ -313,7 +328,10 @@ setInterval(() => ui.refreshRelativeTime(), 15000);
 // The elapsed clock separately, and faster: a seconds display that only moves
 // every 15 s is a broken clock, and running the 15 s job at 1 Hz would rebuild
 // the run picker sixty times a minute to no purpose.
-setInterval(() => ui.tickClock(), 1000);
+// The strip's "probably here, now" marker rides the same beat: it is the other
+// thing on screen that moves without any data having arrived. It redraws only
+// when it has actually shifted a pixel, so most of these ticks cost nothing.
+setInterval(() => { ui.tickClock(); profile.tickForecast(); }, 1000);
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNow(); });
 addEventListener('focus', refreshNow);

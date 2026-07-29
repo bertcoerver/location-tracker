@@ -5,7 +5,7 @@ import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
 import { courseHoverAt } from './course.js';
 import { interpolateAt } from './stats.js';
-import { escapeHtml, fmtClock, fmtDuration, fmtTime, mapsUrl } from './util.js';
+import { escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
 import { latestOf, posOf } from './points.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
@@ -298,6 +298,13 @@ export function tooltipHtml(point, isLatest) {
     rows.push(`<div class="r">${climbHtml(stats.up, stats.down)} since last</div>`);
   }
 
+  // How the forecast did here, when this ping is late enough in the run to have
+  // had one. Scored against a model that had never seen this ping or any after
+  // it — see `deriveForecastErrors` — so it is a test of the prediction rather
+  // than a look at its own residuals, and it is the only place on screen where
+  // the model can be caught being wrong.
+  if (stats?.forecast) rows.push(`<div class="r">${errorHtml(stats.forecast)}</div>`);
+
   if (point.btry !== undefined) rows.push(`<div class="r">Battery ${point.btry}%</div>`);
   if (point.msg) rows.push(`<div class="m">${escapeHtml(point.msg)}</div>`);
   if (point.img) rows.push(`<img src="${encodeURI(point.img)}" alt="">`);
@@ -338,9 +345,20 @@ export function hoverTooltipHtml(at) {
   if (at.ele !== null && at.ele !== undefined) {
     rows.push(`<div class="r">${Math.round(at.ele)} m</div>`);
   }
-  rows.push(`<div class="r">${at.state === 'between'
-    ? `${fmtDuration(at.sinceStart)} in &middot; estimated`
-    : 'Not reached yet'}</div>`);
+  if (at.state === 'between') {
+    rows.push(`<div class="r">${fmtDuration(at.sinceStart)} in &middot; estimated</div>`);
+  } else if (at.predicted) {
+    // Two rows, because they answer two different questions. The first is when,
+    // as a single number you can hold in your head; the second is how much that
+    // number is worth. Splitting them keeps the window from reading as an
+    // afterthought tacked onto a time that looks certain.
+    rows.push(`<div class="r">${fmtHm.format(at.predicted.t)} &middot; ` +
+      `${fmtDuration(at.predicted.sinceStart)} in</div>`);
+    rows.push(`<div class="r">Likely ${fmtHm.format(at.predicted.lo)}` +
+      `&thinsp;&ndash;&thinsp;${fmtHm.format(at.predicted.hi)}</div>`);
+  } else {
+    rows.push('<div class="r">Not reached yet</div>');
+  }
   if (at.upTotal !== undefined) {
     rows.push(`<div class="r">${climbHtml(at.upTotal, at.downTotal)}</div>`);
   }
@@ -371,6 +389,24 @@ function mapsLink(lat, lon, label) {
     'Open in Google Maps</a>';
 }
 
+/**
+ * "Predicted 12:36 &middot; 47s late" — how the forecast made before this ping
+ * compared with the ping itself.
+ *
+ * "Late" and "early" describe the RUNNER against the prediction, not the
+ * prediction against the runner: arriving after the predicted time is late. The
+ * other convention would be a residual, which is a word for a different audience.
+ *
+ * Under a second, both words are silly and neither is informative, so it just
+ * says the forecast was right.
+ */
+function errorHtml(forecast) {
+  const off = Math.abs(forecast.error);
+  const at = `Predicted ${fmtHm.format(forecast.t)}`;
+  if (off < 1000) return `${at} &middot; spot on`;
+  return `${at} &middot; ${fmtDuration(off)} ${forecast.error > 0 ? 'late' : 'early'}`;
+}
+
 /** "&uarr; 1,240 m &darr; 980 m" — arrows rather than +/-, which reads as arithmetic. */
 function climbHtml(up, down) {
   const m = v => Math.round(v).toLocaleString();
@@ -394,8 +430,12 @@ export function fmtDistance(m) {
  * @param {() => boolean} isPinned whether a point is currently selected. Hover
  *   is suspended while one is — a hover tooltip appearing beside the pinned one
  *   would be two answers to a question the user has already settled.
+ * @param {() => object|null} getForecast the run's pace model, so hovering ground
+ *   the runner hasn't reached says when they probably will.
  */
-export function makeTooltip(getPoints, getCourse = () => null, isPinned = () => false) {
+export function makeTooltip(
+  getPoints, getCourse = () => null, isPinned = () => false, getForecast = () => null
+) {
   const tip = html => (html ? { html, className: 'tip', style: { pointerEvents: 'auto' } } : null);
 
   return ({ object, layer, coordinate }) => {
@@ -409,7 +449,7 @@ export function makeTooltip(getPoints, getCourse = () => null, isPinned = () => 
       if (!course || !coordinate) return null;
       const along = courseHoverAt(course, coordinate[0], coordinate[1]);
       if (along === null) return null;
-      return tip(hoverTooltipHtml(interpolateAt(getPoints(), course, along)));
+      return tip(hoverTooltipHtml(interpolateAt(getPoints(), course, along, getForecast())));
     }
 
     if (!object) return null;

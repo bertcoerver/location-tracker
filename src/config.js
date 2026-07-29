@@ -73,6 +73,52 @@ export const CONFIG = {
   // stealing pans from the camera.
   dragGrabPx: 22,
 
+  // --- forecasting the rest of the course ----------------------------------
+  // See [predict.js](./predict.js). The model is fitted from ONE run's own
+  // pings and nothing else — there is deliberately no shared or seeded state
+  // between runs, because a course is run differently by different people on
+  // different days, and borrowing yesterday's pace is how a forecast becomes
+  // confident and wrong.
+  //
+  // Recency measured in METRES OF COURSE COVERED, not minutes elapsed. Fatigue
+  // and terrain are what make the last hour unlike the first, and both track
+  // distance; a phone that drops to 30-minute pings when the battery fades
+  // would otherwise silently halve how much history the model looks at.
+  //
+  // 15 km leaves a 20 km run very nearly evenly weighted — there isn't enough
+  // of it for recency to mean much — while on a 160 km ultra the last ~45 km
+  // carry most of the fit, which is the regime this was chosen for.
+  predictHalfLifeM: 15000,
+  // Strength of the pull towards the run's own overall pace, counted in
+  // pseudo-legs: at 4, the prior argues about as loudly as four observed legs.
+  // It is what stops one slow patch running away with the forecast, and it
+  // fades to nothing as a long run accumulates real data.
+  predictPriorLegs: 4,
+  // Naismith's rule, in the form the regression wants: one metre climbed costs
+  // about as much as 7.92 m of flat. Only a PRIOR — a run with real climbing in
+  // it will move the coefficient off this — but on a flat course, or in the
+  // first half hour, it is the whole of what the model knows about hills.
+  predictClimbFactor: 7.92,
+  // Two legs is three snapped pings. Below that there is nothing to fit and no
+  // forecast is offered, which is honester than one drawn through two dots.
+  predictMinLegs: 2,
+  // Half-width of the quoted window, in standard deviations: 1.2816 is the 80%
+  // central interval. Wide enough to be right most of the time, narrow enough
+  // to be worth reading — 95% on real pace scatter comes out at ±20 minutes an
+  // hour ahead, which is a window nobody can act on.
+  predictBandZ: 1.2816,
+  // Floors on the residual scatter, so a near-perfect fit on three legs cannot
+  // claim a ten-second window. The fraction is of the mean leg duration, which
+  // is what makes it hold at any ping interval.
+  predictMinSigmaMs: 30000,
+  predictSigmaFloorFrac: 0.08,
+  // Guardrails, not part of the model: seconds per metre, so 0.1 is 1:40/km
+  // (faster than anyone) and 3.0 is 50:00/km (slower than crawling). They exist
+  // to keep a degenerate fit from producing an ETA next week, and a fit that
+  // hits one of them is a fit that has gone wrong.
+  predictMinPaceSpm: 0.1,
+  predictMaxPaceSpm: 3.0,
+
   // --- the height profile strip --------------------------------------------
   profileHeight: 112,
   profileMinWidth: 640, // narrower than this and the profile scrolls rather than squashes

@@ -19,6 +19,10 @@ export function createMap(container, {
 } = {}) {
   let points = [];
   let course = null;
+  // The run's pace model, or null. Only ever read on the way into a tooltip —
+  // nothing on the map is DRAWN from it, because a forecast is a statement about
+  // time and this view's axes are both space.
+  let forecast = null;
   let hover = null;      // [lon, lat] on the course, from the profile strip
   // The pinned point, from a click in either view. While one is held the map's
   // hover tooltip is suspended and the crosshair stops chasing the cursor.
@@ -108,7 +112,7 @@ export function createMap(container, {
    * @param {number} along metres from the start of the course.
    */
   function atAlong(along) {
-    const at = interpolateAt(points, course, along);
+    const at = interpolateAt(points, course, along, forecast);
     return { view: 'map', html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon, along };
   }
 
@@ -162,7 +166,8 @@ export function createMap(container, {
     viewState,
     controller: true,
     layers: [basemapLayer()],
-    getTooltip: makeTooltip(() => points, () => course, () => Boolean(selection)),
+    getTooltip: makeTooltip(
+      () => points, () => course, () => Boolean(selection), () => forecast),
 
     /**
      * Deck rewrites the cursor on every hover, so a scrub has to be declared
@@ -411,8 +416,10 @@ export function createMap(container, {
     setCourse(next) {
       const changed = (course?.sha ?? null) !== (next?.sha ?? null);
       course = next;
-      // A distance along the old course means nothing on the new one.
-      if (changed) hover = null;
+      // A distance along the old course means nothing on the new one — and a
+      // pace model fitted against it means even less. `show()` supplies a fresh
+      // one straight after, so this only closes the gap.
+      if (changed) { hover = null; forecast = null; }
 
       if (changed && next && follow) {
         const fit = fitView(points);
@@ -422,6 +429,16 @@ export function createMap(container, {
         }
       }
       render();
+    },
+
+    /**
+     * The run's pace model, or null. No render: nothing on this view is drawn
+     * from it, and the next tooltip reads the current value anyway.
+     *
+     * @param {object|null} next from `buildForecast`.
+     */
+    setForecast(next) {
+      forecast = next;
     },
 
     /**

@@ -14,6 +14,7 @@ import { pointAt } from './course.js';
 import { hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
 import { latestOf, posOf } from './points.js';
+import { positionAt } from './predict.js';
 import { interpolateAt } from './stats.js';
 
 // Room above the terrain for the waypoint labels.
@@ -27,6 +28,13 @@ const PAD_RIGHT = 14;
 
 /** How close the cursor has to get to a dot, in pixels, to pick it up. */
 const HIT_RADIUS = 14;
+
+/**
+ * How far the "probably here, now" marker has to slide before the strip is
+ * redrawn for it. Below half a pixel nothing on the screen would change, and the
+ * clock asks once a second forever.
+ */
+const MARKER_STEP_PX = 0.5;
 
 /**
  * Collapse the course's elevations into one min/max pair per pixel column.
@@ -266,6 +274,13 @@ export function createProfile(root, {
 
   let course = null;
   let points = [];
+  // The run's pace model, and where it says the runner is AT THIS MOMENT —
+  // `{ along, lo, hi }` in metres, or null when there is nothing to say. The
+  // marker is the one thing on this strip that moves without any data arriving,
+  // so it is kept here and refreshed from the clock rather than recomputed
+  // inside `draw`, which runs on every pointermove.
+  let forecast = null;
+  let marker = null;
   let hover = null;      // distance in metres under the cursor, or null
   // The pinned point, from a click in either view. While one is held, hovering
   // is suspended everywhere: the user has said which point they want to read,
@@ -360,17 +375,17 @@ export function createProfile(root, {
     const line = courseColor();
 
     const left = scale.plotLeft;
-    const right = left + scale.plotWidth;
 
     // The terrain: a filled band down to the axis, with the top edge drawn over
     // it so the skyline stays crisp.
-    ctx.beginPath();
-    ctx.moveTo(left, scale.floor);
-    for (let i = 0; i < scale.plotWidth; i++) ctx.lineTo(left + i + 0.5, scale.y(ridge[i]));
-    ctx.lineTo(right, scale.floor);
-    ctx.closePath();
-    ctx.fillStyle = `rgba(${line.join(',')}, 0.20)`;
-    ctx.fill();
+    //
+    // Ground already covered is filled solidly and ground still to come faintly,
+    // so the strip says at a glance how much race is left. The split is at the
+    // newest ping — the same place the forecast is anchored, so the faint half is
+    // exactly the half the marker and the ETAs are talking about.
+    const reached = reachedColumn(scale);
+    fillTerrain(scale, ridge, line, 0, reached, 0.20);
+    fillTerrain(scale, ridge, line, reached, scale.plotWidth, 0.07);
 
     ctx.beginPath();
     for (let i = 0; i < scale.plotWidth; i++) {
@@ -385,8 +400,112 @@ export function createProfile(root, {
     drawAxis(scale);
     if (layers.waypoints) drawWaypoints(scale);
     drawHover(scale, scale.floor, ridge);
+    drawForecast(scale);
     drawPoints(scale);
     placePin(scale);
+  }
+
+  /**
+   * The plot column the newest ping reached, which is where covered ground stops.
+   *
+   * The newest SNAPPED ping rather than the furthest one: this is a statement
+   * about where the runner is, and on a course that doubles back the furthest
+   * place they have been is not it. Without a course position — every ping off
+   * the route — the whole strip counts as unreached, which is honest.
+   */
+  function reachedColumn(scale) {
+    const latest = latestOf(points);
+    if (!latest?.snap) return 0;
+    const column = Math.round(scale.x(latest.snap.along)) - scale.plotLeft;
+    return Math.max(0, Math.min(scale.plotWidth, column));
+  }
+
+  /** One span of terrain, filled. Split out so covered and remaining ground can
+   *  be drawn at two weights from one smoothed series — two `ridge` reads would
+   *  eventually disagree at the seam. */
+  function fillTerrain(scale, ridge, line, fromCol, toCol, alpha) {
+    if (toCol <= fromCol) return;
+    const left = scale.plotLeft;
+
+    ctx.beginPath();
+    ctx.moveTo(left + fromCol, scale.floor);
+    for (let i = fromCol; i < toCol; i++) ctx.lineTo(left + i + 0.5, scale.y(ridge[i]));
+    ctx.lineTo(left + toCol, scale.floor);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${line.join(',')}, ${alpha})`;
+    ctx.fill();
+  }
+
+  /**
+   * Where the runner probably is right now: a dot, and a bar for the 80% range
+   * around it.
+   *
+   * This is the forecast read the way round a distance axis can answer. The
+   * tooltips ask "when will he be HERE"; the chart has no axis for a time, but it
+   * has one for a place, so the marker asks "where is he NOW" instead — the same
+   * model, inverted by `positionAt`.
+   *
+   * It sits just above the axis rather than up by the skyline, where the ping
+   * dots and the waypoint labels already live. Down there it is unmistakably a
+   * different kind of mark from a measurement, which is the point: everything
+   * else on this strip happened, and this has not.
+   */
+  function drawForecast(scale) {
+    if (!marker) return;
+
+    const ink = accent();
+    const y = scale.floor - 7;
+    const x = scale.x(marker.along);
+    const lo = scale.x(marker.lo);
+    const hi = scale.x(marker.hi);
+
+    ctx.strokeStyle = `rgba(${ink.join(',')}, 0.55)`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(lo, y);
+    ctx.lineTo(hi, y);
+    ctx.stroke();
+
+    // End caps, so the bar reads as a bounded range rather than a line that ran
+    // out of room.
+    ctx.lineWidth = 1.5;
+    for (const cap of [lo, hi]) {
+      ctx.beginPath();
+      ctx.moveTo(Math.round(cap) + 0.5, y - 3.5);
+      ctx.lineTo(Math.round(cap) + 0.5, y + 3.5);
+      ctx.stroke();
+    }
+
+    // A ring in the page's own background colour, so the dot stays legible where
+    // it overlaps its own bar.
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${ink.join(',')})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgb(${surface().join(',')})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  /**
+   * Recompute where the runner probably is, and say whether that has moved far
+   * enough to be worth a redraw.
+   *
+   * `positionAt` returns null once the prediction has run off the end of the
+   * course, which is what takes the marker away when a run goes quiet: a phone
+   * that stopped reporting three days ago is not "probably at the finish line",
+   * it is not on the chart at all.
+   */
+  function refreshMarker() {
+    const next = visible() && forecast ? positionAt(forecast, Date.now()) : null;
+    const perPx = course?.length > 0
+      ? course.length / Math.max(1, canvas.clientWidth)
+      : Infinity;
+    const moved = Boolean(marker) !== Boolean(next) ||
+      (marker && next && Math.abs(next.along - marker.along) / perPx >= MARKER_STEP_PX);
+
+    marker = next;
+    return moved;
   }
 
   /**
@@ -584,7 +703,7 @@ export function createProfile(root, {
     // Not on a ping, so describe the ground: how far in, how high, and —
     // interpolated between the pings either side — when the run was here.
     const along = scale.distanceAt(clientX - rect.left);
-    const at = interpolateAt(points, course, along);
+    const at = interpolateAt(points, course, along, forecast);
     return { along, html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon };
   }
 
@@ -726,6 +845,11 @@ export function createProfile(root, {
       // course to measure against, and it never changes after that.
       if (course) locateWaypoints(course);
       hover = null;
+      // A distance along the old course means nothing on the new one, and that
+      // goes for the forecast as much as for the crosshair. `show()` fits a
+      // fresh one straight after this, so the gap is one paint.
+      forecast = null;
+      marker = null;
       hideTip();
       sync();
     },
@@ -733,6 +857,30 @@ export function createProfile(root, {
     setPoints(next) {
       points = next;
       draw();
+    },
+
+    /**
+     * The run's pace model, or null. Drives the "probably here, now" marker and
+     * the ETAs in this view's own tooltips.
+     *
+     * @param {object|null} next from `buildForecast`.
+     */
+    setForecast(next) {
+      forecast = next;
+      refreshMarker();
+      draw();
+    },
+
+    /**
+     * Slide the marker along as the clock runs. Called once a second from
+     * main.js, beside the elapsed clock, because both are the same kind of thing:
+     * a number that changes without any data having arrived.
+     *
+     * Redraws only when the marker has actually moved a pixel, so a live run
+     * costs a redraw every few seconds rather than sixty a minute.
+     */
+    tickForecast() {
+      if (refreshMarker()) draw();
     },
 
     /**

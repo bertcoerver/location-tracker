@@ -84,6 +84,20 @@ the run finishes — either because the phone said so, or because nothing has ar
 and its label changes from "Elapsed" to "Total". A clock still counting hours after the finish would
 be claiming the race is still on.
 
+Under it, once the run has enough legs to fit one, sits the **predicted finish** and its range:
+
+```
+FINISH
+~13:24
+13:16 – 13:33
+```
+
+The same question as the clock, asked forwards. It is set a size down and in the secondary ink
+because the two sit one above the other and only one of them is a measurement — the hierarchy has to
+say which — and the range underneath is not decoration, it is the part that stops a single number
+being read as a promise. It shows only while the run is live, and never at all for a run that has
+finished: a forecast is a claim about a phone that is still out there. See "Predicting the rest".
+
 ### Knowing a run is over
 
 Without being told, the page can only guess from the clock: no ping for an hour means finished. That
@@ -145,8 +159,8 @@ view legible in the other.
 ### Drag a pinned point along the course
 
 A pinned point can be **picked up and slid along the route**, in either view — grab it on the map
-or on the height strip and the reading updates continuously: distance in, elevation, estimated time,
-climb so far. Both views stay in step throughout, so dragging on the strip walks the marker around
+or on the height strip and the reading updates continuously: distance in, elevation, time — estimated
+behind the runner and forecast ahead of them — and climb so far. Both views stay in step throughout, so dragging on the strip walks the marker around
 the map and vice versa.
 
 The marker follows the **course**, not the cursor. The pointer is turned into a coordinate and the
@@ -229,16 +243,40 @@ With a course present, three things change:
   a little from both ends, because the start and the finish are the two most interesting points on
   a course and edge-to-edge put half of each off the canvas.
 
+  Ground already covered is filled solidly and ground still to come faintly, so the strip says at a
+  glance how much race is left. The split is at the newest ping, which is also where the forecast is
+  anchored, so the faint half is exactly the half the ETAs are talking about.
+
+  Sitting just above the axis in that faint half is one more mark: **where the runner probably is
+  right now**, as a dot with a bar for the 80% range around it. It is the forecast read the way
+  round a distance axis can answer — the tooltips ask "when will he be *here*", and this asks "where
+  is he *now*" — and it creeps forward with the clock rather than waiting for a ping. It is down by
+  the axis, away from the ping dots and the waypoint labels, because everything else on the strip
+  happened and this has not. Once the prediction runs off the end of the course it disappears: a
+  phone that stopped reporting three days ago is not "probably at the finish line".
+
 - **Each ping carries its climb**, in the tooltip: metres up and down since the run started, and
   over the stretch since the previous ping. Alongside them, distance and elapsed time in the same
-  shape — how far and how long since the start, and since the ping before.
+  shape — how far and how long since the start, and since the ping before. Later pings also carry
+  **how the forecast did** — `Predicted 12:36 · 47s late` — scored against a model that had never
+  seen that ping or any after it. See "Predicting the rest".
 
 - **Anywhere on the course can be asked about.** Hovering the route on the map, or the terrain on
   the strip, gives a tooltip for that spot: how far in, how high, and what the climb is to there.
-  The time is **interpolated between the pings either side** and labelled as an estimate, since a
-  constant pace across a five-minute gap is a guess — the only one the data supports. Past the
-  furthest ping the run has reached, it says "Not reached yet" rather than extrapolating a pace into
-  ground nobody has covered.
+  Behind the runner the time is **interpolated between the pings either side** and labelled as an
+  estimate, since a constant pace across a five-minute gap is a guess — the only one the data
+  supports. Ahead of them it is **forecast**, with a window:
+
+  ```
+  15.0 km in
+  81 m
+  12:55 · 1h 18m in
+  Likely 12:51 – 13:00
+  ```
+
+  Two rows, because they answer two different questions: when, as a single number you can hold in
+  your head, and how much that number is worth. A run too young to fit a model still says "Not
+  reached yet" rather than drawing a pace through two dots.
 
 ### Hovering works both ways
 
@@ -310,6 +348,87 @@ whole cache is recomputed only if the course file changes, the threshold changes
 that is older than one already snapped — a backfill, which was never scored against the pings before
 it. The parsed course itself is deliberately *not* cached; a long route would dwarf everything else
 in storage, and the browser's HTTP cache makes refetching it free.
+
+## Predicting the rest
+
+Past the last ping the map used to say "Not reached yet" and stop. It now forecasts: hover any part
+of the course still ahead of the runner and the tooltip gives a time and a window for it.
+
+The model lives in [`src/predict.js`](src/predict.js) and is fitted from **one run's own pings and
+nothing else**. Nothing is shared between runs, cached across them, or seeded from them — a course is
+run differently by different people on different days, and borrowing yesterday's pace is how a
+forecast becomes confident and wrong.
+
+### The model
+
+Each pair of consecutive snapped pings is a **leg**, and leg duration is regressed on distance,
+ascent and descent, with no intercept:
+
+```
+dt  =  flat · distance  +  up · ascent  +  down · descent          seconds, metres
+```
+
+Three coefficients, each in seconds per metre and each directly readable: `flat` is flat pace, `up`
+is what a metre of climbing costs on top of it, `down` what a metre of descent does. It is the
+classic Naismith shape, and the smallest model that can tell a climb from a drop — which is the
+point of fitting anything at all rather than dividing distance by time. Ascent and descent come from
+the same threshold-filtered `gainAt` the tooltips already show, so a leg's climb means the same thing
+here as it does two rows further down the same tooltip.
+
+Regressing **time** rather than pace is what makes it robust. With no intercept, a leg where the
+runner did not move — an aid station, a phone on a table, a ping that snapped backwards — is an
+all-zero row in the design matrix. It contributes exactly nothing to the coefficients and exactly its
+own residual to the scatter, so a stop widens the uncertainty and cannot drag the pace anywhere.
+There is no "ignore short legs" threshold because none is needed.
+
+**Recency** is measured in *metres of course covered*, not minutes elapsed: `predictHalfLifeM`
+(15 km) is a half-life on distance. What makes the last hour of a race unlike the first is fatigue
+and terrain, and both track distance; a phone that drops to half-hourly pings as its battery fades
+would otherwise silently halve how much history the model looks at, exactly when it can least afford
+to. On a 20 km run this is nearly an even weighting — there isn't enough of it for recency to mean
+much — while on a 160 km ultra the last ~45 km carry most of the fit.
+
+**Shrinkage** pulls the fit towards the run's own overall pace, worth `predictPriorLegs` (4)
+pseudo-legs, so the prior argues about as loudly as four observed legs and fades to nothing as a long
+run accumulates data. It is what stops one slow patch running away with the forecast, and it is much
+stronger than `4/(4+n)` along whatever direction the data happens not to pin down — on a course with
+no descent, the descent coefficient is pinned by nothing and comes back as its prior, which is the
+honest answer rather than a singular matrix.
+
+### The window
+
+The band is the **80% central interval** (`predictBandZ`), and it comes from two genuinely different
+sources, added:
+
+- **parameter uncertainty** — "I don't know your true pace". Taken from the weighted fit's own
+  covariance, and it grows with the *square* of the distance ahead, because a pace error compounds
+  all the way.
+- **leg noise** — "even knowing your pace, you'll wobble". One leg's worth of residual scatter per
+  remaining leg, so it grows linearly and its contribution to the width grows as the square root.
+
+The residual scatter is floored twice over (`predictMinSigmaMs`, `predictSigmaFloorFrac`): three
+legs can be fitted almost perfectly by three coefficients, and a band claiming ten seconds of
+certainty an hour out would be the most misleading thing on the screen.
+
+### Judging it
+
+Every ping late enough in the run carries a **`Predicted 12:36 · 47s late`** row. That figure comes
+from a walk-forward backtest, and strictly so: the forecast for ping *i* is fitted on pings `0..i-1`
+and anchored at ping `i-1`, so nothing from ping *i* or after it reaches the fit. It is a test of the
+prediction rather than a look at its own residuals, and it is the regime the model was actually in
+when that ping landed. One leg ahead is a modest test, and that is the point — it is the only
+forecast the data supported at the time.
+
+Measured on the sample runs, where `test_3` is a 13-ping prefix of `test_2` and so has ground truth
+for everything it cannot see: mean absolute error **1.6 min** over the nine unseen pings, all nine
+inside the 80% band, and a finish predicted at 13:24 (13:16–13:33) against an actual 13:22.
+
+### Known limitation
+
+`flat` is **moving** pace. Time spent standing still widens the band, because it is real scatter, but
+it does not push the estimate later — so on a race with long aid-station stops the forecast will run
+optimistic. The per-ping scores are where that shows up: consistently "late" errors are this, and the
+fix would be a stoppage term rather than a tweak to any constant in `config.js`.
 
 ## Data format
 
@@ -515,6 +634,7 @@ src/
   snap.js           puts each ping on the course, once, and remembers where
   schedule.js       when the next ping is due, from the battery the last one reported
   stats.js          per-ping time, distance and climb, and interpolating a hovered spot
+  predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
@@ -552,6 +672,13 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
 - Changing how a ping picks its place on the course → the cost function in `snap.js`.
 - Another figure derived per ping → `stats.js`, then a row in `tooltipHtml`.
+- Changing how the forecast is fitted → `fitPace` in `predict.js`, or the `predict*` constants in
+  `config.js`. Keep it pure: `main.js` refits it on every paint, and that is only cheap and correct
+  while it holds no state of its own.
+- Something else predicted about ground ahead → `predictAt` in `predict.js`, then the `at.predicted`
+  branch of `hoverTooltipHtml`. Anything that needs it as a POSITION rather than a time — the
+  strip's "probably here, now" marker is the one so far — goes through `positionAt`, which is the
+  same model inverted, so the two can never disagree.
 - Something new to say about a spot on the course → `interpolateAt` in `stats.js`, then
   `hoverTooltipHtml` in `layers.js`. Both views render from those two, so neither can drift.
 - Linking the two views further → `map.js` and `profile.js` each expose `setHover` and
@@ -614,7 +741,29 @@ Interpolating a hovered spot is pinned on the distinction it exists to make: tha
 and climb come back **everywhere on the course**, because they are facts about the ground,
 while the time comes back only where the run has actually been. Halfway between two pings
 gives half the leg's minutes; on a lap covered twice the *latest* visit wins; and past the
-furthest ping the answer is a state, not a number.
+furthest ping the answer is a forecast with a band, or a state rather than a number when the
+run is too young to have one.
+
+The forecast is tested on properties rather than on numbers wherever it can be. A constant
+pace on a flat course recovers its coefficient exactly and predicts arrival exactly; a run
+that slowed recently is forecast slower than its own average, and shortening the half-life
+moves it further that way, monotonically. The band always straddles its own estimate and
+always widens with distance, and `positionAt` round-trips through `predictAt` to within a
+metre — the two are the same model read in opposite directions, so nothing else would catch
+them drifting apart.
+
+Two cases carry the design. A leg where the runner did not move must leave every coefficient
+**bit-identical** and yet strictly widen the band: that is the whole reason the regression is
+on time with no intercept, and it is the assertion that would fail if anyone gave it one.
+And every degenerate input has to come back `null` rather than `NaN` — no course, one leg, a
+stationary phone, pings that never snapped, a course with no descent to pin its coefficient
+down, a run that has already finished.
+
+Against real data the check is stronger than any fixture: `locations/test_3` is a strict
+13-ping prefix of `locations/test_2`, so the longer run is ground truth for everything the
+shorter one cannot see. That comparison is not in the suite — it is a measurement, not an
+invariant, and freezing today's numbers into an assertion would be testing the sample data
+rather than the model. The figures it gives today are in "Predicting the rest".
 
 The axis ladder is tested at course lengths from 500 m to 250 km — that the ticks never
 pack closer than the minimum spacing, always land on 1, 2 or 5 × 10ⁿ rather than

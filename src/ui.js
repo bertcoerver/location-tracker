@@ -4,7 +4,8 @@ import { LS_LAYERS } from './config.js';
 import { isLive } from './github.js';
 import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
-import { ago, coarse, fmtElapsed, storage } from './util.js';
+import { predictAt } from './predict.js';
+import { ago, coarse, fmtElapsed, fmtHm, storage } from './util.js';
 
 export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const el = id => document.getElementById(id);
@@ -21,6 +22,9 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const clockEl     = el('clock');
   const clockTimeEl = el('clock-time');
   const clockLabelEl = el('clock-label');
+  const finishEl      = el('finish');
+  const finishTimeEl  = el('finish-time');
+  const finishRangeEl = el('finish-range');
   const togglesEl = el('toggles');
   const boxes = { waypoints: el('t-waypoints'), raw: el('t-raw') };
 
@@ -28,6 +32,9 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   // The ping the phone marked as its last, when there is one. Derived rather
   // than pushed in, so there is no second source of truth about it.
   let finish = null;
+  // The run's pace model, or null. `buildForecast` already refuses to produce one
+  // for a finished run, so the panel never has to decide between the two.
+  let forecast = null;
   let index = {};
   let run = null;
   // Which toggles have anything to toggle: no waypoints in the GPX, no
@@ -169,6 +176,31 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   }
 
   /**
+   * When the run is expected to end, and how sure that is.
+   *
+   * Sits directly under the elapsed clock because it is the same question turned
+   * round: one counts what has happened, the other guesses what is left. The
+   * range beneath is not decoration — it is the part that stops a single number
+   * being read as a promise.
+   *
+   * Shown only while the run is live. A forecast is a claim about a phone that is
+   * still out there, and one left on screen after the run went quiet an hour ago
+   * is the panel's version of a stopped clock still ticking. `buildForecast`
+   * separately refuses to produce anything for a run that has actually finished,
+   * so there is no case where this and the "Finished" ticker both speak.
+   */
+  function renderFinish() {
+    const at = forecast && live() ? predictAt(forecast, forecast.course.length) : null;
+    finishEl.hidden = !at;
+    if (!at) return;
+
+    // The tilde is doing real work: it is the difference between "13:24" and
+    // "about 13:24", and this box has no room to say the second one in words.
+    finishTimeEl.textContent = `~${fmtHm.format(at.t)}`;
+    finishRangeEl.textContent = `${fmtHm.format(at.lo)} – ${fmtHm.format(at.hi)}`;
+  }
+
+  /**
    * Rebuild the picker, which is also the heading.
    *
    * The name of the run and the way to change it used to be two stacked
@@ -191,8 +223,10 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     // last poll worked, and it PULSES while the run is still going. Two dots
     // side by side read as decoration rather than as two separate signals.
     dotEl.dataset.live = String(live(now));
-    // Liveness is also what decides whether the clock runs or shows a total.
+    // Liveness is also what decides whether the clock runs or shows a total, and
+    // whether there is still a finish worth predicting.
     renderClock();
+    renderFinish();
 
     // One run is not a choice — but it is still the heading, so the control
     // stays and merely stops being one. Hiding it, as the old separate picker
@@ -235,6 +269,16 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
       // The dot and the picker's markers are downstream of liveness too, and a
       // finish changes that without the index having moved at all.
       renderRuns();
+    },
+
+    /**
+     * The run's pace model, or null.
+     *
+     * @param {object|null} next from `buildForecast`.
+     */
+    setForecast(next) {
+      forecast = next;
+      renderFinish();
     },
 
     /** The seconds hand. Called once a second; it touches one text node. */
