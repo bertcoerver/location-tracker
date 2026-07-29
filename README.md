@@ -34,10 +34,10 @@ Each run keeps its own point cache, and **switching runs costs no API requests a
 
 ## On screen
 
-Two numbers. **How long since the last ping**, beside the run name, and **how long the run has been
-going**, in the top right. Not how many pings there are, and not what second the browser last
-checked GitHub — that second is the page's business, and the dot already says whether polling is
-healthy.
+Two numbers, both in the panel top left. **How long since the last ping**, beside the run name, and
+**how long the run has been going**, on its own line below. Not how many pings there are, and not
+what second the browser last checked GitHub — that second is the page's business, and the dot
+already says whether polling is healthy.
 
 The clock counts from the first ping and ticks each second while the run is live. Once the run goes
 quiet — nothing for an hour — it **stops**, and its label changes from "Elapsed" to "Total". A clock
@@ -48,9 +48,20 @@ with the reason spelled out underneath — and it pulses while the run is live, 
 within the last hour. There used to be a second dot for that; two of them side by side just read as
 decoration.
 
-That ticker is also the only control. **Click it to fly back to the newest fix**; panning the map
+That ticker is also the main control. **Click it to fly back to the newest fix**; panning the map
 turns following off, and the ticker dims to say so. There is no separate Follow button because
 "where is the runner" and "take me there" were never two questions.
+
+Below it, when a run has a course, two checkboxes decide what else is drawn: its **waypoints** (on
+the map and on the height strip both — one switch, or it would be lying about half the screen) and
+the **raw pings and snap lines**, the audit trail showing where each fix really was before it
+snapped. The snapped dots themselves have no switch: they are the reading, not a decoration. The
+choice is remembered across visits, and a checkbox for something the current run hasn't got stays
+hidden.
+
+**Every tooltip ends with a Google Maps link**, opening that exact spot in a new tab. For a ping it
+points at the raw fix rather than the snapped one — the snap moves the dot onto the course, it does
+not move the runner, and a link to the snapped position would be a place nobody has been.
 
 Every ping is one colour, with the newest in the accent colour and a pulsing halo. There used to
 be a time ramp and a legend to decode it, but the only thing anyone read off it was how fresh the
@@ -76,22 +87,34 @@ wins — arbitrary, but stable, which is what matters for the cache.
 
 With a course present, three things change:
 
-- **The route is drawn**, with its waypoints as markers you can hover for a name and elevation.
+- **The route is drawn**, with its waypoints as named markers — the name is drawn beside the marker
+  on the map and above its tick on the height strip, and hovering one gives its elevation too.
 - **Pings snap to it.** A fix within 500 m of the course is drawn where it belongs on the route, and
   its real position stays visible underneath at low opacity, joined to it by a dashed line — so you
   can always see how far the snap moved things, and which fix moved where. A fix further away than
   that is left exactly where it is.
 - **A height profile appears** along the bottom, if the GPX carries elevation for every point. It
-  plots the whole course with each snapped ping on it; hovering a ping gives the same tooltip the
-  map does, and hovering anywhere else reads out distance and height. On a narrow screen it keeps
-  its width and scrolls sideways rather than compressing a 20 km race into 375 pixels.
+  plots the whole course with each snapped ping on it, under a minimal distance axis ticked at
+  round numbers — 500 m, 2 km, whatever is coarse enough to leave the labels legible. On a narrow
+  screen it keeps its width and scrolls sideways rather than compressing a 20 km race into 375
+  pixels.
 
   The terrain line is drawn from one elevation sample per pixel column, then blurred by
   `profileSmoothPx` columns — about 100 m of ground, which settles GPS noise without flattening
-  anything real. The underlying summary keeps every peak; only the drawing is smoothed.
+  anything real. The underlying summary keeps every peak; only the drawing is smoothed. It is inset
+  a little from both ends, because the start and the finish are the two most interesting points on
+  a course and edge-to-edge put half of each off the canvas.
 
 - **Each ping carries its climb**, in the tooltip: metres up and down since the run started, and
-  over the stretch since the previous ping.
+  over the stretch since the previous ping. Alongside them, distance and elapsed time in the same
+  shape — how far and how long since the start, and since the ping before.
+
+- **Anywhere on the course can be asked about.** Hovering the route on the map, or the terrain on
+  the strip, gives a tooltip for that spot: how far in, how high, and what the climb is to there.
+  The time is **interpolated between the pings either side** and labelled as an estimate, since a
+  constant pace across a five-minute gap is a guess — the only one the data supports. Past the
+  furthest ping the run has reached, it says "Not reached yet" rather than extrapolating a pace into
+  ground nobody has covered.
 
 ### Hovering works both ways
 
@@ -99,6 +122,12 @@ The map and the profile are two views of one run, so pointing at a place in eith
 other. Hovering the strip puts a ring on the route; hovering the route — or a ping — moves the
 strip's crosshair to it. Whichever view the pointer is actually over owns the crosshair, so the two
 can't fight over it.
+
+The drawn route is 3 px wide, which is a game of skill to hit with a mouse and hopeless with a
+thumb, so what you actually point at is a **transparent band `courseHoverPx` wide** laid over it.
+deck.gl's picking pass renders geometry whatever its fill alpha, so the band catches the cursor
+while showing nothing. It is the only pickable one of the two; the visible line is not, because two
+pickable layers over the same geometry would be two answers to one question.
 
 ### Counting the climb
 
@@ -251,8 +280,8 @@ src/
   gpx.js            reads a .gpx into segments and waypoints (no dependencies)
   course.js         projects it to metres: distance along, climb, loop detection, grid index
   snap.js           puts each ping on the course, once, and remembers where
-  stats.js          per-ping elapsed time and climb, derived on each paint
-  profile.js        the height profile strip (canvas 2D)
+  stats.js          per-ping time, distance and climb, and interpolating a hovered spot
+  profile.js        the height profile strip and its distance axis (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   colors.js         reads the CSS colour tokens
@@ -284,8 +313,12 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
 - Changing how a ping picks its place on the course → the cost function in `snap.js`.
 - Another figure derived per ping → `stats.js`, then a row in `tooltipHtml`.
+- Something new to say about a spot on the course → `interpolateAt` in `stats.js`, then
+  `hoverTooltipHtml` in `layers.js`. Both views render from those two, so neither can drift.
 - Linking the two views further → `map.js` and `profile.js` each expose `setHover`; `main.js`
   is where they are joined up.
+- Another optional layer → a checkbox in `index.html`, a flag through `ui.js`'s `onLayers`, and
+  `setLayers` on `map.js` and/or `profile.js`. Nothing that carries a reading should get one.
 
 ## Running it
 
@@ -330,6 +363,28 @@ accumulates **nothing**, that a slow steady climb is not thrown away by the same
 threshold that discards the noise, that a leg spanning a ping which missed the course
 still counts the ground underneath it, and that a ping landing *behind* its predecessor
 reports positive metres with ascent and descent swapped rather than negative ones.
+
+Interpolating a hovered spot is pinned on the distinction it exists to make: that height
+and climb come back **everywhere on the course**, because they are facts about the ground,
+while the time comes back only where the run has actually been. Halfway between two pings
+gives half the leg's minutes; on a lap covered twice the *latest* visit wins; and past the
+furthest ping the answer is a state, not a number.
+
+The axis ladder is tested at course lengths from 500 m to 250 km — that the ticks never
+pack closer than the minimum spacing, always land on 1, 2 or 5 × 10ⁿ rather than
+`length / 8`, and that a zero-length course returns a single tick instead of looping
+forever.
+
+## A note on waypoint labels
+
+The map draws every waypoint's name. deck.gl's `CollisionFilterExtension` is the right tool
+for thinning them out when a course carries thirty of them and they overlap at low zoom, and
+it is deliberately **not** used: in deck.gl 9.3.7 it culls *every* label in this layer stack.
+Verified against the real course on both SwiftShader and the hardware GPU, with and without
+`collisionTestProps`, and with the per-frame layer rebuild frozen — the glyphs are laid out
+(33 instances, sublayer visible) and simply never drawn. A label you can read beats a label
+that tidily avoids its neighbours and isn't there. The height strip does its own overlap
+rule in six lines, dropping any label that would run into the previous one.
 
 ## Publishing
 

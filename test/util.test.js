@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ago, escapeHtml, fmtDuration, fmtElapsed, parseTime, persistedAt, pool, throttle
+  ago, escapeHtml, fmtDuration, fmtElapsed, mapsUrl, parseTime, persistedAt, pool, throttle
 } from '../src/util.js';
 
 test('parseTime recovers the ISO timestamp from a filename', () => {
@@ -249,4 +249,20 @@ test('fmtElapsed truncates rather than rounding, so the clock never runs fast', 
 
 test('fmtElapsed keeps counting past a day rather than wrapping', () => {
   assert.equal(fmtElapsed(90000000), '25:00:00');
+});
+
+test('mapsUrl keeps six decimals, negatives included', () => {
+  // Six decimals is about 10 cm — well past what a phone's GPS knows, and the
+  // southern and western hemispheres exist.
+  assert.equal(
+    mapsUrl(46.5, 8.1),
+    'https://www.google.com/maps/search/?api=1&query=46.500000,8.100000'
+  );
+  assert.ok(mapsUrl(-33.856784, -0.759611).endsWith('query=-33.856784,-0.759611'));
+});
+
+test('mapsUrl uses the documented search form, not a scraped /maps/@ URL', () => {
+  // The @lat,lon,zoom shape out of the address bar is not a supported API and
+  // has changed before; `search/?api=1` is the one Google commits to.
+  assert.match(mapsUrl(46.5, 8.1), /^https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=/);
 });

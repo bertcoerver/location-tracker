@@ -52,8 +52,17 @@ const ui = createUi({
   onRecenter: () => map.recenter(),
   // Picking a run pins it in the URL, so just navigate: a fresh load reads it
   // back out and paints from that run's own cache. Nothing to tear down.
-  onRunPick: name => { location.href = urlFor(name); }
+  onRunPick: name => { location.href = urlFor(name); },
+  // One switch, two views: hiding the waypoints has to hide them on the height
+  // strip too, or the toggle would be lying about half the screen.
+  onLayers: flags => { map.setLayers(flags); profile.setLayers(flags); }
 });
+
+// The panel restores its toggles from the last visit, so both views need to be
+// told once at startup — a checkbox that comes back unticked has to arrive with
+// its layer already gone.
+map.setLayers(ui.layers());
+profile.setLayers(ui.layers());
 
 /**
  * Paint one run's points, snapped to its course if it has one.
@@ -112,6 +121,11 @@ async function loadCourse() {
 
   map.setCourse(course);
   profile.setCourse(course);
+  // A toggle for something this run hasn't got isn't a choice, it's furniture.
+  ui.setAvailable({
+    waypoints: Boolean(course?.waypoints?.length),
+    raw: Boolean(course)
+  });
   return true;
 }
 
@@ -140,6 +154,7 @@ async function reconcile() {
     courseSha = null;
     map.setCourse(null);
     profile.setCourse(null);
+    ui.setAvailable({ waypoints: false, raw: false });
     ui.setRun(run);
     show(loadCache(run));     // paint that run's cache before the CDN answers
   }

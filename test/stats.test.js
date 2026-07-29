@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCourse, gainAt } from '../src/course.js';
-import { deriveStats } from '../src/stats.js';
+import { deriveStats, interpolateAt } from '../src/stats.js';
 
 const LAT0 = 46.5;
 const M_LON = 111320 * Math.cos((LAT0 * Math.PI) / 180);
@@ -125,4 +125,123 @@ test('a point\'s totals match asking the course directly', () => {
 
 test('deriveStats survives an empty run', () => {
   assert.deepEqual(deriveStats([], slope()), []);
+});
+
+// --- distance along the course ------------------------------------------------
+
+test('distance is carried both as a total and as a leg', () => {
+  const points = deriveStats([ping('a', 0, 0), ping('b', 10, 1200), ping('c', 20, 3000)], slope());
+
+  assert.equal(points[0].stats.distTotal, 0);
+  assert.equal(points[0].stats.dist, 0, 'invented a leg before the first ping');
+  assert.equal(points[1].stats.distTotal, 1200);
+  assert.equal(points[1].stats.dist, 1200);
+  assert.equal(points[2].stats.dist, 1800);
+});
+
+test('a backwards leg still covered that ground', () => {
+  // Same reasoning as the up/down swap: -2,000 m is arithmetic, not a distance.
+  const points = deriveStats([ping('a', 0, 3000), ping('b', 10, 1000)], slope());
+
+  assert.equal(points[1].stats.dist, 2000);
+});
+
+test('distance needs no elevation — it is not a climb figure', () => {
+  const segments = [[{ lat: LAT0, lon: 0 }, { lat: LAT0, lon: 0.05 }]];
+  const flat = buildCourse({ segments, waypoints: [], hasElevation: false }, 'sha');
+  const points = deriveStats([ping('a', 0, 0), ping('b', 5, 900)], flat);
+
+  assert.equal(points[1].stats.distTotal, 900);
+  assert.equal(points[1].stats.dist, 900);
+  assert.equal(points[1].stats.upTotal, undefined);
+});
+
+test('a leg spanning an unsnapped ping measures from the last one that landed', () => {
+  const points = deriveStats([
+    ping('a', 0, 500), ping('b', 10, null), ping('c', 20, 2500)
+  ], slope());
+
+  assert.equal(points[1].stats.distTotal, undefined, 'measured a distance for a fix with none');
+  assert.equal(points[2].stats.dist, 2000);
+});
+
+// --- interpolating an arbitrary spot on the course ----------------------------
+
+test('interpolateAt puts the time linearly across the leg it falls in', () => {
+  const course = slope();
+  const points = [ping('a', 0, 0), ping('b', 20, 2000)];
+
+  const quarter = interpolateAt(points, course, 500);
+  assert.equal(quarter.state, 'between');
+  assert.equal(quarter.sinceStart, 5 * MINUTE);
+
+  const half = interpolateAt(points, course, 1000);
+  assert.equal(half.sinceStart, 10 * MINUTE);
+});
+
+test('landing exactly on a ping gives that ping\'s own time', () => {
+  const course = slope();
+  const points = [ping('a', 0, 0), ping('b', 20, 2000), ping('c', 35, 4000)];
+
+  assert.equal(interpolateAt(points, course, 2000).sinceStart, 20 * MINUTE);
+  assert.equal(interpolateAt(points, course, 4000).sinceStart, 35 * MINUTE);
+});
+
+test('the LATEST visit wins where a lap course has been covered twice', () => {
+  // Out to 3 km, back to 1 km, out again. Hovering 2 km should report the last
+  // time the runner was there, not the first.
+  const course = slope();
+  const points = [ping('a', 0, 0), ping('b', 30, 3000), ping('c', 60, 1000), ping('d', 90, 3000)];
+
+  const at = interpolateAt(points, course, 2000);
+  assert.equal(at.state, 'between');
+  // Between c (60 min at 1 km) and d (90 min at 3 km), halfway.
+  assert.equal(at.sinceStart, 75 * MINUTE);
+});
+
+test('past the furthest ping there is nothing to interpolate from', () => {
+  const course = slope();
+  const at = interpolateAt([ping('a', 0, 0), ping('b', 20, 2000)], course, 3000);
+
+  assert.equal(at.state, 'beyond');
+  assert.equal(at.sinceStart, undefined, 'extrapolated a pace into unrun ground');
+});
+
+test('short of the first ping reads as unreached rather than as time zero', () => {
+  const course = slope();
+  const at = interpolateAt([ping('a', 0, 1000), ping('b', 20, 3000)], course, 200);
+
+  assert.equal(at.state, 'before');
+  assert.equal(at.sinceStart, undefined);
+});
+
+test('with no ping on the course the ground is still described', () => {
+  const course = slope();
+  const at = interpolateAt([ping('a', 0, null)], course, 2000);
+
+  assert.equal(at.state, 'unknown');
+  assert.equal(at.sinceStart, undefined);
+});
+
+test('height and climb are known everywhere, whatever the state', () => {
+  // They are properties of the COURSE. Whether anyone has been there yet is a
+  // different question, and it is the only one `state` answers.
+  const course = slope();
+  const points = [ping('a', 0, 0), ping('b', 20, 2000)];
+
+  for (const along of [500, 2000, 4500]) {
+    const at = interpolateAt(points, course, along);
+    assert.equal(at.along, along);
+    assert.ok(Number.isFinite(at.ele), `no height at ${along}`);
+    assert.ok(Number.isFinite(at.upTotal), `no ascent at ${along}`);
+    assert.ok(Number.isFinite(at.downTotal), `no descent at ${along}`);
+    // And a coordinate, which is what the Maps link and the map's ring need.
+    assert.ok(Number.isFinite(at.lat) && Number.isFinite(at.lon), `no position at ${along}`);
+  }
+});
+
+test('interpolateAt declines the questions it cannot answer', () => {
+  assert.equal(interpolateAt([], null, 100), null, 'no course');
+  assert.equal(interpolateAt([], slope(), null), null);
+  assert.equal(interpolateAt([], slope(), NaN), null);
 });

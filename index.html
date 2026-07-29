@@ -130,15 +130,12 @@
   #dot[data-live="true"]     { animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
 
-  /* Time since the first ping, mirroring the status panel across the window.
-     Ticks while the run is live and freezes at the total once it goes quiet —
-     a clock still counting after the finish claims the race is still on. */
-  #clock {
-    top: max(12px, env(safe-area-inset-top));
-    right: max(12px, env(safe-area-inset-right));
-    padding: 8px 13px 9px;
-    text-align: right;
-  }
+  /* Time since the first ping. Ticks while the run is live and freezes at the
+     total once it goes quiet — a clock still counting after the finish claims
+     the race is still on. Inside the status panel: it is one more fact about
+     the run on screen, and a whole second panel for two lines was a lot of
+     window to spend on it. */
+  #clock { margin-top: 6px; }
   #clock[hidden] { display: none; }
   #clock-label {
     font-size: 11px;
@@ -171,6 +168,30 @@
     cursor: pointer;
   }
   #run:hover { border-color: var(--text-muted); }
+
+  /* Which of the optional layers are drawn. Not the snapped pings — those are
+     the reading, and there is no view of this map without them. */
+  #toggles {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  #toggles[hidden] { display: none; }
+  #toggles label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  #toggles label:hover { color: var(--text-primary); }
+  #toggles input {
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
 
   #error {
     margin-top: 7px;
@@ -243,6 +264,17 @@
     white-space: normal;
   }
   .tip img { display: block; margin-top: 6px; max-width: 100%; border-radius: 5px; }
+  /* The one thing in a tooltip you can click. Both tooltips have to opt out of
+     `pointer-events: none` for this to be reachable — deck.gl's default style
+     sets it, and #profile-tip used to. */
+  .tip .g {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .tip .g:hover { text-decoration: underline; }
 
   /* The profile's tooltip. Same `.tip` skin as the map's, but positioned by us:
      deck.gl isn't involved, and the canvas sits inside a horizontally scrolled
@@ -252,7 +284,9 @@
     position: fixed;
     z-index: 2;
     bottom: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px) + 8px);
-    pointer-events: none;
+    /* Deliberately NOT `none`: the Google Maps link inside has to be clickable,
+       and reaching it means moving the cursor off the canvas and into here.
+       profile.js allows exactly that move and dismisses on any other. */
   }
   #profile-tip[hidden] { display: none; }
 </style>
@@ -268,15 +302,18 @@
       <span id="dot"></span><span id="ticker-text">Loading&hellip;</span>
     </button>
   </div>
+  <div id="clock" hidden>
+    <div id="clock-label">Elapsed</div>
+    <div id="clock-time">0:00:00</div>
+  </div>
   <div id="run-picker" hidden>
     <select id="run" aria-label="Run"></select>
   </div>
+  <div id="toggles" hidden>
+    <label><input type="checkbox" id="t-waypoints" checked> Waypoints</label>
+    <label><input type="checkbox" id="t-raw" checked> Raw pings &amp; snap lines</label>
+  </div>
   <div id="error"></div>
-</div>
-
-<div id="clock" class="panel" hidden>
-  <div id="clock-label">Elapsed</div>
-  <div id="clock-time">0:00:00</div>
 </div>
 
 <div id="profile" class="panel" hidden>

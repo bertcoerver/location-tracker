@@ -1,10 +1,11 @@
 // The status panel and the run picker — all DOM, no map, no network.
 
+import { LS_LAYERS } from './config.js';
 import { isLive } from './github.js';
 import { latestOf } from './points.js';
-import { ago, fmtElapsed } from './util.js';
+import { ago, fmtElapsed, storage } from './util.js';
 
-export function createUi({ onRecenter, onRunPick }) {
+export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const el = id => document.getElementById(id);
   const titleEl  = el('title-text');
   const dotEl    = el('dot');
@@ -15,13 +16,48 @@ export function createUi({ onRecenter, onRunPick }) {
   const clockEl     = el('clock');
   const clockTimeEl = el('clock-time');
   const clockLabelEl = el('clock-label');
+  const togglesEl = el('toggles');
+  const boxes = { waypoints: el('t-waypoints'), raw: el('t-raw') };
 
   let points = [];
   let index = {};
   let run = null;
+  // Which toggles have anything to toggle: no waypoints in the GPX, no
+  // waypoints checkbox. Same rule as the run picker below.
+  let available = { waypoints: false, raw: false };
 
   tickerEl.addEventListener('click', onRecenter);
   runEl.addEventListener('change', () => onRunPick(runEl.value));
+
+  /**
+   * The layer toggles, restored from the last visit.
+   *
+   * Not per-run: whether you want to see the raw fixes behind the snapped ones
+   * is a preference about how you read a map, not a fact about a race. Missing
+   * or unreadable storage means both on, which is what the map looked like
+   * before this existed.
+   */
+  const saved = storage.get(LS_LAYERS) || {};
+  const flags = {
+    waypoints: saved.waypoints !== false,
+    raw: saved.raw !== false
+  };
+
+  for (const [name, box] of Object.entries(boxes)) {
+    box.checked = flags[name];
+    box.addEventListener('change', () => {
+      flags[name] = box.checked;
+      storage.set(LS_LAYERS, flags);
+      onLayers({ ...flags });
+    });
+  }
+
+  function renderToggles() {
+    for (const [name, box] of Object.entries(boxes)) {
+      box.parentElement.hidden = !available[name];
+    }
+    togglesEl.hidden = !available.waypoints && !available.raw;
+  }
 
   /**
    * How long since the last ping — the only number on the page.
@@ -105,6 +141,16 @@ export function createUi({ onRecenter, onRunPick }) {
     tickClock() {
       renderClock();
     },
+
+    /** What the current run's course actually offers, so a toggle with nothing
+     *  to toggle stays out of the way. */
+    setAvailable(next) {
+      available = { ...available, ...next };
+      renderToggles();
+    },
+
+    /** The current toggle state, for whoever needs it before the first change. */
+    layers: () => ({ ...flags }),
 
     /** @param {string|null} next the run now on screen, null when there are none. */
     setRun(next) {

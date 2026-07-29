@@ -11,11 +11,18 @@
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface } from './colors.js';
 import { pointAt } from './course.js';
-import { fmtDistance, tooltipHtml } from './layers.js';
+import { fmtDistance, hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { latestOf } from './points.js';
+import { interpolateAt } from './stats.js';
 
-const PAD_TOP = 10;
-const PAD_BOTTOM = 14;
+// Room above the terrain for the waypoint labels.
+const PAD_TOP = 14;
+// Room below the terrain for the distance axis and its labels.
+const PAD_BOTTOM = 22;
+// Breathing room at both ends, so the start and the finish of the course — the
+// two most interesting bits of it — aren't half off the edge of the canvas.
+const PAD_LEFT = 14;
+const PAD_RIGHT = 14;
 
 /** How close the cursor has to get to a dot, in pixels, to pick it up. */
 const HIT_RADIUS = 14;
@@ -130,6 +137,10 @@ export function hitTest(points, course, scale, px, py, radius = HIT_RADIUS) {
 /**
  * The distance -> x and elevation -> y mappings for a strip of this size.
  *
+ * The single place that knows about the strip's padding: everything that draws
+ * goes through `x` and `y`, so the margins and the axis gutter can't be applied
+ * in one place and forgotten in another.
+ *
  * Elevation gets a floor of 20 m of range, so a pancake-flat course doesn't get
  * its centimetre of noise amplified into a mountain range.
  */
@@ -140,16 +151,71 @@ export function scaleFor(course, width, height) {
   const span = Math.max(hi - lo, 20);
   const top = mid + span / 2;
 
-  const plot = Math.max(1, height - PAD_TOP - PAD_BOTTOM);
+  const tall = Math.max(1, height - PAD_TOP - PAD_BOTTOM);
+  const wide = Math.max(1, width - PAD_LEFT - PAD_RIGHT);
 
   return {
     lo: mid - span / 2,
     hi: top,
-    x: d => (course.length > 0 ? (d / course.length) * width : 0),
-    y: ele => PAD_TOP + ((top - ele) / span) * plot,
-    /** Inverse of x, for turning a mouse position back into a distance. */
-    distanceAt: px => (course.length > 0 ? (px / width) * course.length : 0)
+    /** Left edge of the plot, and how many pixel columns wide it is. */
+    plotLeft: PAD_LEFT,
+    plotWidth: wide,
+    /** The y the terrain sits on — the axis lives below it. */
+    floor: height - PAD_BOTTOM,
+    x: d => PAD_LEFT + (course.length > 0 ? (d / course.length) * wide : 0),
+    y: ele => PAD_TOP + ((top - ele) / span) * tall,
+    /**
+     * Inverse of x, for turning a mouse position back into a distance.
+     * Clamped, because the cursor can now sit in the margins and a negative
+     * distance along the course is not a thing.
+     */
+    distanceAt: px => {
+      if (course.length <= 0) return 0;
+      const d = ((px - PAD_LEFT) / wide) * course.length;
+      return d < 0 ? 0 : d > course.length ? course.length : d;
+    }
   };
+}
+
+/**
+ * Nicely-rounded distances to mark on the x-axis: the coarsest step on the
+ * 1 / 2 / 5 x 10^n ladder that still leaves `minSpacingPx` between ticks.
+ *
+ * The ladder rather than "length / 8" because a tick at 1,104 m is not a
+ * landmark. The point of the axis is to let you tie a bump on the profile to a
+ * distance you can hold in your head.
+ *
+ * @returns {number[]} always starting at 0 and never past `length`.
+ */
+export function axisTicks(length, plotWidth, minSpacingPx = 60) {
+  if (!(length > 0) || !(plotWidth > 0)) return [0];
+
+  const perPixel = length / plotWidth;
+  const wanted = perPixel * minSpacingPx;
+
+  let step = 0;
+  for (let power = -1; power <= 9 && !step; power++) {
+    for (const mult of [1, 2, 5]) {
+      const candidate = mult * 10 ** power;
+      if (candidate >= wanted) { step = candidate; break; }
+    }
+  }
+  if (!step) return [0];
+
+  const out = [];
+  // `i * step` rather than accumulating, so the last tick of a long course
+  // isn't a float's-worth short of where it belongs.
+  for (let i = 0; i * step <= length + 1e-6; i++) out.push(i * step);
+  return out;
+}
+
+/**
+ * An axis label: "0", "500 m", "2 km", "1.5 km". At most one decimal, which is
+ * all the 1/2/5 ladder can produce.
+ */
+export function tickLabel(m) {
+  if (m === 0) return '0';
+  return m < 1000 ? `${Math.round(m)} m` : `${Math.round(m / 100) / 10} km`;
 }
 
 /**
@@ -182,6 +248,17 @@ export function createProfile(root, { onHover = () => {} } = {}) {
   // and without this the two would overwrite each other on every mouse move —
   // whoever the pointer is actually over has to win.
   let owned = false;
+  // Which optional layers the panel's toggles have switched on. The waypoint
+  // one governs both views, so a feed station is either shown in both or in
+  // neither rather than only on the map.
+  let layers = { waypoints: true, raw: true };
+
+  // The axis ink, read from the page's own palette once. `draw` runs on every
+  // pointermove, and a getComputedStyle in there is a style recalculation per
+  // frame for a colour that doesn't change. Same bargain colors.js makes.
+  let muted = null;
+  const mutedInk = () => (muted ??=
+    getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#888');
 
   /**
    * Show the strip only when there is something to show. A course without
@@ -220,51 +297,111 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     ctx.clearRect(0, 0, width, height);
 
     const scale = scaleFor(course, width, height);
-    const { max } = columns(course, width);
+    const { max } = columns(course, scale.plotWidth);
     // Fill and stroke share one smoothed series, so the shaded band can't drift
     // away from the line drawn on its edge.
     const ridge = smooth(max, CONFIG.profileSmoothPx);
     const line = courseColor();
 
-    // The terrain: a filled band down to the strip's floor, with the top edge
-    // drawn over it so the skyline stays crisp.
+    const left = scale.plotLeft;
+    const right = left + scale.plotWidth;
+
+    // The terrain: a filled band down to the axis, with the top edge drawn over
+    // it so the skyline stays crisp.
     ctx.beginPath();
-    ctx.moveTo(0, height);
-    for (let x = 0; x < width; x++) ctx.lineTo(x + 0.5, scale.y(ridge[x]));
-    ctx.lineTo(width, height);
+    ctx.moveTo(left, scale.floor);
+    for (let i = 0; i < scale.plotWidth; i++) ctx.lineTo(left + i + 0.5, scale.y(ridge[i]));
+    ctx.lineTo(right, scale.floor);
     ctx.closePath();
     ctx.fillStyle = `rgba(${line.join(',')}, 0.20)`;
     ctx.fill();
 
     ctx.beginPath();
-    for (let x = 0; x < width; x++) {
-      const y = scale.y(ridge[x]);
-      if (x === 0) ctx.moveTo(0.5, y); else ctx.lineTo(x + 0.5, y);
+    for (let i = 0; i < scale.plotWidth; i++) {
+      const y = scale.y(ridge[i]);
+      if (i === 0) ctx.moveTo(left + 0.5, y); else ctx.lineTo(left + i + 0.5, y);
     }
     ctx.strokeStyle = `rgba(${line.join(',')}, 0.85)`;
     ctx.lineWidth = 1.5;
     ctx.lineJoin = 'round';
     ctx.stroke();
 
-    drawWaypoints(scale, height);
-    drawHover(scale, width, height, ridge);
+    drawAxis(scale);
+    if (layers.waypoints) drawWaypoints(scale);
+    drawHover(scale, scale.floor, ridge);
     drawPoints(scale);
   }
 
-  /** Waypoints as faint ticks, so a feed station is findable on the profile too. */
-  function drawWaypoints(scale, height) {
+  /**
+   * A distance axis under the terrain: a tick and a rounded label, and nothing
+   * else — no baseline, no grid. It exists to tie a bump on the profile to a
+   * number, not to be looked at.
+   */
+  function drawAxis(scale) {
+    const ink = mutedInk();
+    ctx.strokeStyle = ink;
+    ctx.fillStyle = ink;
+    ctx.lineWidth = 1;
+    ctx.font = '10px ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
+    ctx.textBaseline = 'top';
+
+    for (const d of axisTicks(course.length, scale.plotWidth)) {
+      const x = Math.round(scale.x(d)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, scale.floor);
+      ctx.lineTo(x, scale.floor + 3);
+      ctx.stroke();
+
+      // The first and last labels are pulled inside the plot rather than
+      // centred, or half of "0" hangs off the canvas.
+      const text = tickLabel(d);
+      const half = ctx.measureText(text).width / 2;
+      const min = 1;
+      const max = scale.plotLeft + scale.plotWidth + PAD_RIGHT - 2 * half - 1;
+      ctx.fillText(text, Math.max(min, Math.min(max, x - half)), scale.floor + 5);
+    }
+  }
+
+  /**
+   * Waypoints as faint ticks with their names above them, so a feed station is
+   * both findable and identifiable on the profile.
+   *
+   * No collision extension here as there is on the map, so overlap is handled by
+   * the one rule that matters: a label that would run into the previous one is
+   * dropped rather than drawn on top of it.
+   */
+  function drawWaypoints(scale) {
     if (!course.waypoints.length) return;
     const line = courseColor();
     ctx.strokeStyle = `rgba(${line.join(',')}, 0.35)`;
+    ctx.fillStyle = `rgba(${line.join(',')}, 0.9)`;
     ctx.lineWidth = 1;
+    ctx.font = '10px ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
+    ctx.textBaseline = 'top';
 
-    for (const w of course.waypoints) {
-      if (w.along === undefined || w.along === null) continue;
+    const right = scale.plotLeft + scale.plotWidth;
+    let taken = -Infinity;
+
+    // Left to right, so "dropped because the one before it was there" is a rule
+    // about reading order rather than about GPX document order.
+    const ordered = course.waypoints
+      .filter(w => w.along !== undefined && w.along !== null)
+      .sort((a, b) => a.along - b.along);
+
+    for (const w of ordered) {
       const x = Math.round(scale.x(w.along)) + 0.5;
       ctx.beginPath();
       ctx.moveTo(x, PAD_TOP);
-      ctx.lineTo(x, height - PAD_BOTTOM);
+      ctx.lineTo(x, scale.floor);
       ctx.stroke();
+
+      const text = (w.name || w.sym || '').trim();
+      if (!text) continue;
+      const width = ctx.measureText(text).width;
+      const at = x - width / 2;
+      if (at < taken + 4 || at < scale.plotLeft - PAD_LEFT || at + width > right + PAD_RIGHT) continue;
+      ctx.fillText(text, at, 1);
+      taken = at + width;
     }
   }
 
@@ -297,16 +434,14 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     }
   }
 
-  function drawHover(scale, width, height, ridge) {
+  function drawHover(scale, floor, ridge) {
     if (hover === null) return;
-    const column = Math.round(scale.x(hover));
-    if (column < 0 || column > width) return;
-    const x = column + 0.5;
+    const x = Math.round(scale.x(hover)) + 0.5;
     const ink = `rgb(${accent().join(',')})`;
 
     ctx.beginPath();
     ctx.moveTo(x, PAD_TOP - 4);
-    ctx.lineTo(x, height - PAD_BOTTOM + 4);
+    ctx.lineTo(x, floor + 4);
     ctx.strokeStyle = ink;
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -314,6 +449,8 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     // A bead where the crosshair meets the terrain, read off the SMOOTHED series
     // the line was actually drawn from — the raw elevation there can be a couple
     // of metres away, and a bead floating beside its own line looks like a bug.
+    // `ridge` is indexed in PLOT columns, so the left margin comes off first.
+    const column = Math.round(scale.x(hover)) - scale.plotLeft;
     const ele = ridge[Math.min(ridge.length - 1, Math.max(0, column))];
     ctx.beginPath();
     ctx.arc(x, scale.y(ele), 3, 0, Math.PI * 2);
@@ -330,9 +467,8 @@ export function createProfile(root, { onHover = () => {} } = {}) {
    * canvas lives inside a horizontally scrolled container: canvas coordinates
    * are not page coordinates, so this works from the raw client position.
    */
-  function showTip(point, clientX) {
-    const latest = latestOf(points);
-    tip.innerHTML = tooltipHtml(point, !!latest && latest.name === point.name);
+  function showTip(html, clientX) {
+    tip.innerHTML = html;
     tip.hidden = false;
 
     // Centred on the cursor, then pushed back inside the window — at the far
@@ -341,6 +477,12 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     const width = tip.offsetWidth;
     const left = Math.max(8, Math.min(innerWidth - width - 8, clientX - width / 2));
     tip.style.left = `${left}px`;
+  }
+
+  /** One ping's markup — the very same function the map's tooltip uses. */
+  function pingTip(point) {
+    const latest = latestOf(points);
+    return tooltipHtml(point, !!latest && latest.name === point.name);
   }
 
   function hideTip() {
@@ -361,17 +503,26 @@ export function createProfile(root, { onHover = () => {} } = {}) {
     if (hit) {
       hover = hit.snap.along;
       readout.textContent = '';
-      showTip(hit, event.clientX);
+      showTip(pingTip(hit), event.clientX);
     } else {
+      // Not on a ping, so describe the ground itself: how far in, how high, and
+      // — interpolated between the pings either side — when the run was here.
       hover = scale.distanceAt(x);
       readout.textContent = `${fmtDistance(hover)} · ${Math.round(elevationAt(course, hover))} m`;
-      hideTip();
+      showTip(hoverTooltipHtml(interpolateAt(points, course, hover)), event.clientX);
     }
     onHover(hover);
     draw();
   });
 
-  function leave() {
+  /**
+   * @param {PointerEvent} [event] present when this came from the pointer
+   *   leaving something. Moving UP from the canvas into the tooltip has to be
+   *   allowed, or its Google Maps link is unreachable — the tip sits directly
+   *   above the strip, so on the way to the link the cursor leaves the canvas.
+   */
+  function leave(event) {
+    if (event?.relatedTarget && tip.contains(event.relatedTarget)) return;
     owned = false;
     hover = null;
     readout.textContent = '';
@@ -384,8 +535,10 @@ export function createProfile(root, { onHover = () => {} } = {}) {
   // Touch doesn't reliably deliver `pointerleave` — a tap elsewhere is how a
   // phone says "done", and without this the tip would stay up for good.
   canvas.addEventListener('pointercancel', leave);
+  // And leaving the tooltip itself, for anywhere that isn't back on the canvas.
+  tip.addEventListener('pointerleave', leave);
   document.addEventListener('pointerdown', event => {
-    if (!canvas.contains(event.target)) leave();
+    if (!canvas.contains(event.target) && !tip.contains(event.target)) leave();
   });
 
   addEventListener('resize', sync);
@@ -405,6 +558,16 @@ export function createProfile(root, { onHover = () => {} } = {}) {
 
     setPoints(next) {
       points = next;
+      draw();
+    },
+
+    /**
+     * Which optional layers are on, from the panel's toggles. Only `waypoints`
+     * means anything here — the raw fixes have no place on a height profile,
+     * which plots distance along the course rather than position.
+     */
+    setLayers(next) {
+      layers = { ...layers, ...next };
       draw();
     },
 
@@ -438,8 +601,8 @@ export function createProfile(root, { onHover = () => {} } = {}) {
       const latest = latestOf(points);
       if (!latest?.snap) return;
 
-      const x = (latest.snap.along / course.length) * canvas.clientWidth;
-      const target = x - scroller.clientWidth / 2;
+      const scale = scaleFor(course, canvas.clientWidth, canvas.clientHeight);
+      const target = scale.x(latest.snap.along) - scroller.clientWidth / 2;
       const max = canvas.clientWidth - scroller.clientWidth;
       if (max > 0) scroller.scrollLeft = Math.max(0, Math.min(max, target));
     }

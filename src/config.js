@@ -31,9 +31,13 @@ export const CONFIG = {
   // between adjacent vertices, and summing that wobble is how a 600 m course
   // comes to report 1,400 m of climb. See course.js.
   eleThresholdM: 3,
+  // Half-width, in pixels, of the invisible band that makes the course
+  // hoverable. The drawn line is 3 px, which is a game of skill to hit with a
+  // mouse and impossible with a thumb — this is the part you actually point at.
+  courseHoverPx: 22,
 
   // --- the height profile strip --------------------------------------------
-  profileHeight: 104,
+  profileHeight: 112,
   profileMinWidth: 640, // narrower than this and the profile scrolls rather than squashes
   // Blur radius in pixel columns, applied when drawing the terrain line. One
   // column is a few tens of metres of course, so this smooths over ~100 m of
@@ -66,3 +70,7 @@ export const LS_TREE_ETAG = `lt.tree-etag.${V}`;
 // When the index was last fetched. Persisted so the refresh throttle survives a
 // page reload — in memory it resets, and refresh-mashing spends the budget.
 export const LS_REFRESH   = `lt.refresh.${V}`;
+
+// Which optional layers are switched on. Not per-run: turning the raw fixes off
+// is a preference about how you like to read the map, not a fact about a race.
+export const LS_LAYERS    = `lt.layers.${V}`;

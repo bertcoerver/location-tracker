@@ -63,6 +63,18 @@ export function fmtElapsed(ms) {
   return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`;
 }
 
+/**
+ * A Google Maps deep link for a coordinate.
+ *
+ * `search/?api=1&query=` is the documented, supported URL form — the
+ * `/maps/@lat,lon,z` one that comes out of the address bar is not, and it has
+ * changed shape before. Six decimals is about 10 cm, which is well past what a
+ * phone's GPS knows.
+ */
+export function mapsUrl(lat, lon) {
+  return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}`;
+}
+
 /** Run `fn` over `items` with at most `n` in flight. Order of results is not guaranteed. */
 export async function pool(items, n, fn) {
   const out = [];

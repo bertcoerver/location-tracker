@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCourse } from '../src/course.js';
-import { columns, elevationAt, hitTest, scaleFor, smooth } from '../src/profile.js';
+import {
+  axisTicks, columns, elevationAt, hitTest, scaleFor, smooth, tickLabel
+} from '../src/profile.js';
 
 const LAT0 = 46.5;
 const M_LON = 111320 * Math.cos((LAT0 * Math.PI) / 180);
@@ -53,12 +55,17 @@ test('a course with fewer vertices than the strip has pixels leaves no gaps', ()
   }
 });
 
-test('scaleFor puts the start at the left edge and the finish at the right', () => {
+test('scaleFor insets the course from both edges rather than bleeding off them', () => {
+  // The start and the finish are the two most interesting points on a course,
+  // and edge to edge puts both of them half off the canvas.
   const course = ramp([0, 50, 100]);
   const scale = scaleFor(course, 800, 100);
 
-  assert.equal(scale.x(0), 0);
-  assert.ok(Math.abs(scale.x(course.length) - 800) < 1e-9);
+  assert.ok(scale.x(0) > 0, 'the start is on the left edge');
+  assert.ok(scale.x(course.length) < 800, 'the finish is on the right edge');
+  // Symmetric, and the plot is what's left in between.
+  assert.equal(scale.plotLeft, 800 - scale.x(course.length));
+  assert.ok(Math.abs(scale.x(course.length) - scale.x(0) - scale.plotWidth) < 1e-9);
 });
 
 test('x and distanceAt are inverses', () => {
@@ -68,6 +75,70 @@ test('x and distanceAt are inverses', () => {
   for (const d of [0, 55, 123.4, course.length]) {
     assert.ok(Math.abs(scale.distanceAt(scale.x(d)) - d) < 1e-6, `${d}`);
   }
+});
+
+test('distanceAt clamps in the margins rather than reporting a negative distance', () => {
+  // The cursor can now sit outside the plot — that is what the margins are for.
+  const course = ramp([0, 50, 100]);
+  const scale = scaleFor(course, 640, 100);
+
+  assert.equal(scale.distanceAt(0), 0);
+  assert.equal(scale.distanceAt(-40), 0);
+  assert.equal(scale.distanceAt(640), course.length);
+  assert.equal(scale.distanceAt(9999), course.length);
+});
+
+test('the terrain floor leaves room for the axis below it', () => {
+  const scale = scaleFor(ramp([0, 50, 100]), 800, 112);
+
+  assert.ok(scale.floor < 112, 'terrain runs to the very bottom of the canvas');
+  assert.ok(scale.y(scale.lo) <= scale.floor + 1e-9, 'the lowest point sits below the floor');
+});
+
+// --- the distance axis --------------------------------------------------------
+
+test('axisTicks starts at zero and never runs past the end of the course', () => {
+  for (const length of [850, 8835, 42195, 160000]) {
+    const ticks = axisTicks(length, 900);
+    assert.equal(ticks[0], 0, `${length}`);
+    assert.ok(ticks[ticks.length - 1] <= length, `${length}: overran to ${ticks.at(-1)}`);
+  }
+});
+
+test('axisTicks never packs the labels closer than the minimum spacing', () => {
+  // This is the whole job: too many ticks is unreadable, and a course can be
+  // anything from a 600 m parkrun to a 160 km ultra.
+  for (const length of [500, 3000, 8835, 42195, 250000]) {
+    const width = 900;
+    const ticks = axisTicks(length, width, 60);
+    for (let i = 1; i < ticks.length; i++) {
+      const gap = ((ticks[i] - ticks[i - 1]) / length) * width;
+      assert.ok(gap >= 60 - 1e-9, `${length} m: ${gap}px apart`);
+    }
+  }
+});
+
+test('axisTicks lands on round numbers, not on length/8', () => {
+  // A tick at 1,104 m is not a landmark. Every step must be 1, 2 or 5 x 10^n.
+  const ticks = axisTicks(8835, 900);
+  const step = ticks[1] - ticks[0];
+  const mantissa = step / 10 ** Math.floor(Math.log10(step));
+
+  assert.ok([1, 2, 5].includes(Math.round(mantissa)), `step of ${step}`);
+  assert.ok(ticks.length >= 3, `only ${ticks.length} ticks on an 8.8 km course`);
+});
+
+test('axisTicks survives a degenerate course rather than looping forever', () => {
+  assert.deepEqual(axisTicks(0, 900), [0]);
+  assert.deepEqual(axisTicks(1000, 0), [0]);
+});
+
+test('tickLabel switches units at a kilometre and keeps at most one decimal', () => {
+  assert.equal(tickLabel(0), '0');
+  assert.equal(tickLabel(500), '500 m');
+  assert.equal(tickLabel(1000), '1 km');
+  assert.equal(tickLabel(1500), '1.5 km');
+  assert.equal(tickLabel(20000), '20 km');
 });
 
 test('the highest point sits above the lowest on screen', () => {
