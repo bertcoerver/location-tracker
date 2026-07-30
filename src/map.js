@@ -326,7 +326,10 @@ export function createMap(container, {
       }
 
       flying = false;
-      viewState = next;
+      // Stripped, because `next` is derived from the props deck was handed and can
+      // still be carrying the flight this pan just interrupted. Left on, the very
+      // next render() would re-fire it.
+      viewState = withoutTransition(next);
       deckgl.setProps({ viewState });
     }
   });
@@ -418,8 +421,27 @@ export function createMap(container, {
   container.addEventListener('pointerup', endDrag, true);
   container.addEventListener('pointercancel', endDrag, true);
 
-  function render() {
+  /** Hand deck both the camera and the layers. The one place a view state is
+   *  pushed, and the only caller that may do it mid-flight. */
+  function paint() {
     deckgl.setProps({ viewState, layers: allLayers() });
+  }
+
+  /**
+   * Redraw because the DATA changed.
+   *
+   * Mid-flight the camera belongs to deck, and handing a view state back — even
+   * the interpolated one deck itself just reported — ENDS the transition where it
+   * stands. That is a subtle bug with a very visible symptom: a run switch flies
+   * out, and then the next `render()` along (the new points, the forecast, the
+   * other runs' dots — three of them arrive within a few milliseconds) freezes it
+   * halfway, so the camera lands roughly over the new course and never zooms in.
+   *
+   * `tick()` has always updated layers alone for the same reason.
+   */
+  function render() {
+    if (flying) return deckgl.setProps({ layers: allLayers() });
+    paint();
   }
 
   /** Drop the transition props once a flight ends, so a later render() doesn't
@@ -429,13 +451,34 @@ export function createMap(container, {
     viewState = withoutTransition(viewState);
   }
 
+  /**
+   * Move the camera.
+   *
+   * @param {object} next the view state to end up at.
+   * @param {boolean|'far'} animate how to get there.
+   *
+   *   `false` jumps. `true` flies for a fixed 900 ms, which is right for a nudge —
+   *   following the runner to the next ping, centring a point that was clicked on
+   *   the height strip. Both are already on screen; the flight is there to show
+   *   that the view moved rather than cut.
+   *
+   *   `'far'` hands the length of the flight to deck, which sizes it from the
+   *   distance. That is what a switch between two races needs: they can be on
+   *   different continents, and 900 ms across 1,000 km is a teleport with extra
+   *   steps. It also gives the arc room to read as one — `FlyToInterpolator`
+   *   pulls the camera UP over a long move and back down at the far end, which is
+   *   what makes a switch legible as a journey between two places rather than as
+   *   a cut to somewhere unrelated.
+   */
   function setViewState(next, animate) {
     if (animate) {
       flying = true;
       viewState = {
         ...next,
-        transitionDuration: 900,
-        transitionInterpolator: new deck.FlyToInterpolator({ speed: 1.6 }),
+        transitionDuration: animate === 'far' ? 'auto' : 900,
+        // `curve` is how high the arc goes; a little above deck's √2 default, so
+        // the zoom out and back in is unmistakable rather than merely present.
+        transitionInterpolator: new deck.FlyToInterpolator({ speed: 1.6, curve: 1.5 }),
         onTransitionEnd: settle,
         onTransitionInterrupt: settle
       };
@@ -445,7 +488,10 @@ export function createMap(container, {
       // arrive with a flight that hasn't finished still attached to it.
       viewState = withoutTransition(next);
     }
-    render();
+    // `paint`, not `render`: this call is the one that owns the camera, and going
+    // through the mid-flight guard would mean the flight it just set up never
+    // reached deck at all.
+    paint();
   }
 
   /**
@@ -533,7 +579,9 @@ export function createMap(container, {
       if (!fitted) {
         const fit = fitView(points);
         fitted = true;
-        if (fit) return setViewState(fit, flyOnFit);
+        // `'far'` for a switch: the two runs can be anywhere, so the flight has to
+        // be sized from the distance rather than crammed into 900 ms.
+        if (fit) return setViewState(fit, flyOnFit && 'far');
         render();
       // Keyed on the drawn position, not just the filename: when a course lands
       // and the newest ping jumps onto it, the camera should go with it.
@@ -564,7 +612,14 @@ export function createMap(container, {
         const fit = fitView(points);
         if (fit) {
           fitted = true;
-          return setViewState(fit, true);
+          // `'far'` while a flight is already running, because that flight is a run
+          // switch in progress and this is the same journey: the course lands a
+          // moment after the pings did, and it is the better destination — the
+          // whole race rather than the handful of pings that have arrived. Sizing
+          // it from the distance again lets deck simply retarget the arc, where a
+          // fixed 900 ms would cut across it. Landing on this run's own course
+          // afterwards is an ordinary short move.
+          return setViewState(fit, flying ? 'far' : true);
         }
       }
       render();

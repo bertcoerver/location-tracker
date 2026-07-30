@@ -38,6 +38,21 @@ picker. Switching happens **in place** — the URL is pushed rather than navigat
 flies from one course to the other, and nothing is torn down and rebuilt. The back button walks
 back through the runs you looked at.
 
+That flight is sized from the distance (`transitionDuration: 'auto'`) rather than given a fixed
+length, because two races can be on different continents and 900 ms across 1,000 km is a teleport
+with extra steps. `FlyToInterpolator` pulls the camera up over a long move and back down at the far
+end, which is what makes a switch read as a journey between two places instead of a cut to somewhere
+unrelated. Short moves — following the runner to the next ping, centring a point clicked on the
+height strip — keep the fixed 900 ms; they are already on screen, and the flight is only there to
+say the view moved rather than jumped.
+
+One trap worth recording, because the symptom is nothing like the cause: **handing deck a view state
+mid-flight ends the transition where it stands** — even the interpolated one deck itself just
+reported. So `render()` updates layers alone while a flight is running, and only `setViewState` is
+allowed to push a camera. Without that, a switch flew out and then froze the instant the new points,
+the forecast and the other runs' dots arrived — three redraws within a few milliseconds — leaving the
+camera roughly over the new course and never zooming in.
+
 ## On screen
 
 Two numbers, both in the panel top left. **How long since the last ping**, on the top line, and
@@ -867,9 +882,17 @@ verified against the 9.3.7 bundle rather than assumed:
   `controller` prop at all.
 
 Two smaller consequences. The basemap's custom `renderSubLayers` has to set
-`_imageCoordinateSystem: COORDINATE_SYSTEM.LNGLAT` on its `BitmapLayer` — deck's own default does
-this and ours replaces it, and without it every raster tile is interpolated on the Mercator plane
-and shears visibly on a sphere. And `map.js` asks deck for the live viewport
+`_imageCoordinateSystem: COORDINATE_SYSTEM.CARTESIAN` on its `BitmapLayer`. That prop says which
+space the *image* is evenly spaced in, not which space the tile is drawn in: these are web-mercator
+(EPSG:3857) tiles, so a row of pixels is a row of constant mercator y and **not** of constant
+latitude. On a flat map the distinction is invisible, since the viewport is already mercator and
+neither setting converts anything. On a globe it is very visible — `LNGLAT` (which is for EPSG:4326
+sources) stretches each tile's image linearly in latitude, so it lands increasingly wrong towards
+the tile's top and bottom edges, neighbouring tiles disagree along the seam they share, and the
+four-way corners tear open into holes. Nothing else is needed for the sphere itself: `BitmapLayer`
+subdivides its mesh whenever the viewport has a `resolution`, which is deck's marker for a globe.
+
+And `map.js` asks deck for the live viewport
 (`deckgl.getViewports()[0]`) instead of rebuilding one from the view state, because below zoom 12 a
 hand-made `WebMercatorViewport` would answer for a different planet and put pinned tooltips and the
 drag gesture in the wrong place.

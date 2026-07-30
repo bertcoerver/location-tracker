@@ -48,12 +48,24 @@ export function basemapLayer() {
         data: null,
         image: props.data,
         bounds: [boundingBox[0][0], boundingBox[0][1], boundingBox[1][0], boundingBox[1][1]],
-        // Read the tile's four corners as lon/lat and interpolate BETWEEN them on
-        // the sphere, rather than treating the image as a flat rectangle on the
-        // Mercator plane. deck's own default `renderSubLayers` does this and this
-        // one replaces it; without it every tile shears visibly once the view is
-        // a globe rather than a sheet.
-        _imageCoordinateSystem: deck.COORDINATE_SYSTEM.LNGLAT
+        // Which space the IMAGE is evenly spaced in — not which space the tile is
+        // drawn in. These are web-mercator (EPSG:3857) tiles, so a row of pixels
+        // is a row of constant mercator y, NOT of constant latitude; `CARTESIAN`
+        // is what tells the shader to sample it that way. deck only asks for
+        // `LNGLAT` for an EPSG:4326 source, which this is not.
+        //
+        // On a flat map the distinction is invisible, because the viewport is
+        // already mercator and no conversion happens either way. On a globe it is
+        // very visible: with `LNGLAT` each tile's image is stretched linearly in
+        // latitude, so it lands increasingly wrong towards the tile's top and
+        // bottom edges, neighbouring tiles disagree along the seam they share, and
+        // the four-way corners tear open into holes.
+        //
+        // Getting this right is also all that is needed for the sphere itself:
+        // `BitmapLayer` subdivides its mesh whenever the viewport has a
+        // `resolution` — which is deck's marker for a globe — so the quad follows
+        // the curve without being asked to.
+        _imageCoordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN
       });
     }
   });
