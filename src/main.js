@@ -14,6 +14,7 @@ import { buildForecast } from './predict.js';
 import { nextPollMs } from './schedule.js';
 import { applySnaps, snapAll } from './snap.js';
 import { deriveStats } from './stats.js';
+import { sunPois } from './sun.js';
 import { createMap } from './map.js';
 import { createProfile } from './profile.js';
 import { same } from './pin.js';
@@ -192,12 +193,20 @@ function show(cache) {
   // pings it was fitted to.
   const forecast = buildForecast(points, course);
 
+  // And where the light was. Derived per paint like the forecast, and for the same
+  // reason: a few dozen trig calls over arrays already in hand, and a cached mark is
+  // one that can disagree with the pings it was placed from. Both views get the same
+  // array, so neither can mark a moment the other doesn't.
+  const sun = sunPois(points, course);
+
   latest = latestOf(points);
 
   map.setPoints(points);
   map.setForecast(forecast);
+  map.setSun(sun);
   profile.setPoints(points);
   profile.setForecast(forecast);
+  profile.setSun(sun);
   profile.scrollToLatest();
   ui.setPoints(points);
   ui.setForecast(forecast);

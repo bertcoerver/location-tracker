@@ -8,6 +8,7 @@
 
 import { CONFIG } from './config.js';
 import { gainAt, pointAt } from './course.js';
+import { posOf } from './points.js';
 import { predictAt } from './predict.js';
 
 /**
@@ -219,6 +220,68 @@ export function interpolateAt(points, course, along, forecast = null) {
   const t = a.t + (b.t - a.t) * f;
 
   return { ...base, state: 'between', sinceStart: t - origin };
+}
+
+/**
+ * Where the run was at a moment it has already been through — the inverse of the
+ * question `interpolateAt` answers.
+ *
+ * That one takes a place and gives a time; this takes a time and gives a place.
+ * [`positionAt`](predict.js) does the same for the FUTURE, from the model, and the
+ * two are worth telling apart: that one is a claim about where somebody probably
+ * is, this one is a reading off a trace somebody has already left.
+ *
+ * The pair of pings either side, interpolated at their DRAWN positions. Where both
+ * of them snapped, the answer is a place on the COURSE and arrives with an
+ * `along` — so a mark placed from it sits on the route, round the bends, the way
+ * every other mark on this page does, rather than on a chord across them. Where
+ * either did not snap, the answer is a plain interpolation between two raw fixes
+ * and has no `along`, which is the honest shape: such a ping has a place on the map
+ * and none on the course.
+ *
+ * @param {Array}       points sorted oldest-first
+ * @param {object|null} course
+ * @param {number}      when
+ * @returns {{lat, lon, along: number|null, ele: number|null, gap: number}|null}
+ *   `gap` is how far apart the two bracketing pings were, handed back rather than
+ *   judged: a moment that fell inside a two-hour blackout is still worth marking,
+ *   and the caller is the one that can say so in words.
+ *
+ *   Null outside the span — before the first ping or after the last. A moment the
+ *   run has not reached is not a position, and guessing one is what
+ *   [predict.js](predict.js) is for.
+ */
+export function traceAt(points, course, when) {
+  if (!points?.length || !Number.isFinite(when)) return null;
+  if (when < points[0].t || when > points[points.length - 1].t) return null;
+
+  // The first ping at or after `when`, and the one before it. Points are
+  // oldest-first, so this is a walk and not a search — the arrays are a few
+  // hundred long and this is asked a handful of times per paint.
+  let i = 1;
+  while (i < points.length && points[i].t < when) i++;
+  const a = points[i - 1];
+  // Only when `when` is exactly the last ping, or there is one ping in total.
+  const b = points[i] ?? a;
+
+  const gap = b.t - a.t;
+  const f = gap > 0 ? (when - a.t) / gap : 0;
+
+  if (course && a.snap && b.snap) {
+    const along = a.snap.along + (b.snap.along - a.snap.along) * f;
+    const at = pointAt(course, along);
+    return { lat: at.lat, lon: at.lon, along, ele: at.ele, gap };
+  }
+
+  const [alon, alat] = posOf(a);
+  const [blon, blat] = posOf(b);
+  return {
+    lat: alat + (blat - alat) * f,
+    lon: alon + (blon - alon) * f,
+    along: null,
+    ele: null,
+    gap
+  };
 }
 
 /**

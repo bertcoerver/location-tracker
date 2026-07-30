@@ -11,7 +11,7 @@
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, surface } from './colors.js';
 import { pointAt } from './course.js';
-import { hoverTooltipHtml, tooltipHtml } from './layers.js';
+import { hoverTooltipHtml, sunGlyph, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
 import { latestOf, posOf } from './points.js';
 import { positionAt } from './predict.js';
@@ -364,6 +364,9 @@ export function createProfile(root, {
   // inside `draw`, which runs on every pointermove.
   let forecast = null;
   let marker = null;
+  // Sunrise and sunset, from `sunPois` — the same array the map draws, so a mark
+  // here and a mark there are the same moment.
+  let sun = [];
   let hover = null;      // distance in metres under the cursor, or null
   // A pending dismissal of the hover tooltip, from the cursor having left the strip.
   // See `leaveSoon`.
@@ -486,6 +489,7 @@ export function createProfile(root, {
 
     drawAxis(scale);
     drawWaypoints(scale);
+    drawSun(scale);
     drawHover(scale, scale.floor, ridge);
     drawForecast(scale, ridge);
     drawPoints(scale);
@@ -698,6 +702,50 @@ export function createProfile(root, {
       if (at < taken + 4 || at < scale.plotLeft - PAD_LEFT || at + width > right + PAD_RIGHT) continue;
       ctx.fillText(text, at, 1);
       taken = at + width;
+    }
+  }
+
+  /**
+   * Sunrise and sunset, at the distance the run had reached when they happened.
+   *
+   * A tick like a waypoint's, and the glyph on it — in a band of its own just under
+   * the waypoint names rather than among them. Two labels of different kinds
+   * competing for one row is how the collision rule above ends up dropping the
+   * interesting one, and there was no need: nothing else uses this strip of pixels.
+   *
+   * No time beside it and no tooltip on it, exactly as a waypoint here has a tick
+   * and no tooltip. The glyph is unambiguous — that is why the pair was chosen —
+   * and the map is where a mark is asked what else it knows.
+   *
+   * Marks with no distance are skipped: an axis of distance along the course has
+   * nowhere to put a moment that happened off it.
+   */
+  function drawSun(scale) {
+    if (!sun.length) return;
+
+    const line = courseColor();
+    ctx.strokeStyle = `rgba(${line.join(',')}, 0.35)`;
+    // Set even though a colour emoji ignores it — a bitmap glyph carries its own
+    // colours. It is here for the platform that has neither emoji font and draws a
+    // missing-glyph box instead, which would otherwise come out in whatever ink the
+    // last thing drawn happened to leave behind.
+    ctx.fillStyle = `rgba(${line.join(',')}, 0.9)`;
+    ctx.lineWidth = 1;
+    // Emoji fonts first: this is one glyph and no lettering, and the fallback is
+    // only there so a platform with neither draws its own box rather than nothing.
+    ctx.font = '13px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    for (const poi of sun) {
+      if (poi.along === null || poi.along === undefined) continue;
+
+      const x = Math.round(scale.x(poi.along)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, PAD_TOP);
+      ctx.lineTo(x, scale.floor);
+      ctx.stroke();
+      ctx.fillText(sunGlyph(poi.event), x, PAD_TOP);
     }
   }
 
@@ -1061,6 +1109,15 @@ export function createProfile(root, {
 
     setPoints(next) {
       points = next;
+      draw();
+    },
+
+    /**
+     * The run's sun events, from `sunPois` — the same array the map is given, so
+     * the two views cannot mark different moments.
+     */
+    setSun(next) {
+      sun = next;
       draw();
     },
 

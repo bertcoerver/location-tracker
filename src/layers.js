@@ -145,6 +145,132 @@ function waypointName(w) {
 }
 
 /**
+ * Sunrise and sunset, marked where the run was when they happened.
+ *
+ * Three layers per mark, and the split between them is forced rather than chosen —
+ * see `sunAtlas` for the measurement behind it. The dot is what a cursor picks and
+ * what carries the tooltip, the glyph is an `IconLayer` because deck's text
+ * pipeline destroys a colour emoji, and the time is a `TextLayer` because deck's
+ * text pipeline is very good at digits.
+ *
+ * Drawn in the course's colour rather than the accent: these are annotations on
+ * the route, in the same idiom as its waypoints, and the accent on this page
+ * belongs to the runner. The glyph supplies the only colour they need anyway.
+ *
+ * @param {Array} pois from [`sunPois`](sun.js).
+ */
+export function sunLayers(pois) {
+  if (!pois.length) return [];
+
+  const line = courseColor();
+  const ring = surface();
+  const { atlas, mapping } = sunAtlas();
+
+  return [
+    new deck.ScatterplotLayer({
+      id: 'sun',
+      // `kind` is already on the data, and it is what the tooltips dispatch on. A
+      // sun POI also carries a `t`, so anything testing for one BEFORE testing
+      // `kind` will describe it as a fix — see `makeTooltip` and map.js.
+      data: pois,
+      pickable: true,
+      radiusUnits: 'pixels',
+      getPosition: p => [p.lon, p.lat],
+      getRadius: 5,
+      stroked: true,
+      lineWidthUnits: 'pixels',
+      getLineWidth: 2,
+      getLineColor: [...ring, 255],
+      getFillColor: [...line, 255]
+    }),
+
+    new deck.IconLayer({
+      id: 'sun-glyph',
+      // Not pickable, like the waypoint labels: the dot underneath owns the
+      // tooltip, and a mark whose label answers a different hover is a bug.
+      data: pois,
+      iconAtlas: atlas,
+      iconMapping: mapping,
+      getIcon: p => p.event,
+      getPosition: p => [p.lon, p.lat],
+      getSize: 19,
+      sizeUnits: 'pixels',
+      // Up and to the left of the dot, so the glyph and the time together sit
+      // centred above it — the place a waypoint puts its name.
+      getPixelOffset: [-19, -19]
+    }),
+
+    new deck.TextLayer({
+      id: 'sun-time',
+      data: pois,
+      getPosition: p => [p.lon, p.lat],
+      getText: p => fmtHm(p.t),
+      getSize: 12,
+      sizeUnits: 'pixels',
+      getPixelOffset: [-6, -19],
+      getTextAnchor: 'start',
+      getAlignmentBaseline: 'center',
+      getColor: [...line, 255],
+      // The same halo as the waypoint labels and for the same reason — the
+      // basemap under it is whatever it happens to be. This is the half of the
+      // label deck CAN typeset properly, so it gets the treatment.
+      fontSettings: { sdf: true, radius: 12, cutoff: 0.25 },
+      outlineWidth: 0.3,
+      outlineColor: [...ring, 235]
+    })
+  ];
+}
+
+/** Rasterised at this many pixels a side, which is headroom over the 19 px it is
+ *  drawn at on a display with twice the density. */
+const GLYPH_PX = 96;
+
+/** Built once and kept, because it never changes: the glyphs are fixed and the
+ *  atlas has no colour of its own to follow the page's scheme with. */
+let glyphAtlas = null;
+
+/**
+ * The two glyphs, drawn into a canvas for an `IconLayer` to sample.
+ *
+ * This exists because deck.gl 9.3.7 cannot draw a colour emoji as TEXT. Measured
+ * rather than assumed: with `sdf: true` — what the waypoint labels use — and with
+ * `sdf: false` alike, a `TextLayer` renders 🌅 as a solid filled square, while the
+ * digits beside it come out perfectly. Its font atlas keeps each glyph's coverage
+ * and discards its colour, which is exactly right for lettering and fatal for an
+ * emoji, whose entire content is colour.
+ *
+ * A 2D canvas has no such trouble — the same call that fails inside deck succeeds
+ * here — so the rasterising happens in our own canvas and arrives as an icon,
+ * where `mask: false` tells deck to sample the texture as it is rather than tinting
+ * it. Which is also why the time is a separate `TextLayer`: each half of the label
+ * goes through the pipeline that can render it.
+ *
+ * Lazy, and never called from node: the tooltip half of this file is unit-tested
+ * without a DOM, and `document` does not exist there.
+ */
+function sunAtlas() {
+  if (glyphAtlas) return glyphAtlas;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = GLYPH_PX * 2;
+  canvas.height = GLYPH_PX;
+
+  const c = canvas.getContext('2d');
+  // Named emoji fonts first and a plain sans-serif last, so a platform with
+  // neither draws its own missing-glyph box rather than nothing at all.
+  c.font = `${Math.round(GLYPH_PX * 0.8)}px "Apple Color Emoji", "Segoe UI Emoji", ` +
+    '"Noto Color Emoji", ui-sans-serif, sans-serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(ICON.sunrise, GLYPH_PX / 2, GLYPH_PX / 2);
+  c.fillText(ICON.sunset, GLYPH_PX * 1.5, GLYPH_PX / 2);
+
+  const cell = x => ({ x, y: 0, width: GLYPH_PX, height: GLYPH_PX, mask: false });
+  glyphAtlas = { atlas: canvas, mapping: { sunrise: cell(0), sunset: cell(GLYPH_PX) } };
+  return glyphAtlas;
+}
+
+/**
  * The point layers.
  *
  * When a run has a course, each ping is drawn three times: faintly where the GPS
@@ -607,6 +733,47 @@ export function waypointTooltipHtml(waypoint) {
 }
 
 /**
+ * Tooltip markup for a sunrise or a sunset — a moment AND a place, unlike either
+ * of its neighbours here.
+ *
+ * So it is built like a ping tooltip rather than like a waypoint: the wall clock
+ * goes in the title, because that is where every tooltip on this page puts a wall
+ * clock, and the 🕒 row keeps the meaning it has everywhere else — time on the race
+ * clock, not time of day. The two would collide if the title were the event's name
+ * alone, which is how the event's name ends up beside the time instead of above it.
+ *
+ * @param {object} poi from [`sunPois`](sun.js).
+ * @param {number|null} [origin] the moment the run's clock counts from, for the
+ *   elapsed row and the day tag. Defaulted, like `tooltipHtml`'s.
+ */
+export function sunTooltipHtml(poi, origin = null) {
+  const day = dayTag(poi.t, origin);
+  const rows = [titleHtml(
+    `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}` +
+    ` &middot; ${poi.event === 'sunrise' ? 'sunrise' : 'sunset'}`
+  )];
+
+  // Where the race clock stood. Absent rather than negative on a mark that fell
+  // before the gun, for the reason `deriveStats` gives: a sunrise an hour before
+  // the start has no elapsed time, and "-1:00:00" is not what a race clock says.
+  if (origin !== null && poi.t >= origin) {
+    rows.push(reading(ICON.time, fmtDuration(poi.t - origin), null, true));
+  }
+
+  // How far in, and — when the phone had been quiet a while — how much of that
+  // figure is interpolation. A position pulled out of a two-hour blackout is an
+  // estimate, and this is the page's one place for saying so.
+  if (poi.along !== null && poi.along !== undefined) {
+    rows.push(reading(ICON.dist, fmtDistance(poi.along),
+      poi.gap > CONFIG.maxPingMs ? `interpolated across ${fmtDuration(poi.gap)}` : null, true));
+  }
+  if (poi.ele !== null && poi.ele !== undefined) rows.push(reading(ICON.ele, metres(poi.ele)));
+
+  rows.push(mapsLink(poi.lat, poi.lon, `${poi.event} · ${fmtClock(poi.t)}`));
+  return rows.join('');
+}
+
+/**
  * Tooltip markup for a spot on the course that isn't a ping — what's under the
  * cursor when it's on the route itself.
  *
@@ -714,8 +881,27 @@ const ICON = {
   // `weatherIcon` falls back to when a label arrives that nobody anticipated —
   // that case is genuinely "some temperature, no idea what sky".
   temp: '\u{1F321}️', // 🌡️
-  bpm:  '❤️' // ❤️
+  bpm:  '❤️', // ❤️
+  // The one pair here picked for being unlike EACH OTHER rather than for being
+  // like what it depicts. 🌅 and 🌇 are the obvious choice and are the same
+  // picture — a sun on a horizon — at the 19 px these are drawn at on the map, so
+  // the two marks a night puts on a course would be indistinguishable. A starry
+  // skyline is unmistakable beside a sunrise, and it says the thing the runner
+  // cares about: the head torch goes on.
+  sunrise: '\u{1F305}', // 🌅
+  sunset:  '\u{1F303}'  // 🌃
 };
+
+/**
+ * The glyph for a sun event.
+ *
+ * Exported so the height strip draws the same two characters this file does — it
+ * renders them with canvas `fillText`, which has no trouble with a colour emoji
+ * whatsoever, and a second copy of the pair is a second chance to change one.
+ */
+export function sunGlyph(event) {
+  return event === 'sunrise' ? ICON.sunrise : ICON.sunset;
+}
 
 /**
  * A tooltip's top line: what this is, and — on a ping — how the phone was doing.
@@ -1059,6 +1245,9 @@ export function makeTooltip(
     if (!object) return null;
     if (object.kind === 'waypoint') return tip(waypointTooltipHtml(object));
     if (object.kind === 'beacon') return tip(beaconTooltipHtml(object));
+    // Before the fall-through below, which tests nothing at all: a sun POI carries
+    // a `t` and would be described as a fix, complete with a battery it never had.
+    if (object.kind === 'sun') return tip(sunTooltipHtml(object, originOf(getPoints())));
 
     const points = getPoints();
     const latest = latestOf(points);

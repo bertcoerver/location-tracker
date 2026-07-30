@@ -254,6 +254,56 @@ enough to read as a smudge behind the reading, there the moment you go looking f
 straight improvement on a switch that was off by default, which meant almost nobody ever saw what the
 snapper had done. **Your own location** is asked for as the page opens; see "Where *you* are".
 
+### Sunrise and sunset, where they happened
+
+Every ping carries a position and a moment, so the page can say where the runner was standing when the
+sun came up — and on a race that runs through the night that is a fact nothing else on the screen
+gives. Each crossing is marked on the course, on the map and on the height strip both:
+
+```
+        🌅 06:42                 🌃 21:07
+   ─────●──────────────────────────●─────
+```
+
+The glyph, the local time, and a dot you can hover for the rest: the race clock at that moment, how
+far in it was, and how high. On La Diagonale des Fous — 45 hours, two nights — that is four marks, at
+50, 90, 120 and 165 km.
+
+**🌃 rather than 🌇 for sunset.** The obvious pair is 🌅 and 🌇 and it is unusable: both are a sun on a
+horizon, and at the 19 px these are drawn at the two marks a night puts on a course are the same
+picture. A starry skyline is unmistakable beside a sunrise, and it says the thing the runner cares
+about anyway — the head torch goes on.
+
+**The position is interpolated between the two pings either side**, along the course where both of them
+snapped to it, so a mark sits on the route round the bends rather than on a chord across them. Where
+the phone had been quiet a while the tooltip says so — `interpolated across 1h 40m` — because a
+position pulled out of a blackout is an estimate, and it is worth one clause to admit it.
+
+**Only crossings inside the measured span are marked**, between the first ping and the last. Tonight's
+sunset on a live run is deliberately not projected onto the forecast: it would move every time the
+model refits, and it would be drawn in the same idiom as the marks either side of it that are
+measurements.
+
+The times are computed here rather than fetched — the standard sunrise equation is fifty lines of trig
+in `sun.js`, against a page that has no build step and would otherwise be adding a script tag and a
+third-party origin for arithmetic that has not changed since 1991. **The course's own elevation goes
+into it**, which is the part worth knowing about: standing 2,500 m up puts the horizon 1.7° below level
+and brings sunrise the better part of ten minutes forward, so these marks do not agree with an almanac
+written for the valley, and should not. It assumes the horizon is actually visible, which in a valley
+it is not — much closer than pretending the runner is at the beach, and the error is minutes.
+
+Two things fell out of building it. The glyph on the map is an `IconLayer` over a canvas the page
+rasterises itself, because deck.gl cannot draw a colour emoji as *text*: with `sdf` on and off alike a
+`TextLayer` renders 🌅 as a solid filled square while the digits beside it come out perfectly — its font
+atlas keeps each glyph's coverage and throws its colour away, which is right for lettering and fatal
+for an emoji. So each half of the label goes through the pipeline that can render it: the glyph as an
+icon, the time as text with the same halo the waypoint labels use. And the mark is drawn *above* the
+pings, which is against this stack's usual order and was also measured: deck picks the topmost pickable
+layer, every fix carries a 16 px invisible hit disc, and a mark interpolated between two pings five
+minutes apart sat inside one at every usable zoom — so underneath, hovering a sunrise returned the
+neighbouring ping's tooltip. The cost is the reverse: where a mark lands on a fix, the mark's 5 px owns
+the middle of that fix's 16 px, and the ping is still there six pixels away.
+
 ### What a tooltip says
 
 A ping tooltip is a **status bar, the weather, the run's figures, and then whatever a person wrote**,
@@ -1177,7 +1227,9 @@ src/
   course.js         projects it to metres: distance along, climb, loop detection, grid index
   snap.js           puts each ping on the course, once, and remembers where
   schedule.js       when the next ping is due, from the battery the last one reported
-  stats.js          per-ping time, distance and climb, and interpolating a hovered spot
+  stats.js          per-ping time, distance and climb, interpolating a hovered spot, and where
+                    the run was at a given moment
+  sun.js            sunrise and sunset times, and placing them on the run's own trace
   predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
@@ -1209,6 +1261,10 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
   committed before the reader learned to look for it, and `hydrate` diffs on sha, which never changes,
   so without the bump it stays invisible forever on exactly the browsers that had visited before. This
   has now happened four times (`v6`, `v8`, `v10`); assume it applies rather than checking.
+- Something that needs to know **where the run was at a moment** → `traceAt` in `stats.js`, which is
+  the measured counterpart to `positionAt` in `predict.js`: that one guesses forward from the model,
+  this one reads backwards off the trace, and both hand back a place on the course. The sun marks are
+  its only caller so far.
 - A new reading → decide first which of the three it is, because the card is laid out by that and
   nothing else. A fact about the **handset** goes in the status bar on the title line (`statusHtml`);
   a fact about the **weather** joins the weather line; a fact about the **run** is a `reading()` row.
@@ -1322,6 +1378,34 @@ while the time comes back only where the run has actually been. Halfway between 
 gives half the leg's minutes; on a lap covered twice the *latest* visit wins; and past the
 furthest ping the answer is a forecast with a band, or a state rather than a number when the
 run is too young to have one.
+
+Read the other way round — where the run *was* at a moment — the assertions are about the
+course rather than about arithmetic: halfway in time between two snapped pings comes back at
+the corner of an L-shaped course rather than at the midpoint of the diagonal across it, which
+is the difference between a mark on the route and a mark half a kilometre off it. Either
+bracketing ping having missed the course gives a raw interpolation and **no distance**, a
+moment outside the span gives nothing at all, and the gap between the two pings comes back
+alongside the answer so a caller can say how much of it is interpolation.
+
+The sun times are tested mostly by invariant, which is what makes them robust to an argument
+about tolerances: the midpoint of sunrise and sunset is solar noon, within the ±17 minutes a
+sundial and a clock disagree by over a year; fifteen degrees of longitude is an hour, to
+within a minute; a day at 60°N is over 18 hours in June and under 7 in December, and the two
+solstices are complements; the sun that never crosses the horizon comes back as an absence
+rather than a `NaN`, at both poles and in both seasons; and 2,500 m of elevation moves
+sunrise earlier and sunset later by the same five-to-fifteen minutes, symmetrically. On top
+of those, two spot-checks against published almanac figures — London at the June solstice and
+Quito at the equinox — because a self-consistent reduction can still be self-consistently
+wrong.
+
+Placing them is tested against a synthetic overnight run: twelve hours out gives exactly one
+sunset and then one sunrise, both inside the ping span and neither at the start or the finish
+of the course; a run in daylight gives none; a run with no course still gives marks, with no
+distance on them; thirty-six hours gives four, in order, with none counted twice — the scan
+runs over UTC days and the crossings belong to solar ones. And the circularity at the heart
+of it, that where the runner is decides when the sun rises and vice versa, is pinned by
+running the same ground in reverse: the iteration has to converge to a settled answer from
+either seed rather than leaving the seed showing through.
 
 The forecast is tested on properties rather than on numbers wherever it can be. A constant
 pace on a flat course recovers its coefficient exactly and predicts arrival exactly; a run
@@ -1475,6 +1559,13 @@ Verified against the real course on both SwiftShader and the hardware GPU, with 
 (33 instances, sublayer visible) and simply never drawn. A label you can read beats a label
 that tidily avoids its neighbours and isn't there. The height strip does its own overlap
 rule in six lines, dropping any label that would run into the previous one.
+
+The sun marks inherit that decision and need it less: there are two per night, and the only
+way two of them collide is a course that doubles back near itself between one crossing and
+the next — where the honest picture is two marks close together. In the strip they are given a
+band of their own just under the waypoint names rather than sharing that row, because two
+kinds of label competing for one line is how the collision rule above ends up dropping the
+interesting one.
 
 ## Publishing
 

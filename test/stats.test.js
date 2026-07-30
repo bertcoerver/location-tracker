@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCourse, gainAt } from '../src/course.js';
-import { deriveStats, interpolateAt, originOf } from '../src/stats.js';
+import { buildCourse, gainAt, pointAt } from '../src/course.js';
+import { deriveStats, interpolateAt, originOf, traceAt } from '../src/stats.js';
 
 const LAT0 = 46.5;
 const M_LON = 111320 * Math.cos((LAT0 * Math.PI) / 180);
@@ -423,4 +423,86 @@ test('a genuinely slow leg still gets its pace — only short ones are refused',
   const points = deriveStats([ping('a', 0, 1000), ping('b', 20, 2000)], slope());
 
   assert.equal(points[1].stats.pace, 20 * MINUTE);
+});
+
+// --- traceAt: where the run was at a moment -----------------------------------
+
+/**
+ * An L: 1 km due east, then 1 km due north. The corner is what tells a position
+ * on the COURSE apart from one on a straight line between two pings.
+ */
+function bend() {
+  const east = Array.from({ length: 11 }, (_, i) => ({ lat: LAT0, lon: (i * 100) / M_LON, ele: 0 }));
+  const north = Array.from({ length: 11 }, (_, i) => ({
+    lat: LAT0 + (i * 100) / 110540, lon: 1000 / M_LON, ele: 0
+  }));
+  return buildCourse({ segments: [[...east, ...north.slice(1)]], waypoints: [], hasElevation: true }, 'sha');
+}
+
+/** A ping snapped to where the course actually is at `along`, not to the origin. */
+function onCourse(course, name, minutes, along) {
+  const at = pointAt(course, along);
+  return {
+    name, t: minutes * MINUTE, lat: at.lat + 0.001, lon: at.lon,
+    snap: { along, lat: at.lat, lon: at.lon, ele: at.ele, off: 110 }
+  };
+}
+
+test('traceAt at a ping is that ping, and between two it follows the course', () => {
+  const course = bend();
+  const points = [onCourse(course, 'a', 0, 0), onCourse(course, 'b', 20, 2000)];
+
+  const at = traceAt(points, course, 0);
+  assert.equal(at.along, 0);
+  assert.ok(Math.abs(at.lon) < 1e-9, `${at.lon}`);
+
+  // Halfway in time is halfway in distance, which on this course is the corner —
+  // NOT the midpoint of the diagonal between the two pings.
+  const half = traceAt(points, course, 10 * MINUTE);
+  assert.equal(half.along, 1000);
+  const corner = pointAt(course, 1000);
+  assert.ok(Math.abs(half.lat - corner.lat) < 1e-9, `${half.lat} vs ${corner.lat}`);
+  assert.ok(Math.abs(half.lon - corner.lon) < 1e-9, `${half.lon} vs ${corner.lon}`);
+  // The chord would have put it half a kilometre off the route.
+  const chord = (points[0].snap.lat + points[1].snap.lat) / 2;
+  assert.ok(Math.abs(half.lat - chord) > 0.002, 'took the shortcut across the bend');
+});
+
+test('traceAt has no place on the course when a bracketing ping missed it', () => {
+  const course = bend();
+  const points = [onCourse(course, 'a', 0, 0), ping('b', 20, null)];
+  points[1].lat = LAT0 + 0.01;
+  points[1].lon = 0.02;
+
+  const at = traceAt(points, course, 10 * MINUTE);
+  assert.equal(at.along, null, 'claimed a distance from an unsnapped fix');
+  assert.equal(at.ele, null);
+  // Straight between the two DRAWN positions: the snapped one for the ping that
+  // snapped, the raw fix for the one that didn't.
+  assert.ok(Math.abs(at.lat - (LAT0 + 0.005)) < 1e-9, `${at.lat}`);
+  assert.ok(Math.abs(at.lon - 0.01) < 1e-9, `${at.lon}`);
+});
+
+test('traceAt refuses a moment the run has not been through', () => {
+  const course = bend();
+  const points = [onCourse(course, 'a', 10, 0), onCourse(course, 'b', 20, 2000)];
+
+  assert.equal(traceAt(points, course, 9 * MINUTE), null);
+  assert.equal(traceAt(points, course, 21 * MINUTE), null);
+  // The ends themselves are inside it.
+  assert.ok(traceAt(points, course, 10 * MINUTE));
+  assert.ok(traceAt(points, course, 20 * MINUTE));
+  assert.equal(traceAt([], course, 15 * MINUTE), null);
+});
+
+test('traceAt reports the gap it interpolated across', () => {
+  const course = bend();
+  const points = [
+    onCourse(course, 'a', 0, 0), onCourse(course, 'b', 5, 500), onCourse(course, 'c', 125, 2000)
+  ];
+
+  assert.equal(traceAt(points, course, 3 * MINUTE).gap, 5 * MINUTE);
+  // Two hours of silence in the mountains. The mark is still placed; the gap is
+  // what lets the tooltip say how much of a guess it is.
+  assert.equal(traceAt(points, course, 60 * MINUTE).gap, 120 * MINUTE);
 });

@@ -7,11 +7,11 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import {
   beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
-  splitWeather, tooltipHtml, viewerLayers, waypointTooltipHtml
+  splitWeather, sunGlyph, sunTooltipHtml, tooltipHtml, viewerLayers, waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
-import { fmtClock } from '../src/util.js';
+import { dayTag, fmtClock } from '../src/util.js';
 
 const point = {
   name: '2026-07-28T12_06_01+02_00.json',
@@ -744,4 +744,111 @@ test('a leg that rounds away to zero is left off rather than shown as "+0 m"', (
   // The totals are untouched: they are big enough to have digits.
   assert.ok(out.includes('1,240 m'), out);
   assert.ok(out.includes('980 m'), out);
+});
+
+// --- sunrise and sunset -------------------------------------------------------
+
+const GUN = Date.parse('2026-08-22T20:00:00+02:00');
+
+/** A sun POI as `sunPois` builds one. */
+function sunPoi(over = {}) {
+  return {
+    kind: 'sun',
+    event: 'sunset',
+    t: GUN + 53 * 60000,
+    lat: 42.79,
+    lon: 0.14,
+    along: 8823,
+    ele: 1204,
+    gap: 30 * 60000,
+    ...over
+  };
+}
+
+test('a sun mark says which event, when, and how far in', () => {
+  const poi = sunPoi();
+  const html = sunTooltipHtml(poi, GUN);
+  const shown = text(html);
+
+  // The wall clock in the title, where every tooltip on this page puts one, and the
+  // event beside it. Against `fmtClock` rather than against a literal, because a
+  // literal would only be right in the zone this file was written in — what is being
+  // checked here is that the title carries the clock, and what the clock says is
+  // `test/util.test.js`'s business.
+  assert.match(shown, new RegExp(fmtClock(poi.t)));
+  assert.match(shown, /· sunset/);
+  // Then the race clock — the same 🕒 row a ping tooltip uses, in the same wording
+  // and meaning the same thing: time on the clock, not time of day.
+  assert.match(shown, /53m/);
+  assert.match(shown, /8\.8 km/);
+  assert.match(shown, /1,204 m/);
+  assert.match(html, /href="https:\/\/maps\.google\.com\/\?q=/);
+});
+
+test('a sun mark on a later day is tagged with the day', () => {
+  // Thirty hours in, which is a later calendar day in every zone on earth — an
+  // eleven-hour gap is not, and that is what this used to assert.
+  const t = GUN + 30 * 3600000;
+  const html = sunTooltipHtml(sunPoi({ event: 'sunrise', t }), GUN);
+
+  const day = dayTag(t, GUN);
+  assert.ok(day, 'no day tag to look for');
+  assert.match(html, new RegExp(`<span class="d">\\${day}</span>`), html);
+  assert.match(text(html), /· sunrise/);
+});
+
+test('a sun mark placed across a long silence says it was interpolated', () => {
+  const quiet = sunTooltipHtml(sunPoi({ gap: 100 * 60000 }), GUN);
+  assert.match(text(quiet), /interpolated across 1h 40m/);
+
+  // And not for an ordinary gap between pings, which is every mark on a run whose
+  // phone was reporting normally.
+  assert.doesNotMatch(text(sunTooltipHtml(sunPoi(), GUN)), /interpolated/);
+});
+
+test('a sun mark off the course keeps the rows it can still answer', () => {
+  // A run with no GPX: a position and a moment, no distance and no height.
+  const html = sunTooltipHtml(sunPoi({ along: null, ele: null }), GUN);
+  const shown = text(html);
+
+  assert.match(shown, /· sunset/);
+  assert.doesNotMatch(shown, /km|NaN/);
+  assert.doesNotMatch(shown, / m\b/);
+  assert.match(html, /href="https:\/\/maps\.google\.com\/\?q=/);
+});
+
+test('a sun mark before the gun has no race clock rather than a negative one', () => {
+  // A sunrise on the morning of a race that starts at eight in the evening, with a
+  // phone that was already pinging: a real moment, and not one the race clock has
+  // anything to say about.
+  const html = sunTooltipHtml(sunPoi({ event: 'sunrise', t: GUN - 13 * 3600000 }), GUN);
+
+  // No 🕒 row at all, rather than one reading "-13h". The DAY tag is a different
+  // matter and is expected to read `-1`: that one is a fact about the calendar and
+  // says the useful thing, which is that this was the morning before.
+  assert.doesNotMatch(html, /\u{1F552}/u, html);
+  // And no crash with no origin at all, which is a caller that has no points.
+  assert.match(text(sunTooltipHtml(sunPoi(), null)), /· sunset/);
+});
+
+test('a sun mark is not mistaken for a ping', () => {
+  // The dispatch trap this feature is most likely to fall into: a sun POI carries
+  // a `t`, and the fall-through in `makeTooltip` tests for nothing at all.
+  const html = makeTooltip(() => [])({ object: sunPoi(), layer: { id: 'sun' } }).html;
+
+  assert.match(text(html), /· sunset/, html);
+  assert.doesNotMatch(html, /class="st"/, 'described a sunset as a phone');
+});
+
+test('the two sun glyphs are one character each and not the same one', () => {
+  // The height strip draws these with canvas `fillText` while the map draws them
+  // through an icon atlas, and both take them from here — so this is the one place
+  // the pair is stated. They have to differ: two marks a night that look alike are
+  // two marks that say nothing.
+  const rise = sunGlyph('sunrise');
+  const set = sunGlyph('sunset');
+
+  assert.notEqual(rise, set);
+  assert.equal([...rise].length, 1, `${rise} is not one character`);
+  assert.equal([...set].length, 1, `${set} is not one character`);
 });

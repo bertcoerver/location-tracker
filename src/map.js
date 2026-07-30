@@ -5,7 +5,8 @@ import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
-  makeTooltip, pointLayers, tooltipHtml, viewerLayers, waypointTooltipHtml
+  makeTooltip, pointLayers, sunLayers, sunTooltipHtml, tooltipHtml, viewerLayers,
+  waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
@@ -46,6 +47,10 @@ export function createMap(container, {
   // place on the course does, and it is the same mark the height strip carries.
   let forecast = null;
   let marker = null;
+  // Sunrise and sunset, placed where the run was when they happened. Derived from
+  // the points and pushed in from main.js rather than computed here, so the map and
+  // the height strip are marking one set of moments rather than two.
+  let sun = [];
   let hover = null;      // [lon, lat] on the course, from the profile strip
   // The pinned point, from a click in either view. While one is held the map's
   // hover tooltip is suspended and the crosshair stops chasing the cursor.
@@ -103,6 +108,19 @@ export function createMap(container, {
       // one mark on the map that is actually known, behind the one that isn't.
       ...forecastLayers(course, marker),
       ...pointLayers(points, pulse),
+      // Above the pings, which took a measurement to get right: deck picks the
+      // TOPMOST pickable layer, `points-hit` is a 16 px disc around every fix, and
+      // a sun mark is interpolated between two pings five minutes apart — so
+      // underneath, its dot sat inside a ping's hit disc at every usable zoom and
+      // hovering a sunrise returned the neighbouring ping's tooltip. Verified in a
+      // browser, not reasoned about.
+      //
+      // The cost is the reverse of that: where a mark lands on a fix, the mark's
+      // 5 px wins the middle of that fix's 16 px. Which is the same trade
+      // `points-hit` itself makes against the course band under it — the smaller,
+      // more specific target owns the pixels it covers, and the ping is still
+      // there six pixels away.
+      ...sunLayers(sun),
       ...hoverLayers(hover)
     ];
   }
@@ -140,6 +158,22 @@ export function createMap(container, {
         lat: object.lat,
         lon: object.lon,
         along: object.along ?? null
+      };
+    }
+
+    // A sun mark. Above the ping branch below, not beside it: this object has a
+    // `t` too, so the order of these two decides which one describes it.
+    //
+    // `along: null` even though the mark has one. That leaves it pinnable and not
+    // draggable, which is right — a sunrise is a fixed fact about a moment, and
+    // sliding it down the course would be sliding the sun.
+    if (object?.kind === 'sun') {
+      return {
+        view: 'map',
+        html: sunTooltipHtml(object, originOf(points)),
+        lat: object.lat,
+        lon: object.lon,
+        along: null
       };
     }
 
@@ -618,6 +652,15 @@ export function createMap(container, {
     setForecast(next) {
       forecast = next;
       refreshMarker();
+      render();
+    },
+
+    /**
+     * The run's sun events, from `sunPois`. Empty for a run that stayed in
+     * daylight, which is most of them.
+     */
+    setSun(next) {
+      sun = next;
       render();
     },
 
