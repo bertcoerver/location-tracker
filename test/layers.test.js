@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import { buildCourse } from '../src/course.js';
 import {
-  fmtDistance, hoverTooltipHtml, makeTooltip, tooltipHtml, waypointTooltipHtml
+  fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip, tooltipHtml, waypointTooltipHtml
 } from '../src/layers.js';
 import { interpolateAt } from '../src/stats.js';
 
@@ -307,4 +307,15 @@ test('hover produces no tooltip at all while a point is pinned', () => {
     assert.ok(free(info), 'this case answers when nothing is pinned');
     assert.equal(pinned(info), null);
   }
+});
+
+// --- the forecast marker on the map -------------------------------------------
+
+test('forecastLayers draws nothing without both a course and a marker', () => {
+  // The only half of this that can be exercised here: building the layers needs
+  // deck.gl's global. The guard is what keeps a run with no course, or a
+  // finished one with no forecast, from reaching for `pathsBetween` at all.
+  assert.deepEqual(forecastLayers(null, { along: 100, lo: 50, hi: 200 }), []);
+  assert.deepEqual(forecastLayers(course(), null), []);
+  assert.deepEqual(forecastLayers(null, null), []);
 });

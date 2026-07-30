@@ -76,9 +76,11 @@ export function buildCourse(parsed, sha = null) {
   if (path.length < 2) return null;
 
   // Index of the pair that straddles a segment join. Distance still accumulates
-  // across it, so `along` stays monotone, but nothing may SNAP to it: that line
-  // isn't part of the course, it's just where one segment stops and the next
-  // starts. Empty for the single-segment case, which is nearly all of them.
+  // across it, so `along` stays monotone, but nothing may SNAP to it, and nothing
+  // may DRAW it: that line isn't part of the course, it's just where one segment
+  // stops and the next starts. Empty for the single-segment case, which is nearly
+  // all of them. Kept on the course for `pathsBetween`, which has to cut the same
+  // hops back out of a stretch of trace.
   const breaks = new Set();
   for (let i = 0, at = 0; i < parsed.segments.length - 1; i++) {
     at += parsed.segments[i].length;
@@ -127,6 +129,7 @@ export function buildCourse(parsed, sha = null) {
     cumDown,
     length,
     proj,
+    breaks,
 
     /** Start and finish coincide — the case where `along` is genuinely ambiguous. */
     closed: gap <= CONFIG.loopMeters,
@@ -222,6 +225,70 @@ export function pointAt(course, distance) {
     lon: a.lon + (b.lon - a.lon) * t,
     ele: course.hasElevation ? a.ele + (b.ele - a.ele) * t : null
   };
+}
+
+/**
+ * The stretch of trace between two distances along the course.
+ *
+ * Plural because a course can be several track segments: the join between two of
+ * them is not ground anyone runs over — the same phantom hop the snap grid
+ * refuses to register — so a stretch crossing one comes back as two paths rather
+ * than as one with a line drawn across the gap.
+ *
+ * The ends are interpolated, so the stretch starts and finishes exactly where it
+ * was asked to rather than at the nearest vertex. A stretch that ends INSIDE a
+ * hop still reaches into it, which is the one case this doesn't cut: `along` is
+ * defined in there, so a distance in the gap is a real distance with no ground
+ * under it, and half a phantom line is a smaller lie than refusing to draw.
+ *
+ * @param {object} course
+ * @param {number} from,to metres; either order, both clamped to the course.
+ * @returns {Array<Array<[number, number]>>} lon/lat, ready for a PathLayer.
+ *   Paths left with a single position are dropped — there is no line in them.
+ */
+export function pathsBetween(course, from, to) {
+  const { path, cum, breaks, length } = course;
+  const lo = clampTo(Math.min(from, to), length);
+  const hi = clampTo(Math.max(from, to), length);
+
+  // Every position in order, each tagged with the vertex it sits at or just
+  // after, which is what the hops are recognised from below.
+  const steps = [[locate(course, lo).lo, pointAt(course, lo)]];
+  for (let i = 0; i < path.length; i++) {
+    if (cum[i] <= lo) continue;
+    if (cum[i] >= hi) break;
+    steps.push([i, path[i]]);
+  }
+  steps.push([locate(course, hi).lo, pointAt(course, hi)]);
+
+  const paths = [];
+  let current = [];
+  let previous = null;
+
+  for (const [i, p] of steps) {
+    if (previous !== null && crossesBreak(breaks, previous, i)) {
+      paths.push(current);
+      current = [];
+    }
+    current.push([p.lon, p.lat]);
+    previous = i;
+  }
+  paths.push(current);
+
+  return paths.filter(p => p.length > 1);
+}
+
+/** Whether the vertices from `a` to `b` step over a segment join on the way. */
+function crossesBreak(breaks, a, b) {
+  for (let k = a; k < b; k++) {
+    if (breaks.has(k)) return true;
+  }
+  return false;
+}
+
+function clampTo(distance, length) {
+  if (!Number.isFinite(distance)) return 0;
+  return distance < 0 ? 0 : distance > length ? length : distance;
 }
 
 /**

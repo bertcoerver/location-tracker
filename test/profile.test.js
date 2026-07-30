@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { buildCourse } from '../src/course.js';
 import {
-  axisTicks, centerScrollLeft, columns, elevationAt, hitTest, scaleFor, smooth, stripWidth,
-  tickLabel
+  axisTicks, centerScrollLeft, columns, elevationAt, hitTest, ridgeAt, scaleFor, smooth,
+  stripWidth, tickLabel
 } from '../src/profile.js';
 
 const LAT0 = 46.5;
@@ -267,6 +267,43 @@ test('smooth does not drag the ends of the course towards zero', () => {
 
   assert.ok(Math.abs(out[0] - 800) < 1e-9, `start sagged to ${out[0]}`);
   assert.ok(Math.abs(out[out.length - 1] - 800) < 1e-9, `end sagged to ${out[out.length - 1]}`);
+});
+
+// --- reading the drawn skyline ------------------------------------------------
+
+test('ridgeAt reads the column the distance is drawn in', () => {
+  const course = ramp(Array.from({ length: 200 }, (_, i) => i), 50);
+  const scale = scaleFor(course, 800, 100);
+  const ridge = smooth(columns(course, scale.plotWidth).max, CONFIG.profileSmoothPx);
+
+  for (const d of [0, 137, 3000, course.length / 2, course.length]) {
+    const column = Math.min(ridge.length - 1, Math.max(0, Math.round(scale.x(d)) - scale.plotLeft));
+    assert.equal(ridgeAt(ridge, scale, d), ridge[column], `at ${d}`);
+  }
+});
+
+test('ridgeAt clamps at both ends instead of reading off the array', () => {
+  // The rounding at the far edge of the course lands a column past the end, and
+  // `undefined` there is a mark drawn at NaN — which is a mark that isn't there.
+  const course = ramp([0, 50, 100], 500);
+  const scale = scaleFor(course, 400, 100);
+  const ridge = smooth(columns(course, scale.plotWidth).max, CONFIG.profileSmoothPx);
+
+  for (const d of [-5000, 0, course.length, course.length + 5000]) {
+    assert.ok(Number.isFinite(ridgeAt(ridge, scale, d)), `at ${d}`);
+  }
+  assert.equal(ridgeAt(ridge, scale, -5000), ridge[0]);
+  assert.equal(ridgeAt(ridge, scale, course.length + 5000), ridge[ridge.length - 1]);
+});
+
+test('ridgeAt follows the terrain rather than flattening it', () => {
+  // The whole point of hanging the forecast marker off this: a hill has to come
+  // back higher than the valley beside it.
+  const course = ramp([100, 100, 400, 100, 100], 500);
+  const scale = scaleFor(course, 600, 100);
+  const ridge = smooth(columns(course, scale.plotWidth).max, CONFIG.profileSmoothPx);
+
+  assert.ok(ridgeAt(ridge, scale, course.length / 2) > ridgeAt(ridge, scale, 0) + 100);
 });
 
 // --- picking a dot off the strip ---------------------------------------------

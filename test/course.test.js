@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/config.js';
 import {
-  buildCourse, courseBounds, courseHoverAt, gainAt, nearestOnCourse, pointAt
+  buildCourse, courseBounds, courseHoverAt, gainAt, nearestOnCourse, pathsBetween, pointAt
 } from '../src/course.js';
 import { elevationAt } from '../src/profile.js';
 
@@ -292,6 +292,84 @@ test('pointAt and elevationAt agree — they are the same search', () => {
 
   for (const d of [0, 137, 2200, course.length]) {
     assert.ok(Math.abs(pointAt(course, d).ele - elevationAt(course, d)) < 1e-9, `${d}`);
+  }
+});
+
+// --- a stretch of the trace ---------------------------------------------------
+
+test('pathsBetween starts and ends exactly where it was asked to', () => {
+  const course = courseFrom([[0, 0], [1000, 0], [2000, 0]]);
+  const [path] = pathsBetween(course, 250, 1750);
+
+  const first = path[0];
+  const last = path[path.length - 1];
+  assert.ok(Math.abs(first[0] * M_LON - 250) < 1, `${first[0] * M_LON}`);
+  assert.ok(Math.abs(last[0] * M_LON - 1750) < 1, `${last[0] * M_LON}`);
+  // …and those are the interpolated positions, not the nearest vertices.
+  assert.deepEqual(first, [pointAt(course, 250).lon, pointAt(course, 250).lat]);
+  assert.deepEqual(last, [pointAt(course, 1750).lon, pointAt(course, 1750).lat]);
+});
+
+test('pathsBetween keeps the vertices in between, in order, and no others', () => {
+  const course = courseFrom([[0, 0], [1000, 500], [2000, 0], [3000, 500]]);
+  const [path] = pathsBetween(course, 200, course.cum[2] + 100);
+
+  // The two interpolated ends, plus vertices 1 and 2 — vertex 3 is past the end.
+  assert.equal(path.length, 4);
+  assert.deepEqual(path[1], [course.path[1].lon, course.path[1].lat]);
+  assert.deepEqual(path[2], [course.path[2].lon, course.path[2].lat]);
+});
+
+test('pathsBetween reads the same stretch whichever way round it is given', () => {
+  const course = courseFrom([[0, 0], [1000, 0], [2000, 0]]);
+  assert.deepEqual(pathsBetween(course, 1750, 250), pathsBetween(course, 250, 1750));
+});
+
+test('pathsBetween clamps to the course rather than running off it', () => {
+  const course = courseFrom([[0, 0], [1000, 0]]);
+  const [path] = pathsBetween(course, -5000, course.length + 5000);
+
+  assert.deepEqual(path[0], [course.path[0].lon, course.path[0].lat]);
+  assert.deepEqual(path[path.length - 1], [course.path[1].lon, course.path[1].lat]);
+});
+
+test('pathsBetween cuts out the gap between two track segments', () => {
+  // The same fixture as the snapping test above: two 1 km legs, 3 km apart. A
+  // stretch spanning the join must not draw a line across it.
+  const seg = ns => ns.map(([e, n]) => ({ lat: LAT0 + n / M_LAT, lon: e / M_LON, ele: 0 }));
+  const course = buildCourse({
+    segments: [seg([[0, 0], [1000, 0]]), seg([[4000, 0], [5000, 0]])],
+    waypoints: [], hasElevation: true
+  }, 'sha');
+
+  const paths = pathsBetween(course, 500, course.length - 500);
+  assert.equal(paths.length, 2);
+
+  // Neither path may contain a position from the far side of the join: the first
+  // stays on the first leg's easting range, the second on the second's.
+  const eastings = paths.map(p => p.map(([lon]) => lon * M_LON));
+  assert.ok(eastings[0].every(e => e >= -1 && e <= 1001), `${eastings[0]}`);
+  assert.ok(eastings[1].every(e => e >= 3999 && e <= 5001), `${eastings[1]}`);
+});
+
+test('pathsBetween inside one segment of a multi-segment course is one path', () => {
+  const seg = ns => ns.map(([e, n]) => ({ lat: LAT0 + n / M_LAT, lon: e / M_LON, ele: 0 }));
+  const course = buildCourse({
+    segments: [seg([[0, 0], [1000, 0]]), seg([[4000, 0], [5000, 0]])],
+    waypoints: [], hasElevation: true
+  }, 'sha');
+
+  assert.equal(pathsBetween(course, 100, 900).length, 1);
+});
+
+test('a zero-length stretch stays in one place', () => {
+  // A forecast this confident is a dot, and the failure to guard against is the
+  // degenerate case quietly coming back as a line across the whole course.
+  const course = courseFrom([[0, 0], [1000, 0]]);
+  for (const paths of [pathsBetween(course, 500, 500), pathsBetween(course, NaN, NaN)]) {
+    for (const path of paths) {
+      assert.ok(path.every(p => p[0] === path[0][0] && p[1] === path[0][1]), `${path}`);
+    }
   }
 });
 

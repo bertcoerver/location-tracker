@@ -3,7 +3,7 @@
 
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
-import { courseHoverAt } from './course.js';
+import { courseHoverAt, pathsBetween, pointAt } from './course.js';
 import { interpolateAt } from './stats.js';
 import { escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
 import { latestOf, posOf } from './points.js';
@@ -263,6 +263,60 @@ export function hoverLayers(position) {
     // identity saying anything useful about it.
     updateTriggers: { getPosition: String(position) }
   })];
+}
+
+/**
+ * Where the runner probably is right now, on the map: a dot on the trace, and
+ * the stretch of trace the 80% range covers.
+ *
+ * The same mark the height strip carries, asking the same question of the same
+ * model — this view has an axis for a place on the course just as the strip does,
+ * so both can show it and they had better agree.
+ *
+ * The range is drawn as the route itself rather than as a band beside it, so
+ * "probably somewhere along here" is said in the only units a map has for it. It
+ * is wider than the 3 px route so it reads as a highlight of that route, and
+ * neither layer is pickable: `course-hit` underneath owns the tooltip, and two
+ * answers to one hover is a bug.
+ *
+ * @param {object|null} course
+ * @param {{along, lo, hi}|null} marker from `positionAt`
+ */
+export function forecastLayers(course, marker) {
+  if (!course || !marker) return [];
+
+  const ink = accent();
+  const at = pointAt(course, marker.along);
+
+  return [
+    new deck.PathLayer({
+      id: 'forecast-range',
+      data: pathsBetween(course, marker.lo, marker.hi),
+      getPath: p => p,
+      widthUnits: 'pixels',
+      getWidth: 6,
+      widthMinPixels: 4,
+      capRounded: true,
+      jointRounded: true,
+      getColor: [...ink, 150],
+      // The band slides along the course as the clock runs, so its contents
+      // change without the array identity saying anything about it.
+      updateTriggers: { getPath: `${marker.lo},${marker.hi}` }
+    }),
+
+    new deck.ScatterplotLayer({
+      id: 'forecast-now',
+      data: [[at.lon, at.lat]],
+      radiusUnits: 'pixels',
+      getPosition: p => p,
+      getRadius: 6,
+      // No ring, unlike the ping dots: a ring is what keeps a pile of
+      // overlapping measurements legible, and there is only ever one of these.
+      stroked: false,
+      getFillColor: [...ink, 255],
+      updateTriggers: { getPosition: String(marker.along) }
+    })
+  ];
 }
 
 /** Tooltip markup for one fix. Pure and DOM-free, so it's directly testable. */

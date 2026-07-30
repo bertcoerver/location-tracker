@@ -4,11 +4,12 @@
 import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
-  basemapLayer, courseLayers, hoverLayers, hoverTooltipHtml, makeTooltip, pointLayers,
-  tooltipHtml, waypointTooltipHtml
+  basemapLayer, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml, makeTooltip,
+  pointLayers, tooltipHtml, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
+import { positionAt } from './predict.js';
 import { interpolateAt } from './stats.js';
 
 /**
@@ -30,10 +31,12 @@ export function createMap(container, {
 } = {}) {
   let points = [];
   let course = null;
-  // The run's pace model, or null. Only ever read on the way into a tooltip —
-  // nothing on the map is DRAWN from it, because a forecast is a statement about
-  // time and this view's axes are both space.
+  // The run's pace model, or null, and where it says the runner is AT THIS
+  // MOMENT — `{ along, lo, hi }` in metres, from `positionAt`. A prediction of a
+  // TIME has no place on a view whose axes are both space, but a prediction of a
+  // place on the course does, and it is the same mark the height strip carries.
   let forecast = null;
+  let marker = null;
   let hover = null;      // [lon, lat] on the course, from the profile strip
   // The pinned point, from a click in either view. While one is held the map's
   // hover tooltip is suspended and the crosshair stops chasing the cursor.
@@ -70,8 +73,22 @@ export function createMap(container, {
       basemapLayer(),
       ...courseLayers(course, layerFlags.waypoints),
       ...pointLayers(points, pulse, layerFlags.raw),
+      ...forecastLayers(course, marker),
       ...hoverLayers(hover)
     ];
+  }
+
+  /**
+   * Recompute where the runner probably is. The strip's `refreshMarker` gates a
+   * redraw on it; here there is nothing to gate — `tick()` rebuilds the stack
+   * every frame regardless.
+   *
+   * `positionAt` gives null once the prediction has run off the end of the
+   * course, which is what takes the marker away when a run goes quiet: a phone
+   * that stopped reporting three days ago is not "probably at the finish line".
+   */
+  function refreshMarker() {
+    marker = course && forecast ? positionAt(forecast, Date.now()) : null;
   }
 
   /**
@@ -467,7 +484,7 @@ export function createMap(container, {
       // A distance along the old course means nothing on the new one — and a
       // pace model fitted against it means even less. `show()` supplies a fresh
       // one straight after, so this only closes the gap.
-      if (changed) { hover = null; forecast = null; }
+      if (changed) { hover = null; forecast = null; marker = null; }
 
       if (changed && next && follow) {
         const fit = fitView(points);
@@ -480,13 +497,24 @@ export function createMap(container, {
     },
 
     /**
-     * The run's pace model, or null. No render: nothing on this view is drawn
-     * from it, and the next tooltip reads the current value anyway.
+     * The run's pace model, or null. Drives the "probably here, now" marker and
+     * the ETAs in this view's own tooltips.
      *
      * @param {object|null} next from `buildForecast`.
      */
     setForecast(next) {
       forecast = next;
+      refreshMarker();
+      render();
+    },
+
+    /**
+     * Slide the marker along as the clock runs. Called once a second from
+     * main.js, beside the strip's, because it is the same mark on the same beat.
+     * No render — `tick()` paints it on the next frame.
+     */
+    tickForecast() {
+      refreshMarker();
     },
 
     /**

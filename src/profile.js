@@ -292,6 +292,28 @@ export function elevationAt(course, distance) {
 }
 
 /**
+ * The DRAWN height at a distance along the course.
+ *
+ * Read off the smoothed column series the skyline was actually stroked from,
+ * because the raw elevation there can be a couple of metres away from it — and a
+ * mark floating beside its own line looks like a bug. Everything that has to sit
+ * ON the terrain goes through this, so the crosshair's bead and the forecast
+ * marker can't end up on two different lines.
+ *
+ * `ridge` is indexed in PLOT columns, so the left margin comes off the x first,
+ * and the ends clamp: a distance at the very edge of the course rounds to a
+ * column just past the array.
+ *
+ * @param {ArrayLike<number>} ridge from `smooth(columns(...).max, ...)`
+ * @param {object} scale from `scaleFor`
+ * @param {number} along metres from the start of the course
+ */
+export function ridgeAt(ridge, scale, along) {
+  const column = Math.round(scale.x(along)) - scale.plotLeft;
+  return ridge[Math.min(ridge.length - 1, Math.max(0, column))];
+}
+
+/**
  * @param {HTMLElement} root  the `#profile` panel
  */
 export function createProfile(root, {
@@ -439,7 +461,7 @@ export function createProfile(root, {
     drawAxis(scale);
     if (layers.waypoints) drawWaypoints(scale);
     drawHover(scale, scale.floor, ridge);
-    drawForecast(scale);
+    drawForecast(scale, ridge);
     drawPoints(scale);
     placePin(scale);
   }
@@ -484,46 +506,56 @@ export function createProfile(root, {
    * has one for a place, so the marker asks "where is he NOW" instead — the same
    * model, inverted by `positionAt`.
    *
-   * It sits just above the axis rather than up by the skyline, where the ping
-   * dots and the waypoint labels already live. Down there it is unmistakably a
-   * different kind of mark from a measurement, which is the point: everything
-   * else on this strip happened, and this has not.
+   * Both the dot and the range ride the terrain itself — the range is drawn over
+   * the skyline for its whole span, so what it marks is the stretch of profile
+   * the runner is probably somewhere on. A flat bar in the axis gutter was using
+   * this chart's x-axis while sitting nowhere on its chart.
+   *
+   * The dot has no ring, unlike the ping dots: a ring is what keeps a pile of
+   * overlapping measurements legible as separate marks, and there is only ever
+   * one of these.
+   *
+   * @param {object} scale from `scaleFor`
+   * @param {ArrayLike<number>} ridge the smoothed series the skyline was drawn
+   *   from, so the marker lands ON the line rather than near it.
    */
-  function drawForecast(scale) {
+  function drawForecast(scale, ridge) {
     if (!marker) return;
 
     const ink = accent();
-    const y = scale.floor - 7;
-    const x = scale.x(marker.along);
-    const lo = scale.x(marker.lo);
-    const hi = scale.x(marker.hi);
+    const left = scale.plotLeft;
+    // Plot columns, since that is what `ridge` is indexed in. At least one column
+    // wide: a band this narrow is a very confident forecast, not an absent one.
+    const from = Math.max(0, Math.min(ridge.length - 1, Math.round(scale.x(marker.lo)) - left));
+    const to = Math.max(from + 1, Math.min(ridge.length, Math.round(scale.x(marker.hi)) - left));
 
-    ctx.strokeStyle = `rgba(${ink.join(',')}, 0.55)`;
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(${ink.join(',')}, 0.7)`;
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(lo, y);
-    ctx.lineTo(hi, y);
+    for (let i = from; i < to; i++) {
+      const y = scale.y(ridge[i]);
+      if (i === from) ctx.moveTo(left + i + 0.5, y); else ctx.lineTo(left + i + 0.5, y);
+    }
     ctx.stroke();
+    ctx.lineCap = 'butt';
 
-    // End caps, so the bar reads as a bounded range rather than a line that ran
-    // out of room.
+    // End caps, so the range reads as bounded rather than as a line that ran out
+    // of room. Hung off the terrain at each end, like everything else here.
     ctx.lineWidth = 1.5;
-    for (const cap of [lo, hi]) {
+    for (const cap of [from, to - 1]) {
+      const y = scale.y(ridge[cap]);
       ctx.beginPath();
-      ctx.moveTo(Math.round(cap) + 0.5, y - 3.5);
-      ctx.lineTo(Math.round(cap) + 0.5, y + 3.5);
+      ctx.moveTo(left + cap + 0.5, y - 4.5);
+      ctx.lineTo(left + cap + 0.5, y + 4.5);
       ctx.stroke();
     }
 
-    // A ring in the page's own background colour, so the dot stays legible where
-    // it overlaps its own bar.
     ctx.beginPath();
-    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.arc(scale.x(marker.along), scale.y(ridgeAt(ridge, scale, marker.along)), 4, 0, Math.PI * 2);
     ctx.fillStyle = `rgb(${ink.join(',')})`;
     ctx.fill();
-    ctx.strokeStyle = `rgb(${surface().join(',')})`;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
   }
 
   /**
@@ -699,14 +731,10 @@ export function createProfile(root, {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // A bead where the crosshair meets the terrain, read off the SMOOTHED series
-    // the line was actually drawn from — the raw elevation there can be a couple
-    // of metres away, and a bead floating beside its own line looks like a bug.
-    // `ridge` is indexed in PLOT columns, so the left margin comes off first.
-    const column = Math.round(scale.x(hover)) - scale.plotLeft;
-    const ele = ridge[Math.min(ridge.length - 1, Math.max(0, column))];
+    // A bead where the crosshair meets the terrain — see `ridgeAt` for why it is
+    // read off the smoothed series rather than from the elevation there.
     ctx.beginPath();
-    ctx.arc(x, scale.y(ele), 3, 0, Math.PI * 2);
+    ctx.arc(x, scale.y(ridgeAt(ridge, scale, hover)), 3, 0, Math.PI * 2);
     ctx.fillStyle = ink;
     ctx.fill();
   }

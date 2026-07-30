@@ -330,10 +330,11 @@ setInterval(() => ui.refreshRelativeTime(), 15000);
 // The elapsed clock separately, and faster: a seconds display that only moves
 // every 15 s is a broken clock, and running the 15 s job at 1 Hz would rebuild
 // the run picker sixty times a minute to no purpose.
-// The strip's "probably here, now" marker rides the same beat: it is the other
-// thing on screen that moves without any data having arrived. It redraws only
-// when it has actually shifted a pixel, so most of these ticks cost nothing.
-setInterval(() => { ui.tickClock(); profile.tickForecast(); }, 1000);
+// The "probably here, now" marker rides the same beat, in both views: it is the
+// other thing on screen that moves without any data having arrived. The strip
+// redraws only when it has actually shifted a pixel, and the map repaints every
+// frame anyway, so most of these ticks cost nothing.
+setInterval(() => { ui.tickClock(); profile.tickForecast(); map.tickForecast(); }, 1000);
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNow(); });
 addEventListener('focus', refreshNow);
