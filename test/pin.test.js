@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { clampLeft, same } from '../src/pin.js';
+import { clampLeft, clampTop, same } from '../src/pin.js';
 
 // --- staying on screen --------------------------------------------------------
 
@@ -26,6 +26,31 @@ test('clampLeft pins a tooltip wider than the window to the left margin', () => 
 
 test('clampLeft takes the margin as an argument rather than baking it in', () => {
   assert.equal(clampLeft(0, 100, 1000, 20), 20);
+});
+
+// --- and staying above the thing it describes ----------------------------------
+
+test('clampTop puts the tooltip above the point, with room for the marker', () => {
+  assert.equal(clampTop(500, 80), 500 - 80 - 14);
+});
+
+test('clampTop keeps the tooltip out of the top of the window', () => {
+  assert.equal(clampTop(20, 80), 8);
+});
+
+test('clampTop lifts the tooltip clear of a ceiling', () => {
+  // The height strip's case: a point down in a valley sits low in the band, and
+  // "above the point" for that one is still on top of the terrain. Given the top
+  // of the strip, the tooltip's BOTTOM edge lands there instead.
+  const ceiling = 900;
+  assert.equal(clampTop(980, 80), 980 - 80 - 14, 'no ceiling, no change');
+  assert.equal(clampTop(980, 80, ceiling), ceiling - 80);
+});
+
+test('clampTop leaves a point already above the ceiling where it was', () => {
+  // A point up by the skyline clears the strip on its own; the ceiling must not
+  // push it back DOWN towards it.
+  assert.equal(clampTop(860, 80, 900), 860 - 80 - 14);
 });
 
 // --- what counts as the same point --------------------------------------------

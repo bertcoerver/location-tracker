@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { buildCourse } from '../src/course.js';
 import {
-  axisTicks, columns, elevationAt, hitTest, scaleFor, smooth, stripWidth, tickLabel
+  axisTicks, centerScrollLeft, columns, elevationAt, hitTest, scaleFor, smooth, stripWidth,
+  tickLabel
 } from '../src/profile.js';
 
 const LAT0 = 46.5;
@@ -44,6 +45,24 @@ test('no course, or one of no length, still asks for the minimum', () => {
   assert.equal(stripWidth(null), CONFIG.profileMinWidth);
   assert.equal(stripWidth(undefined), CONFIG.profileMinWidth);
   assert.equal(stripWidth({ length: 0 }), CONFIG.profileMinWidth);
+});
+
+// --- scrolling a place into the middle of the strip ----------------------------
+
+test('centerScrollLeft puts the point in the middle of the viewport', () => {
+  assert.equal(centerScrollLeft(1000, 400, 3000), 800);
+});
+
+test('centerScrollLeft does not scroll past either end', () => {
+  // The first and last kilometres of a course cannot be centred, and trying is
+  // how you get blank canvas beside the start line.
+  assert.equal(centerScrollLeft(50, 400, 3000), 0);
+  assert.equal(centerScrollLeft(2950, 400, 3000), 3000 - 400);
+});
+
+test('centerScrollLeft has nowhere to go on a strip that fits', () => {
+  assert.equal(centerScrollLeft(300, 800, 640), 0);
+  assert.equal(centerScrollLeft(300, 640, 640), 0);
 });
 
 test('columns produces exactly one min/max pair per pixel', () => {

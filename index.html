@@ -70,6 +70,15 @@
      map underneath looking like a map rather than like fog. */
   .panel {
     position: fixed;
+    /* Nothing in either panel is prose. Every press on one is aimed at a control
+       or at the chart, and on iOS an unclaimed press instead starts a text
+       selection: the magnifying lens comes up and Safari highlights whatever
+       word it can reach — reliably "points", from the toggle in the status box,
+       while the finger was on the height strip entirely. The tooltips opt back
+       in below, since the numbers in those are worth copying. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
     background: var(--surface-2);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -277,10 +286,15 @@
     line-height: 1;
     color: var(--text-muted);
     pointer-events: none;
-    opacity: 0;
+    /* Always there, and faint. It used to appear only on hover, which on a phone
+       means never — the picker was invisible, and a control nobody can find is
+       the same as one that doesn't exist. At this weight it reads as a hint next
+       to a 20 px heading rather than as a widget attached to it, and pointing at
+       it still brings it up to full strength. */
+    opacity: .4;
     transition: opacity .15s;
   }
-  #title:hover::after, #title:focus-within::after { opacity: .7; }
+  #title:hover::after, #title:focus-within::after { opacity: .85; }
   /* One run is not a choice: no chevron, no hover border, nothing to promise. */
   #title[data-single="true"]::after { content: none; }
   #title[data-single="true"] #run:hover { border-color: transparent; background: transparent; }
@@ -379,6 +393,10 @@
 
   .tip {
     font: inherit;
+    /* Opting back in: a tooltip is the one thing on screen with numbers in it
+       somebody might want to copy. */
+    -webkit-user-select: text;
+    user-select: text;
     padding: 9px 11px !important;
     border-radius: 9px !important;
     background: var(--surface-2) !important;

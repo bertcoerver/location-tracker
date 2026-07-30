@@ -30,6 +30,25 @@ const PAD_RIGHT = 14;
 const HIT_RADIUS = 14;
 
 /**
+ * How far a press has to travel before it counts as a drag rather than a tap.
+ *
+ * A finger held still on a screen still reports movement, and every pixel of
+ * that used to be a drag — which swallowed the click that puts a pinned point
+ * down, so on a phone a point could be pinned and then never dismissed by
+ * tapping it again.
+ */
+const DRAG_SLOP_PX = 4;
+
+/**
+ * How long after a tap has been dealt with a `click` is still assumed to belong
+ * to that same tap rather than to a new one.
+ *
+ * A synthesised click follows its touch within a frame or two; nobody taps the
+ * same strip twice inside a quarter of a second.
+ */
+const GHOST_CLICK_MS = 250;
+
+/**
  * How far the "probably here, now" marker has to slide before the strip is
  * redrawn for it. Below half a pixel nothing on the screen would change, and the
  * clock asks once a second forever.
@@ -161,6 +180,20 @@ export function hitTest(points, course, scale, px, py, radius = HIT_RADIUS) {
 export function stripWidth(course) {
   if (!course?.length) return CONFIG.profileMinWidth;
   return Math.max(CONFIG.profileMinWidth, (course.length / 1000) * CONFIG.profilePxPerKm);
+}
+
+/**
+ * Where to scroll a strip of `contentWidth` so that `x` lands in the middle of
+ * the `viewportWidth` on screen.
+ *
+ * Pure, because "centred, but not past either end" is the whole of the rule and
+ * the off-by-a-viewport version of it is invisible until a course is long enough
+ * to need it. A strip that fits has nowhere to go: 0.
+ */
+export function centerScrollLeft(x, viewportWidth, contentWidth) {
+  const max = contentWidth - viewportWidth;
+  if (!(max > 0)) return 0;
+  return Math.max(0, Math.min(max, x - viewportWidth / 2));
 }
 
 /**
@@ -302,6 +335,12 @@ export function createProfile(root, {
   // goes nowhere is not a drag, it is the click that puts it down, and swallowing
   // that would take the toggle away from every pinned point on the strip.
   let justDragged = false;
+  // Where the current drag was pressed, so `justDragged` can be about real
+  // movement rather than about a fingertip's worth of noise. See `DRAG_SLOP_PX`.
+  let dragFromX = 0;
+  // Until when a `click` is to be read as the tail of a tap `endDrag` has already
+  // answered, rather than as a new one. See `GHOST_CLICK_MS`.
+  let ghostUntil = 0;
   // Which optional layers the panel's toggles have switched on. The waypoint
   // one governs both views, so a feed station is either shown in both or in
   // neither rather than only on the map.
@@ -521,8 +560,30 @@ export function createProfile(root, {
     const rect = canvas.getBoundingClientRect();
     pin.place(
       rect.left + scale.x(selection.along),
-      rect.top + scale.y(elevationAt(course, selection.along))
+      rect.top + scale.y(elevationAt(course, selection.along)),
+      // Clear of the strip, not merely clear of the point. A point in a valley
+      // sits low in the band, and "above the point" for that one is on top of
+      // the terrain — the tooltip covering the chart it is describing.
+      root.getBoundingClientRect().top - 8
     );
+  }
+
+  /**
+   * Pan the strip so a distance along the course sits in the middle of it.
+   *
+   * Instant rather than smooth: this also runs from a drag on the map, once per
+   * pointermove, and a smooth scroll would spend every frame animating towards a
+   * target that has already moved.
+   *
+   * @param {number} along metres along the course.
+   */
+  function centerOn(along) {
+    if (!visible()) return;
+    const scale = scaleFor(course, canvas.clientWidth, canvas.clientHeight);
+    scroller.scrollLeft = centerScrollLeft(
+      scale.x(along), scroller.clientWidth, canvas.clientWidth
+    );
+    syncFades();
   }
 
   /**
@@ -727,7 +788,7 @@ export function createProfile(root, {
     // same function the hover and click paths use, so a scrub passing over a
     // ping shows that ping rather than the ground beneath it.
     if (dragging) {
-      justDragged = true;
+      if (Math.abs(event.clientX - dragFromX) > DRAG_SLOP_PX) justDragged = true;
       const at = readAt(event.clientX, event.clientY);
       onScrub({ view: 'profile', html: at.html, lat: at.lat, lon: at.lon, along: at.along });
       return;
@@ -739,7 +800,7 @@ export function createProfile(root, {
     // else on this strip can be dragged and there would otherwise be no hint.
     if (selection) {
       const near = grabDistance(event.clientX);
-      canvas.style.cursor = near !== null && near <= CONFIG.dragGrabPx ? 'grab' : '';
+      canvas.style.cursor = near !== null && near <= grabRadius(event) ? 'grab' : '';
       return;
     }
     canvas.style.cursor = '';
@@ -752,13 +813,21 @@ export function createProfile(root, {
     draw();
   });
 
+  /**
+   * How close this pointer has to get. A thumb gets a much wider band than a
+   * mouse — see `dragGrabTouchPx`.
+   */
+  const grabRadius = event =>
+    event.pointerType === 'mouse' ? CONFIG.dragGrabPx : CONFIG.dragGrabTouchPx;
+
   /** Pick the pinned point up, if that is what this press is aimed at. */
   canvas.addEventListener('pointerdown', event => {
     const near = grabDistance(event.clientX);
-    if (near === null || near > CONFIG.dragGrabPx) return;
+    if (near === null || near > grabRadius(event)) return;
 
     dragging = true;
     justDragged = false;
+    dragFromX = event.clientX;
     root.dataset.dragging = 'true';
     // So the gesture keeps arriving here even when the pointer runs off the
     // canvas, which on a 112 px strip is most drags.
@@ -767,16 +836,66 @@ export function createProfile(root, {
     event.preventDefault();
   });
 
-  function endDrag(event) {
+  /**
+   * The same press, again, as a touch — and this is what actually makes dragging
+   * work on a phone.
+   *
+   * `pointerdown` above cannot win the gesture on iOS. Safari decides on the
+   * first touchmove whether the finger is scrolling the strip, and when it says
+   * yes it fires `pointercancel` and the drag is over before it moved. Only
+   * cancelling the touch takes that decision away from it. `touch-action: none`
+   * is the declarative version and is not enough here: it is read when the
+   * gesture starts, so setting it in `pointerdown` — one event too late — is a
+   * race we lose about half the time.
+   *
+   * Cancelling the touch also stops the OTHER thing Safari does with an
+   * unclaimed press on a canvas: start a text selection, which brings up the
+   * magnifying lens and highlights whatever text it can find nearby.
+   *
+   * Pointer events fire before their touch counterparts, so `dragging` is
+   * already the answer to "was that press aimed at the pinned point".
+   */
+  canvas.addEventListener('touchstart', event => {
+    if (dragging && event.cancelable) event.preventDefault();
+  }, { passive: false });
+
+  /**
+   * @param {PointerEvent} event
+   * @param {boolean} released whether the finger was actually lifted. A gesture
+   *   the SYSTEM took away — a cancel — is not a tap, and must not be read as
+   *   one: an interrupted press would otherwise put the pinned point down.
+   */
+  function endDrag(event, released = false) {
     if (!dragging) return;
     dragging = false;
     delete root.dataset.dragging;
     canvas.style.cursor = 'grab';
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+
+    // On touch there is no click coming — cancelling the touchstart above is
+    // exactly what stops Safari synthesising one — so both of the click
+    // handler's jobs have to be done here instead.
+    //
+    // A touch that went nowhere is the tap that puts the point down. Handing the
+    // CURRENT selection back to `onSelect` is how: `same()` matches it against
+    // itself and main.js reads that as a dismissal, so there is still one rule
+    // in the codebase about what putting a point down means. Same reasoning as
+    // map.js, for the same reason — a press we took off the browser.
+    //
+    // And a touch that DID drag has no click to swallow, so the `justDragged`
+    // latch is cleared here rather than left armed for the next tap.
+    if (event.pointerType !== 'mouse') {
+      const tapped = released && !justDragged;
+      justDragged = false;
+      // Should a click arrive after all — the spec says it won't, Safari has
+      // been known to disagree — it must not be read as a new one.
+      ghostUntil = Date.now() + GHOST_CLICK_MS;
+      if (tapped) onSelect(selection);
+    }
   }
 
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerup', event => endDrag(event, true));
+  canvas.addEventListener('pointercancel', event => endDrag(event));
 
   /**
    * Pin what's under the cursor. Every click on the strip selects something —
@@ -786,6 +905,11 @@ export function createProfile(root, {
    */
   canvas.addEventListener('click', event => {
     if (!visible()) return;
+    // A compatibility click for a tap `endDrag` has already answered.
+    if (Date.now() < ghostUntil) {
+      ghostUntil = 0;
+      return;
+    }
     // The click that ends a drag is the release, not a new choice. Swallow it
     // once — letting it through would toggle off the point just dragged.
     if (justDragged) {
@@ -918,6 +1042,12 @@ export function createProfile(root, {
       hover = selection.along;
       // Only this view's own selections get a tooltip here; the map owns its.
       if (selection.view === 'profile') pin.show(selection.html);
+      // A point picked on the MAP is very often off the visible end of the strip
+      // — that is the whole problem with two views of one course on a phone — so
+      // bring it into the middle. Not for this view's own selections: the point
+      // is already under the finger that chose it, and re-centring mid-drag pans
+      // the canvas out from under that finger.
+      if (selection.view === 'map' && selection.along !== null) centerOn(selection.along);
       draw();
     },
 
@@ -944,17 +1074,16 @@ export function createProfile(root, {
     /**
      * Keep the newest ping in view on a narrow screen, where the strip is wider
      * than the window and most of the course is off to one side.
+     *
+     * A pinned point outranks it. This is called on every paint, so a poll
+     * landing while someone is reading a point 40 km back would otherwise pan
+     * the strip out from under them.
      */
     scrollToLatest() {
-      if (!visible()) return;
+      if (!visible() || selection) return;
       const latest = latestOf(points);
       if (!latest?.snap) return;
-
-      const scale = scaleFor(course, canvas.clientWidth, canvas.clientHeight);
-      const target = scale.x(latest.snap.along) - scroller.clientWidth / 2;
-      const max = canvas.clientWidth - scroller.clientWidth;
-      if (max > 0) scroller.scrollLeft = Math.max(0, Math.min(max, target));
-      syncFades();
+      centerOn(latest.snap.along);
     }
   };
 }

@@ -43,6 +43,30 @@ export function clampLeft(clientX, tipWidth, windowWidth, margin = 8) {
 }
 
 /**
+ * Where to put a tooltip of this height so it sits above the point it describes
+ * — and, when a `ceiling` is given, entirely above that line as well.
+ *
+ * The ceiling is what the height strip needs. A pinned point on the strip is
+ * somewhere inside a 112 px band, and "above the point" for one down in a valley
+ * is still on top of the terrain: the tooltip covers the very chart it is
+ * describing. Passing the top of the strip as the ceiling lifts it clear
+ * regardless of how high the point itself sits.
+ *
+ * Pure, and the counterpart of `clampLeft` — the two together are the whole of
+ * where a tooltip goes.
+ *
+ * @param {number} clientY the point being described
+ * @param {number} tipHeight
+ * @param {number} [ceiling] the lowest the tooltip's BOTTOM edge may reach
+ * @param {number} [gap] clearance between the tooltip and the point
+ * @param {number} [margin] how close to the top of the window it may get
+ */
+export function clampTop(clientY, tipHeight, ceiling = Infinity, gap = 14, margin = 8) {
+  const above = Math.min(clientY - gap, ceiling) - tipHeight;
+  return Math.max(margin, above);
+}
+
+/**
  * Whether two selections point at the same thing.
  *
  * This is what makes a click a toggle: clicking a point you have already pinned
@@ -78,8 +102,11 @@ export function createPin(element = document.getElementById('pin')) {
      * An anchor that has left the window takes the pin with it rather than
      * leaving it stuck to the edge: a tooltip pointing at nothing is worse than
      * no tooltip, and the map can be panned anywhere.
+     *
+     * @param {number} [ceiling] the lowest the pin's bottom edge may reach; the
+     *   height strip passes its own top so the pin can't land on the chart.
      */
-    place(clientX, clientY) {
+    place(clientX, clientY, ceiling) {
       if (clientX < 0 || clientY < 0 || clientX > innerWidth || clientY > innerHeight) {
         element.style.visibility = 'hidden';
         return;
@@ -87,7 +114,7 @@ export function createPin(element = document.getElementById('pin')) {
       element.style.visibility = '';
       element.style.left = `${clampLeft(clientX, element.offsetWidth, innerWidth)}px`;
       // Above the point, with room for the marker underneath it.
-      element.style.top = `${Math.max(8, clientY - element.offsetHeight - 14)}px`;
+      element.style.top = `${clampTop(clientY, element.offsetHeight, ceiling)}px`;
     },
 
     hide() {

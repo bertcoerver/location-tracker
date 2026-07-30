@@ -72,6 +72,13 @@ export const CONFIG = {
   // is aim rather than search — and a generous radius on the map would start
   // stealing pans from the camera.
   dragGrabPx: 22,
+  // The same question for a thumb, on the height strip. A finger has no cursor
+  // to aim with and no hover to tell it when it is close enough, and the strip's
+  // crosshair is one pixel wide — at 22 px most presses missed it and panned the
+  // strip instead. Only the strip uses this: there the band is horizontal-only
+  // and there is nothing else to press, whereas on the map a radius this wide
+  // would start stealing pans from the camera.
+  dragGrabTouchPx: 40,
 
   // --- forecasting the rest of the course ----------------------------------
   // See [predict.js](./predict.js). The model is fitted from ONE run's own
