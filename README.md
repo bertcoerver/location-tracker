@@ -681,7 +681,7 @@ src/
   stats.js          per-ping time, distance and climb, and interpolating a hovered spot
   predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
-  map.js            deck.gl globe view, camera, follow-latest behaviour
+  map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
   colors.js         reads the CSS colour tokens
@@ -856,46 +856,6 @@ The snapping tests state the two claims worth stating out loud — that a finish
 the course end even from **beyond** the 500 m threshold, where the identical fix without the
 flag snaps nowhere at all, and that on a closed loop it resolves to the end rather than the
 start, which is the ambiguity the whole cost function exists to fight.
-
-## A note on the globe
-
-The view is deck.gl's `GlobeView`, not a flat `MapView`, because the zoomed-out state now has
-something in it: the other runs are dots scattered over a planet rather than over a Mercator sheet
-stretched to nothing at the poles. Three things about it are worth writing down, all of them
-verified against the 9.3.7 bundle rather than assumed:
-
-- **It is exported as `deck._GlobeView`**, underscore-prefixed — still flagged experimental in
-  9.3.7. Same for `_GlobeController` and `_GlobeViewport`.
-- **`GlobeView.getViewportType()` hands back a plain `WebMercatorViewport` above zoom 12** and a
-  `GlobeViewport` below it. So at every zoom where a course is on screen the projection is exactly
-  what it always was, and the sphere only appears in the overview. Zoom is continuous across that
-  switch, since the globe viewport applies its own `log2(π·cos(lat))` offset internally — nothing in
-  `fitView` has to convert between the two conventions. `fitView` keeps using
-  `WebMercatorViewport.fitBounds` as pure arithmetic, which is both necessary (`GlobeViewport` has
-  no `fitBounds`) and correct (a course-sized box always fits above zoom 12).
-- **`Deck._getViews()` copies the top-level `controller` prop onto the first view, and skips the
-  copy when it is falsy.** With one long-lived view instance that mutation *persists*, so
-  `setProps({ controller: false })` would set the flag once and never be able to clear it — silently
-  killing the drag-a-pinned-point gesture, which works by taking the camera away for the duration.
-  So the controller is declared *on* the view and switching it means handing over a fresh instance;
-  `map.js` has a `globeView(controller)` factory for exactly that, and nothing passes a top-level
-  `controller` prop at all.
-
-Two smaller consequences. The basemap's custom `renderSubLayers` has to set
-`_imageCoordinateSystem: COORDINATE_SYSTEM.CARTESIAN` on its `BitmapLayer`. That prop says which
-space the *image* is evenly spaced in, not which space the tile is drawn in: these are web-mercator
-(EPSG:3857) tiles, so a row of pixels is a row of constant mercator y and **not** of constant
-latitude. On a flat map the distinction is invisible, since the viewport is already mercator and
-neither setting converts anything. On a globe it is very visible — `LNGLAT` (which is for EPSG:4326
-sources) stretches each tile's image linearly in latitude, so it lands increasingly wrong towards
-the tile's top and bottom edges, neighbouring tiles disagree along the seam they share, and the
-four-way corners tear open into holes. Nothing else is needed for the sphere itself: `BitmapLayer`
-subdivides its mesh whenever the viewport has a `resolution`, which is deck's marker for a globe.
-
-And `map.js` asks deck for the live viewport
-(`deckgl.getViewports()[0]`) instead of rebuilding one from the view state, because below zoom 12 a
-hand-made `WebMercatorViewport` would answer for a different planet and put pinned tooltips and the
-drag gesture in the wrong place.
 
 ## A note on waypoint labels
 

@@ -4,8 +4,8 @@
 import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
-  backgroundLayer, basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers,
-  hoverTooltipHtml, makeTooltip, pointLayers, tooltipHtml, waypointTooltipHtml
+  basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
+  makeTooltip, pointLayers, tooltipHtml, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
@@ -22,31 +22,6 @@ import { interpolateAt } from './stats.js';
 const withoutTransition = ({
   transitionDuration, transitionInterpolator, onTransitionEnd, onTransitionInterrupt, ...rest
 }) => rest;
-
-/**
- * The view. A globe rather than a flat map, which is what makes the world-scale
- * state worth looking at: the other runs are dots scattered over a planet instead
- * of over a Mercator sheet stretched to nothing at the poles.
- *
- * It costs less than it sounds like. deck's `GlobeView.getViewportType()` hands
- * back a plain `WebMercatorViewport` above zoom 12 and a `GlobeViewport` below it,
- * so at every zoom where a course is on screen the projection is exactly what it
- * has always been, and the sphere only appears in the overview. Zoom is
- * continuous across that switch — the globe viewport applies its own offset
- * internally — so nothing here has to convert between the two.
- *
- * A FUNCTION, not a constant, and that is load-bearing. `Deck._getViews()` copies
- * the top-level `controller` prop onto the first view and skips the copy when it
- * is falsy, so with one long-lived view instance `setProps({ controller: false })`
- * would set the flag once and then never be able to clear it — silently killing
- * the drag-along-the-course gesture, which works by taking the camera away for
- * the duration. So the controller is declared ON the view, and switching it means
- * handing over a fresh one.
- *
- * `_GlobeView` really is the name: deck.gl 9.3.7 still exports it underscored as
- * experimental.
- */
-const globeView = controller => new deck._GlobeView({ id: 'globe', controller });
 
 export function createMap(container, {
   onFollowChange = () => {},
@@ -103,7 +78,6 @@ export function createMap(container, {
   /** The whole stack, in draw order. One place, so nothing can disagree. */
   function allLayers() {
     return [
-      backgroundLayer(),
       basemapLayer(),
       // Under the course and the pings, deliberately: another race is context for
       // this one, and nothing about it may sit on top of the reading.
@@ -192,11 +166,10 @@ export function createMap(container, {
   /**
    * The current camera as a viewport, for going between coordinates and pixels.
    *
-   * Asked of deck rather than rebuilt from `viewState`, and that matters now the
-   * view is a globe: below zoom 12 the projection is a `GlobeViewport` and a
-   * hand-made `WebMercatorViewport` would quietly answer for a different planet —
-   * putting pinned tooltips and the drag gesture in the wrong place. deck knows
-   * which class it is using, so ask it.
+   * Asked of deck rather than rebuilt from `viewState`, so there is one camera in
+   * this file rather than a copy of it reconstructed at every call site — and so
+   * that what a pixel is measured against is the same projection that drew the
+   * frame, including mid-flight.
    *
    * `viewport` is null until deck has laid out once. Every caller has to cope:
    * there is genuinely no answer yet.
@@ -218,12 +191,6 @@ export function createMap(container, {
    */
   function placePin() {
     if (selection?.view !== 'map') return;
-    // Zoomed out this far the anchor can be on the FAR SIDE of the globe, which
-    // projects to a mirrored pixel on the near side — a tooltip pointing at the
-    // wrong ocean. Nothing is ever pinned from up here (a pin comes from clicking
-    // a point on a course, which means being zoomed into one), so there is nothing
-    // to lose by declining to place it.
-    if (viewState.zoom < 8) return pin.conceal();
     const { rect, viewport: view } = viewport();
     if (!view) return;
     const [x, y] = view.project([selection.lon, selection.lat]);
@@ -252,10 +219,8 @@ export function createMap(container, {
   const deckgl = new deck.DeckGL({
     container,
     viewState,
-    // The controller rides on the view rather than being a prop of its own — see
-    // `globeView` for why it has to.
-    views: globeView(true),
-    layers: [backgroundLayer(), basemapLayer()],
+    controller: true,
+    layers: [basemapLayer()],
     getTooltip: makeTooltip(
       () => points, () => course, () => Boolean(selection) || touchInput, () => forecast),
 
@@ -373,10 +338,7 @@ export function createMap(container, {
     dragging = true;
     dragMoved = false;
     dragAlong = selection.along;
-    // A fresh view with the controller off, rather than a `controller: false`
-    // prop — see `globeView`. `render()` never passes `views`, so this stands
-    // until `endDrag` hands the camera back.
-    deckgl.setProps({ views: globeView(false) });
+    deckgl.setProps({ controller: false });
     container.setPointerCapture(event.pointerId);
     event.stopPropagation();
     event.preventDefault();
@@ -386,17 +348,12 @@ export function createMap(container, {
     if (!dragging) return;
     dragMoved = true;
     const { rect, viewport: view } = viewport();
-    const [lon, lat] = view
-      ? view.unproject([event.clientX - rect.left, event.clientY - rect.top])
-      : [NaN, NaN];
+    if (!view) return;
+    const [lon, lat] = view.unproject([
+      event.clientX - rect.left, event.clientY - rect.top
+    ]);
 
-    // Where the pointer is only ever MOVES the marker; it can't take it away. A
-    // coordinate that isn't one — off the globe entirely, which a sphere makes
-    // possible — leaves the last good distance standing, exactly as dragging off
-    // the route into a field does.
-    const along = Number.isFinite(lon) && Number.isFinite(lat)
-      ? courseHoverAt(course, lon, lat)
-      : null;
+    const along = courseHoverAt(course, lon, lat);
     if (along !== null) dragAlong = along;
     onScrub(atAlong(dragAlong));
     event.stopPropagation();
@@ -405,7 +362,7 @@ export function createMap(container, {
   function endDrag(event) {
     if (!dragging) return;
     dragging = false;
-    deckgl.setProps({ views: globeView(true) });
+    deckgl.setProps({ controller: true });
     if (container.hasPointerCapture(event.pointerId)) {
       container.releasePointerCapture(event.pointerId);
     }
@@ -530,12 +487,6 @@ export function createMap(container, {
 
     let fit = null;
     try {
-      // A `WebMercatorViewport` even though the view is a globe, because this is
-      // arithmetic and not a projection: `fitBounds` is the only thing being used
-      // and `GlobeViewport` hasn't got one. It is also exactly right here — a
-      // course-sized box always fits above zoom 12, which is where deck hands out
-      // a Mercator viewport anyway.
-      //
       // The profile strip covers the bottom of the window, so the fit has to
       // clear it or the start of the course hides behind it.
       fit = new deck.WebMercatorViewport(base).fitBounds(bounds, {

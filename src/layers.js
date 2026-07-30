@@ -9,28 +9,6 @@ import { interpolateAt } from './stats.js';
 import { ago, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
 import { latestOf, posOf } from './points.js';
 
-/**
- * The planet itself, under the tiles.
- *
- * On a flat map this would be invisible — the tiles cover the viewport and
- * nothing shows through. On a globe there is a sphere with an edge, and without
- * this it is transparent wherever a tile hasn't arrived yet: you see stars
- * through the Atlantic while it loads. In the page's own surface colour, so the
- * unloaded parts read as paper rather than as holes.
- */
-export function backgroundLayer() {
-  return new deck.SolidPolygonLayer({
-    id: 'background',
-    // Three vertices along each of the top and bottom edges rather than two: a
-    // polygon spanning 360° of longitude in one step has no defined way round
-    // the sphere, and the midpoints are what pin it to the long way.
-    data: [[[-180, 90], [0, 90], [180, 90], [180, -90], [0, -90], [-180, -90]]],
-    getPolygon: p => p,
-    stroked: false,
-    getFillColor: [...surface(), 255]
-  });
-}
-
 /** Keyless CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
   const style = prefersDark() ? 'dark_all' : 'light_all';
@@ -47,25 +25,7 @@ export function basemapLayer() {
       return new deck.BitmapLayer(props, {
         data: null,
         image: props.data,
-        bounds: [boundingBox[0][0], boundingBox[0][1], boundingBox[1][0], boundingBox[1][1]],
-        // Which space the IMAGE is evenly spaced in — not which space the tile is
-        // drawn in. These are web-mercator (EPSG:3857) tiles, so a row of pixels
-        // is a row of constant mercator y, NOT of constant latitude; `CARTESIAN`
-        // is what tells the shader to sample it that way. deck only asks for
-        // `LNGLAT` for an EPSG:4326 source, which this is not.
-        //
-        // On a flat map the distinction is invisible, because the viewport is
-        // already mercator and no conversion happens either way. On a globe it is
-        // very visible: with `LNGLAT` each tile's image is stretched linearly in
-        // latitude, so it lands increasingly wrong towards the tile's top and
-        // bottom edges, neighbouring tiles disagree along the seam they share, and
-        // the four-way corners tear open into holes.
-        //
-        // Getting this right is also all that is needed for the sphere itself:
-        // `BitmapLayer` subdivides its mesh whenever the viewport has a
-        // `resolution` — which is deck's marker for a globe — so the quad follows
-        // the curve without being asked to.
-        _imageCoordinateSystem: deck.COORDINATE_SYSTEM.CARTESIAN
+        bounds: [boundingBox[0][0], boundingBox[0][1], boundingBox[1][0], boundingBox[1][1]]
       });
     }
   });
