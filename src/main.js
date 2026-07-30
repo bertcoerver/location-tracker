@@ -87,7 +87,9 @@ function select(next) {
  */
 function scrub(next) {
   selection = next;
-  map.setSelection(selection);
+  // `false`: the camera follows a point dragged on the strip, and it has to keep
+  // up with the finger rather than setting off on a flight per pointermove.
+  map.setSelection(selection, false);
   profile.setSelection(selection);
 }
 

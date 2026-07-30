@@ -11,6 +11,17 @@ import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
 import { interpolateAt } from './stats.js';
 
+/**
+ * A view state with any in-flight transition props stripped off.
+ *
+ * They have to come off before the state is reused as a plain camera position:
+ * deck reads them on every controlled value it is handed, so a state left
+ * carrying them re-animates a move that was meant to be instant.
+ */
+const withoutTransition = ({
+  transitionDuration, transitionInterpolator, onTransitionEnd, onTransitionInterrupt, ...rest
+}) => rest;
+
 export function createMap(container, {
   onFollowChange = () => {},
   onCourseHover = () => {},
@@ -330,9 +341,7 @@ export function createMap(container, {
    *  re-trigger an animation to where we already are. */
   function settle() {
     flying = false;
-    const { transitionDuration, transitionInterpolator,
-            onTransitionEnd, onTransitionInterrupt, ...rest } = viewState;
-    viewState = rest;
+    viewState = withoutTransition(viewState);
   }
 
   function setViewState(next, animate) {
@@ -347,9 +356,31 @@ export function createMap(container, {
       };
     } else {
       flying = false;
-      viewState = next;
+      // `next` is usually the current state with a coordinate changed, so it can
+      // arrive with a flight that hasn't finished still attached to it.
+      viewState = withoutTransition(next);
     }
     render();
+  }
+
+  /**
+   * Bring a point picked on the height strip into the middle of the map.
+   *
+   * The mirror of the strip scrolling a map-picked point into view: a click on
+   * the profile can land anywhere on the course, including well off the edge of
+   * the camera, and a tooltip you can't see the place of says very little.
+   *
+   * Following goes off, for the same reason panning turns it off — the camera has
+   * been pointed at a place on purpose, and the next ping arriving must not yank
+   * it back to the runner. The ticker brings it back.
+   *
+   * @param {import('./pin.js').Selection} at
+   * @param {boolean} animate flown for a fresh pick, jumped while one is being
+   *   dragged along the course.
+   */
+  function reveal({ lon, lat }, animate) {
+    setFollow(false);
+    setViewState({ ...viewState, longitude: lon, latitude: lat }, animate);
   }
 
   /** Fit every point AND the course, clamped — this tracker often sits still,
@@ -497,8 +528,11 @@ export function createMap(container, {
      * place, which is what makes a click in one view legible in the other.
      *
      * @param {import('./pin.js').Selection|null} next
+     * @param {boolean} animate whether a camera move this causes should be flown
+     *   or jumped. False while the point is being dragged: a 900 ms flight
+     *   restarted on every pointermove never arrives anywhere.
      */
-    setSelection(next) {
+    setSelection(next, animate = true) {
       selection = next;
 
       if (!selection) {
@@ -511,6 +545,10 @@ export function createMap(container, {
       // clicking a point on the strip should mark it on the map.
       hover = [selection.lon, selection.lat];
       if (selection.view === 'map') pin.show(selection.html);
+      // Only for the strip's own picks: a point clicked on the MAP is already on
+      // screen by definition, and flying the camera to centre it would move the
+      // ground out from under the click that asked for it.
+      else reveal(selection, animate);
       render();
       placePin();
     },
