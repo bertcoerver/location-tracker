@@ -142,8 +142,8 @@ test('climb is two rows, each a total with its leg beside it', () => {
   assert.ok(out.includes('+124 m'), out);
   assert.ok(out.includes('980 m'), out);
   assert.ok(out.includes('+38 m'), out);
-  // Time, distance, pace, speed, up, down.
-  assert.equal(rowCount(html), 6, html);
+  // Time, distance, pace, up, down.
+  assert.equal(rowCount(html), 5, html);
 });
 
 test('distance and time each read as a total with the leg that got there', () => {
@@ -161,10 +161,13 @@ test('pace over the last leg is a reading of its own, in both units', () => {
   //
   // Both units from one measurement, because the two audiences don't convert: a runner
   // thinks in min/km, anyone following by car or bike thinks in km/h.
-  const out = text(tooltipHtml(rich, false));
+  const html = tooltipHtml(rich, false);
+  const out = text(html);
 
-  assert.ok(out.includes('3:30 /km'), out);
-  assert.ok(out.includes('17.1 km/h'), out);
+  assert.ok(out.includes('3:30 min/km'), out);
+  // In the column the legs live in, quietly, because it is the same measurement said
+  // differently — two rows claimed two measurements.
+  assert.match(html, /class="p">3:30&thinsp;min\/km<\/span><span class="s">17\.1&thinsp;km\/h/);
 });
 
 test('a ping with no pace yet shows neither pace nor speed', () => {
@@ -176,6 +179,7 @@ test('a ping with no pace yet shows neither pace nor speed', () => {
   assert.ok(!out.includes('/km'), out);
   assert.ok(!out.includes('km/h'), out);
   assert.equal(rowCount(html), 4, html);
+  assert.equal(rowCount(tooltipHtml(rich, false)), 5, 'the pace row went missing too');
 });
 
 test('a run without elevation gets the times but not the climb', () => {
@@ -545,18 +549,32 @@ test('a prediction is drawn as a diagram, centred on the predicted time', () => 
   assert.equal((html.match(/class="pred"/g) || []).length, 1, html);
   assert.ok(html.includes('class="pv"'), html);
   assert.ok(html.includes('class="bar"'), html);
-  // Two times in the edges row, in order, one at each end.
-  const edges = /<div class="edges"><span>(\d\d:\d\d)<\/span><span>(\d\d:\d\d)<\/span><\/div>/
-    .exec(html);
+  // One line holding all three: the near edge, the width of the window, the far edge —
+  // so the width reads as the gap those two numbers describe. A bare duration, since
+  // the bar above it already says the word "wide".
+  const edges = new RegExp('<div class="edges"><span>(\\d\\d:\\d\\d)</span>' +
+    '<span class="wide">([^<]+)</span><span>(\\d\\d:\\d\\d)</span></div>').exec(html);
   assert.ok(edges, html);
-  assert.ok(edges[1] < edges[2], `${edges[1]} is not before ${edges[2]}`);
-  // And the width underneath, as a duration and nothing else: the bar above it already
-  // says the word "wide".
-  const wide = /<div class="s wide">([^<]+)<\/div>/.exec(html);
-  assert.ok(wide, html);
-  assert.match(wide[1], /^(\d+h )?\d+m( \d+s)?$|^\d+s$/);
+  assert.ok(edges[1] < edges[3], `${edges[1]} is not before ${edges[3]}`);
+  assert.match(edges[2], /^(\d+h )?\d+m( \d+s)?$|^\d+s$/);
   assert.ok(!text(html).includes('wide'), html);
   assert.ok(!text(html).includes('Likely'), html);
+  // And the race clock at that moment, under the diagram, carrying the same glyph the
+  // measured elapsed time carries on a ping.
+  assert.match(html, /<div class="rc">.*🕒.*\d+h \d+m<\/div>/);
+});
+
+test('the prediction leads the card, and the distance follows it', () => {
+  // It is the answer to the question that made somebody point at ground nobody has
+  // reached. The distance and the climb are how far away "here" is.
+  const html = predicted();
+
+  assert.ok(html.indexOf('class="pred"') < html.indexOf('class="row'), html);
+  // Which means it is also the first thing in the card, so it opens with no rule
+  // above it — `:first-child` in the stylesheet.
+  assert.ok(html.startsWith('<div class="pred">'), html);
+  // No caption on the elapsed race time any more: it is a line of its own now.
+  assert.ok(!/Predicted[^<]*&middot;/.test(html), html);
 });
 
 test('the bar grows with the window and pins at full width', () => {
@@ -593,9 +611,8 @@ test('a hovered spot past the runner predicts rather than refusing to answer', (
   assert.ok(text(html).includes('Predicted'), html);
   // Which replaces the refusal: there is a model, so there is an answer.
   assert.ok(!text(html).includes('Not reached yet'), html);
-  // And the elapsed race time at that moment, beside the caption rather than as a
-  // fourth number inside the diagram.
-  assert.match(html, /Predicted &middot; <span class="cased">\d+h \d+m in<\/span>/);
+  // And the elapsed race time at that moment, on a line of its own under the diagram.
+  assert.match(html, /<div class="rc">/);
 });
 
 // --- what getTooltip does with each layer --------------------------------------

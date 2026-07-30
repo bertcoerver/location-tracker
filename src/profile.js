@@ -26,8 +26,13 @@ const PAD_BOTTOM = 22;
 const PAD_LEFT = 14;
 const PAD_RIGHT = 14;
 
-/** How close the cursor has to get to a dot, in pixels, to pick it up. */
-const HIT_RADIUS = 14;
+/**
+ * How close the cursor has to get to a dot, HORIZONTALLY, to pick it up.
+ *
+ * Wider than it was, because the old radius was a mouse's aim and a thumb has
+ * none — see `hitTest` for why the vertical half of the test went away.
+ */
+const HIT_RADIUS = 18;
 
 /**
  * How far a press has to travel before it counts as a drag rather than a tap.
@@ -137,6 +142,18 @@ export function smooth(values, radius) {
  * wrong shows up as a tooltip for the neighbouring dot, which is the kind of bug
  * that survives a visual check.
  *
+ * **Horizontal distance only**, so each dot's target is a full-height column of the
+ * chart rather than a disc around the dot itself. The strip's x-axis is distance and
+ * its y-axis is height, which means the only question a press on it can be asking is
+ * "which point on the course" — the height at that distance is not something anyone
+ * chooses. Aiming at a 4 px dot that also sits at whatever altitude the terrain
+ * happens to have was two degrees of freedom for a one-dimensional question, and on a
+ * phone it mostly missed.
+ *
+ * The cost is deliberate and known: hovering the terrain *between* two pings, which
+ * gives the course's own tooltip, is now hard wherever the trail is dense. The pings
+ * are the readings, and the ground between them is still reachable from the map.
+ *
  * Unsnapped pings are not candidates: they have no distance along the course, so
  * they aren't drawn here at all.
  *
@@ -144,16 +161,19 @@ export function smooth(values, radius) {
  * @param {object} course
  * @param {object} scale  from `scaleFor`
  * @param {number} px,py  cursor position in canvas pixels
+ *
+ * `course` and `py` are both accepted and ignored — they are what the vertical half of
+ * the test needed. Kept in the signature so that every caller goes on handing over the
+ * whole cursor it actually has, and the day this wants the height back is a change in
+ * this function and nowhere else.
  */
 export function hitTest(points, course, scale, px, py, radius = HIT_RADIUS) {
   let best = null;
-  let bestD = radius * radius;
+  let bestD = radius;
 
   for (const p of points) {
     if (!p.snap) continue;
-    const dx = scale.x(p.snap.along) - px;
-    const dy = scale.y(p.snap.ele ?? elevationAt(course, p.snap.along)) - py;
-    const d = dx * dx + dy * dy;
+    const d = Math.abs(scale.x(p.snap.along) - px);
     // `<=` so that among dots at the same spot — a stationary phone produces a
     // pile of them — the newest wins, which is the one the eye is on top of.
     if (d <= bestD) { bestD = d; best = p; }

@@ -232,18 +232,23 @@ in that order:
 
 ```
 01:48:00⁺¹ · latest              ▭ 24%  ▂▄▆_
+──────────────────────────
 ⛅ 11°C  Partly Cloudy
 🕒  16h 48m    +42m
 📏  23.9 km    +1.1 km
-🏃  6:12 /km
-⚡️  9.7 km/h
+🏃  6:12 min/km   9.7 km/h
 📈  1,400 m    +141 m
 📉  195 m      +54 m
 ❤️  141 bpm
 ──────────────────────────
 Over the Col du Bonhomme, legs are going
+──────────────────────────
 Open in Google Maps
 ```
+
+Every band is closed by a rule, including the two that used to run straight on into what followed:
+the status bar, which is a statement about a handset rather than about a runner, and the Maps link,
+which was reading as part of whatever row happened to be above it.
 
 **The top line is a phone's status bar.** The time on the left, the battery and the signal on the
 right — which is exactly what those three readings are, so a reader who has held a phone already
@@ -280,12 +285,14 @@ Two rows are gone from the top of the card. **The coordinates**, six decimal pla
 `snapped 12 m` beside them: diagnostics, and they used to sit above how far in and how long in. The
 raw fix still reaches the one place it is worth anything, which is the Google Maps link.
 
-**Pace is stated twice, in both units.** One measurement — a `km/h` figure is one division away from a
-`min/km` one — but the two audiences for it do not convert: a runner thinks in minutes per kilometre
-and will not divide 3600 by anything, while anyone following by car, bike or map thinks in km/h.
-Deriving the second from the first costs a division and means the two can never disagree.
+**Pace is stated twice, in both units, on one row.** A `km/h` figure is one division away from a
+`min/km` one, but the two audiences for it do not convert: a runner thinks in minutes per kilometre and
+will not divide 3600 by anything, while anyone following by car, bike or map thinks in km/h. Deriving
+the second from the first costs a division and means the two can never disagree — and it goes in the
+column the *legs* live in, quietly, because that column is already where "the same reading, said as
+context" belongs. Two rows claimed two measurements, and there is only one.
 
-Neither pace row has a total to lead on, because a pace is always about a stretch and the stretch that
+The pace row has no total to lead on, because a pace is always about a stretch and the stretch that
 matters is the one just finished. It is timed against the previous *snapped* ping rather than the
 previous ping: the numerator is course distance, so a gap timed from a fix that never landed on the
 route would divide this stretch of ground by less time than it took.
@@ -376,20 +383,27 @@ Hovering ground the runner hasn't reached gives the one guess on the page, fence
 everything that was measured, and drawn as a little diagram rather than written as three sentences:
 
 ```
-      PREDICTED · 11h 2m in
-             09:01⁺¹
-     ────────▄▄▄▄▄▄▄▄────────
-     08:54⁺¹          09:09⁺¹
-             15m 28s
+           PREDICTED
+            09:01⁺¹
+   ────────▄▄▄▄▄▄▄▄────────
+   08:54⁺¹   15m 28s   09:09⁺¹
+            🕒 11h 2m
 ```
 
 A forecast has a shape — a moment in the middle, a window either side of it, a width — so each part
 sits where the part it describes is. The predicted time is centred; the bar under it grows outwards
-from that same centre; the two edges of the window sit at the two ends of the bar; the width is
-underneath. Nothing has to be read to see how uncertain the answer is, which is what
-`Likely 14:40 – 15:05` asked for instead. The width says only the duration: the bar directly above it
-already says the word "wide". The elapsed race time at that moment goes beside the caption rather than
-becoming a fourth number in the diagram.
+from that same centre; the two edges of the window sit at the two ends of the bar, with the distance
+between them written *between* them, where it reads as the gap those two numbers describe rather than
+as a third figure under a pair. Nothing has to be read to see how uncertain the answer is, which is
+what `Likely 14:40 – 15:05` asked for instead. The width says only the duration: the bar directly
+above it already says the word "wide". Under all of it, the race clock at that moment, carrying the
+same 🕒 a ping's measured elapsed time carries — they are one reading, and the glyph is what says so.
+
+**The prediction leads the card**, above the distance and the climb, and is the one band there with no
+rule above it. It is the answer to the question that made somebody point at ground nobody has reached
+— "when will he be here" — and the distance and the height are how far away "here" is. A ping tooltip
+is the same argument reversed: nothing on one is a guess, so the measured readings lead and there is
+no prediction at all.
 
 The bar's **length is the width of the forecast window**. It is the only thing in a tooltip readable
 without reading: two predictions half an hour apart are worth comparing, and comparing
@@ -651,6 +665,35 @@ The band can be generous — it is 34 px — because deck picks the **topmost** 
 and the ping dots are drawn after it, so widening it never starts swallowing hovers meant for a fix.
 Measured: the crosshair still tracks 24 px off the drawn line, and a ping under the cursor still
 answers as a ping.
+
+### Pings are bigger than they look
+
+A drawn trail dot is a few pixels across, which is a thumb's width of nothing. On a phone, tapping a
+fix was a game of chance, and most misses landed on the course band underneath and opened the wrong
+*kind* of tooltip. So the pings get the same treatment the route already had: an invisible disc
+`pointHitPx` (16 px) in radius, over every ping, above the course's band and pickable in its place.
+Neither the trail nor the course line is pickable itself — one mark, one answer.
+
+This is a **trade**, and it is the right way round rather than free. Where the trail is dense those
+discs cover the route, so hovering the course *between* two pings gets harder the further you zoom
+out. The pings are the readings; the ground between them is context, and it is still reachable
+wherever the dots are not.
+
+The height strip makes the same trade harder. There, a dot's target is a **full-height column** of the
+chart: the hit test measures horizontal distance only, and ignores the cursor's y entirely. The strip's
+x-axis is distance and its y-axis is height, so the only question a press on it can be asking is "which
+point on the course" — nobody chooses an altitude. Aiming at a 4 px dot that also sits at whatever
+height the terrain happens to have was two degrees of freedom for a one-dimensional question, and on a
+phone it mostly missed. The cost is that the terrain between two pings is now hard to hover on the
+strip, which is accepted: that tooltip is still one hover away on the map.
+
+**Trail dots are sized on the ground, not on the screen.** `trailDotM` (30 m) with both ends clamped
+to `trailDotMinPx`–`trailDotMaxPx` (2–5 px). A dot fixed in *pixels* is the same size at every zoom,
+so pulling back to see a whole 170 km race packed four hundred unshrinking dots into a few hundred
+pixels of route and the trace thickened into a bar. Sized on the ground it thins as you pull back,
+which is what the eye expects of a trace, while the clamps keep it from vanishing at continent scale
+or swelling into a blob at street level. The newest fix keeps its pixel size, its ring and its halo —
+at far zoom that is now most of what makes it findable among the rest.
 
 ### Counting the climb
 
@@ -1118,7 +1161,7 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - New panel or control → `index.html` for markup/CSS, `ui.js` for behaviour.
 - New colour → a token in `index.html`, then read it in `colors.js`. Never a literal in a layer.
 - New URL parameter → `route.js`.
-- Different repo, poll rate, or snap threshold → `config.js` only.
+- Different repo, poll rate, snap threshold, or how big a target anything is → `config.js` only.
 - The phone changed how often it pings → the four battery constants in `config.js`, which mirror
   its script. If the *shape* of its rule changed, `pingIntervalMs` in `schedule.js` too.
 - A different rule for when to poll → `nextPollMs` in `schedule.js`. Keep it pure: `main.js`
@@ -1198,7 +1241,10 @@ results to snapping it all at once, at one projection per ping.
 The profile's arithmetic is tested without a canvas anywhere near it: that smoothing
 settles column-to-column noise without moving a summit or sagging the ends of the
 course towards sea level, and that hovering picks the dot you are actually pointing at
-rather than its neighbour — a mistake that looks fine in a screenshot. How wide the
+rather than its neighbour — a mistake that looks fine in a screenshot. That hit test is
+also pinned on its one deliberate blind spot: a dot answers anywhere in its **column**,
+top of the chart to bottom, because the y-axis is height and nobody presses at an
+altitude on purpose. How wide the
 strip asks to be is pinned down at both ends of its rule: a long course gets its fixed
 pixels per kilometre, a short one keeps the minimum width instead, the two agree exactly
 at the crossover, and a missing or zero-length course still asks for the minimum rather

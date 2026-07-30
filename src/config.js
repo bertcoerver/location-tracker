@@ -97,6 +97,28 @@ export const CONFIG = {
   // cursor and the ping dots are drawn after it, so a wider band never starts
   // swallowing hovers meant for a fix.
   courseHoverPx: 34,
+  // Radius, in pixels, of the invisible disc that makes a ping pickable — the same
+  // trick as `courseHoverPx` and for the same reason. A drawn dot is a few pixels
+  // across, which is a thumb's width of nothing: on a phone, tapping a fix was a
+  // game of chance and most taps landed on the course band underneath and opened
+  // the wrong kind of tooltip.
+  //
+  // This is the one number here that is a trade rather than a fit. The discs sit
+  // ABOVE the course band, so where the trail is dense they cover it, and hovering
+  // the route *between* two pings gets harder as you zoom out. That is the right way
+  // round: the pings are the readings and the course is the context.
+  pointHitPx: 16,
+  // How big a trail dot is, on the ground and on the screen.
+  //
+  // Metres rather than pixels, with both ends clamped. A dot fixed in PIXELS is the
+  // same size at every zoom, so zooming out to see a whole 170 km race packs four
+  // hundred unshrinking dots into a few hundred pixels of route and the trace turns
+  // into a bar. Sized on the ground it thins out as you pull back, which is what the
+  // eye expects of a trace, and the clamps keep it from vanishing at continent scale
+  // or swelling into a blob at street level.
+  trailDotM: 30,
+  trailDotMinPx: 2,
+  trailDotMaxPx: 5,
   // How close, in pixels, the pointer has to be to a pinned point before it can
   // be picked up and dragged along the course. Smaller than `courseHoverPx`:
   // there is exactly one selection on screen and it is already marked, so this

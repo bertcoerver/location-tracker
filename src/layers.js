@@ -202,14 +202,30 @@ export function pointLayers(points, pulse) {
   return [
     ...audit,
 
+    // What you actually point at. Invisible, wider than any dot, and above the
+    // course's own hit band so that a tap near a fix gets the fix — see
+    // `pointHitPx`. Picking renders geometry regardless of fill alpha, which is
+    // what lets this be a target and nothing else.
     new deck.ScatterplotLayer({
-      id: 'trail',
+      id: 'points-hit',
       data: points,
       pickable: true,
       radiusUnits: 'pixels',
       getPosition: posOf,
-      getRadius: 4,
-      radiusMinPixels: 4,
+      getRadius: CONFIG.pointHitPx,
+      getFillColor: [0, 0, 0, 0]
+    }),
+
+    new deck.ScatterplotLayer({
+      id: 'trail',
+      data: points,
+      // Not pickable: `points-hit` above is, over the same objects, and two
+      // pickable layers over one mark are two answers to one question.
+      radiusUnits: 'meters',
+      getPosition: posOf,
+      getRadius: CONFIG.trailDotM,
+      radiusMinPixels: CONFIG.trailDotMinPx,
+      radiusMaxPixels: CONFIG.trailDotMaxPx,
       // No ring. It was there to keep overlapping fixes readable as separate
       // marks, and on a course pinged every few minutes it instead turned a
       // stretch of trail into a chain of little targets. A plain dot reads as a
@@ -544,9 +560,13 @@ export function tooltipHtml(point, isLatest, origin = null) {
   // runner thinks in minutes per kilometre and will not divide 3600 by anything;
   // anyone following by car, bike or map thinks in km/h. Deriving the second from
   // the first costs one division and settles the argument.
+  //
+  // One row, in the shape every other row already has: the reading, then the same
+  // reading said differently, quietly, in the column the legs live in. Two rows
+  // claimed two measurements, and there is only one.
   if (stats?.pace !== undefined) {
-    rows.push(reading(ICON.pace, `${fmtPace(stats.pace)}&thinsp;/km`));
-    rows.push(reading(ICON.speed, `${fmtSpeed(stats.pace)}&thinsp;km/h`));
+    rows.push(reading(ICON.pace, `${fmtPace(stats.pace)}&thinsp;min/km`,
+      `${fmtSpeed(stats.pace)}&thinsp;km/h`));
   }
   // Climb, when the course has elevation and this fix landed on it. Two rows rather
   // than the single four-figure line this replaces: up and down are two different
@@ -595,16 +615,24 @@ export function waypointTooltipHtml(waypoint) {
  * ping it says so in words: this iteration deliberately does not extrapolate a
  * pace into ground nobody has covered yet.
  *
+ * The prediction leads, where there is one. It is the answer to the question that
+ * made somebody point at ground nobody has reached — "when will he be here" — and
+ * the distance and the climb are how far away "here" is. On a ping tooltip the
+ * measured readings lead for the same reason reversed: there, nothing is a guess.
+ *
  * @param {object|null} at from [`interpolateAt`](stats.js).
  */
 export function hoverTooltipHtml(at) {
   if (!at) return '';
 
+  const rows = [];
+  if (at.predicted) {
+    rows.push(predictionHtml({ ...at.predicted, origin: at.origin }));
+  }
   // The distance carries the same ruler the ping tooltips label theirs with, and
   // nothing else: "23.9 km in" needed the word because a bare number could have been
   // anything, and the glyph says the same thing in less space and in one voice.
-  const rows = [titleHtml(`<span class="i" aria-hidden="true">${ICON.dist}</span>` +
-    `${fmtDistance(at.along)}`)];
+  rows.push(reading(ICON.dist, fmtDistance(at.along), null, true));
   if (at.ele !== null && at.ele !== undefined) rows.push(reading(ICON.ele, metres(at.ele)));
   // Nothing for the `'between'` case. Interpolating a time between two fixes is
   // arithmetic on a straight line through ground that was climbed at whatever pace it
@@ -616,12 +644,6 @@ export function hoverTooltipHtml(at) {
   if (at.upTotal !== undefined) {
     rows.push(reading(ICON.up, metres(at.upTotal)));
     rows.push(reading(ICON.down, metres(at.downTotal)));
-  }
-  // Below the border, because it is the one thing here nobody measured. The height
-  // and the climb are facts about the course and are known everywhere on it; this is
-  // a model's opinion about when a runner will arrive, and it is typeset as one.
-  if (at.predicted) {
-    rows.push(predictionHtml({ ...at.predicted, origin: at.origin }));
   }
   rows.push(mapsLink(at.lat, at.lon, `${fmtDistance(at.along)} in`));
   return rows.join('');
@@ -678,10 +700,6 @@ const ICON = {
   // 11 px is a small circle with hands on it and so is the clock two rows above —
   // two readings that are already easy to confuse arriving under the same glyph.
   pace: '\u{1F3C3}',   // 🏃
-  // The same reading in the other unit, and a bolt rather than a vehicle: every
-  // vehicle glyph says something about HOW, which is the one thing a km/h figure
-  // isn't about.
-  speed: '⚡️', // ⚡️
   // Trend charts, not arrows. Ascent and descent over a course ARE a line going up
   // and a line coming down — it is the shape the height strip at the bottom of the
   // page draws these very numbers as — so the glyph and the graph agree. They also
@@ -914,15 +932,18 @@ function mapsLink(lat, lon, label) {
  * reader never has to hold two times in their head to work out how far apart they are
  * — which is what "Likely 14:40 – 15:05" asked of them.
  *
- * The width says only the duration. "9m 57s wide" carried a word that the bar
- * directly above it already says, and a caption over a diagram is not a label.
+ * The width sits between the two edges on their own line, which is where it is a
+ * reading of the distance between them rather than a third figure under a pair. It
+ * says only the duration: the bar directly above it already says the word "wide".
+ *
+ * Under all of it, the race clock at that moment, carrying the same glyph the ping
+ * tooltips label their elapsed time with — the two are the same reading, one measured
+ * and one predicted, and the glyph is what says so.
  *
  * @param {number}      t     the predicted moment
  * @param {number}      lo    near edge of the window
  * @param {number}      hi    far edge
- * @param {number}      [sinceStart] elapsed race time at that moment, when known —
- *   beside the caption, since it is a fact about the prediction rather than a fourth
- *   number in the diagram.
+ * @param {number}      [sinceStart] elapsed race time at that moment, when known
  * @param {number|null} [origin] for the day tag — a 30-hour race predicted to finish
  *   at "09:12" needs to say which morning.
  */
@@ -931,14 +952,15 @@ function predictionHtml({ t, lo, hi, sinceStart, origin = null }) {
     `<span class="d">${dayTag(ms, origin)}</span>`}`;
 
   return '<div class="pred">' +
-    // The elapsed time opts out of the caption's uppercasing: `.k` is a small-caps
-    // key and "11H 2M IN" is a duration shouted at somebody.
-    `<div class="k">Predicted${sinceStart === undefined ? ''
-      : ` &middot; <span class="cased">${fmtDuration(sinceStart)} in</span>`}</div>` +
+    '<div class="k">Predicted</div>' +
     `<div class="pv">${stamp(t)}</div>` +
     uncertaintyBar(hi - lo) +
-    `<div class="edges"><span>${stamp(lo)}</span><span>${stamp(hi)}</span></div>` +
-    `<div class="s wide">${fmtDuration(hi - lo)}</div>` +
+    `<div class="edges"><span>${stamp(lo)}</span>` +
+    `<span class="wide">${fmtDuration(hi - lo)}</span>` +
+    `<span>${stamp(hi)}</span></div>` +
+    (sinceStart === undefined ? ''
+      : `<div class="rc"><span class="i" aria-hidden="true">${ICON.time}</span>` +
+        `${fmtDuration(sinceStart)}</div>`) +
     '</div>';
 }
 

@@ -415,8 +415,14 @@
     justify-content: space-between;
     gap: 10px;
     font-weight: 600;
-    margin-bottom: 3px;
     font-variant-numeric: tabular-nums;
+    /* Closed by a rule of its own, like every other band. The status bar is a
+       different kind of statement from the readings under it — what the handset was
+       doing, not what the runner was — and it was the one band running straight on
+       into the next. */
+    margin-bottom: 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
   }
   .tip .t .i { margin-right: 5px; }
   /* Battery and signal. Quieter and lighter than the time they share the line with:
@@ -503,19 +509,37 @@
     text-align: center;
   }
   .tip .pred .k { margin-bottom: 1px; }
-  /* A caption is uppercased; a duration inside one is not. "11H 2M IN" is a reading
-     shouted at somebody. */
-  .tip .k .cased { text-transform: none; letter-spacing: 0; }
-  /* The window's two edges, pushed out to the ends of the bar above them, so each one
-     labels the end of the bar it belongs to. */
+  /* Leading the card, which is where a hover tooltip puts it: no rule above it, and
+     one below closing it off from the ground it describes. */
+  .tip .pred:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  /* The window's two edges at the two ends of the bar above them, with the distance
+     between them written in the middle — where it reads as the gap those two numbers
+     describe rather than as a third figure underneath a pair. */
   .tip .edges {
     display: flex;
     justify-content: space-between;
+    gap: 8px;
     font-size: 11px;
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
   }
-  .tip .wide { font-variant-numeric: tabular-nums; }
+  .tip .edges .wide { color: var(--text-muted); }
+  /* The race clock at the predicted moment, under the diagram and carrying the glyph
+     the measured elapsed time carries — the same reading, one of them a guess. */
+  .tip .rc {
+    margin-top: 3px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  .tip .rc .i { margin-right: 4px; }
   /* The one number here worth reading first. Deliberately smaller than the panel's
      `.v` — a tooltip is not the panel, and 20 px inside a 260 px box shouts. */
   .tip .pv {
@@ -555,24 +579,19 @@
   /* The one thing in a tooltip you can click. Both tooltips have to opt out of
      `pointer-events: none` for this to be reachable — deck.gl's default style
      sets it, and #profile-tip used to. */
+  /* Always fenced off from whatever is above it. Every other band on the card is
+     closed by a rule, and the link was the one thing that ran straight on from the
+     readings — which left the last row reading as part of the link's own block. */
   .tip .g {
     display: block;
     margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
     font-size: 12px;
     color: var(--accent);
     text-decoration: none;
   }
   .tip .g:hover { text-decoration: underline; }
-  /* A rule between a prediction and the link under it. Every other band on the card is
-     closed by the border that opens the next one, and the link was the one thing that
-     just ran on from whatever was above it — which left the bar reading as the bottom
-     edge of the card. Adjacency rather than a class, because that IS the condition:
-     only a prediction is followed directly by the link. */
-  .tip .pred + .g {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid var(--border);
-  }
 
   /* The profile's tooltip. Same `.tip` skin as the map's, but positioned by us:
      deck.gl isn't involved, and the canvas sits inside a horizontally scrolled

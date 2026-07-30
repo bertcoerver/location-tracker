@@ -343,6 +343,24 @@ test('hitTest picks the nearer of two dots, not the first it sees', () => {
   assert.equal(hit?.name, 'b.json');
 });
 
+test('a dot owns a full-height column of the strip, not a disc around itself', () => {
+  // The x-axis is distance and the y-axis is height, so the only question a press on
+  // the strip can be asking is "which point on the course" — nobody chooses an
+  // altitude. Aiming at a 4 px dot that also sits at whatever height the terrain
+  // happens to have was two degrees of freedom for a one-dimensional question, and on
+  // a phone it mostly missed.
+  const { course, scale } = strip();
+  const points = [at('a.json', 500)];
+  const x = scale.x(500);
+
+  for (const y of [0, 1, 50, 99, 100]) {
+    assert.equal(hitTest(points, course, scale, x, y)?.name, 'a.json',
+      `missed the column at y=${y}`);
+  }
+  // Which is the whole trade: the terrain between two pings is much harder to hover
+  // now, and that is accepted — the pings are the readings.
+});
+
 test('hitTest ignores unsnapped pings — they are not drawn here', () => {
   // They have no distance along the course, so there is no x to hit.
   const { course, scale } = strip();
