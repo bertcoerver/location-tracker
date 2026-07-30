@@ -282,13 +282,15 @@ With a course present, three things change:
   glance how much race is left. The split is at the newest ping, which is also where the forecast is
   anchored, so the faint half is exactly the half the ETAs are talking about.
 
-  Sitting just above the axis in that faint half is one more mark: **where the runner probably is
-  right now**, as a dot with a bar for the 80% range around it. It is the forecast read the way
-  round a distance axis can answer — the tooltips ask "when will he be *here*", and this asks "where
-  is he *now*" — and it creeps forward with the clock rather than waiting for a ping. It is down by
-  the axis, away from the ping dots and the waypoint labels, because everything else on the strip
-  happened and this has not. Once the prediction runs off the end of the course it disappears: a
-  phone that stopped reporting three days ago is not "probably at the finish line".
+  Somewhere in that faint half is one more mark: **where the runner probably is right now**, drawn
+  as a heavy opaque stroke laid over the skyline for the span of the 80% range. It is the forecast
+  read the way round a distance axis can answer — the tooltips ask "when will he be *here*", and
+  this asks "where is he *now*" — and it creeps forward with the clock rather than waiting for a
+  ping. The map carries the same mark, as a highlight of the trace itself over the same range. In
+  both views it is deliberately *only* the range: no dot at the mean, no caps at the bounds, because
+  the model claims a stretch and marking a point on it invites the eye to read a precision that
+  isn't there. Once the prediction runs off the end of the course it disappears: a phone that
+  stopped reporting three days ago is not "probably at the finish line".
 
 - **Each ping carries its climb**, in the tooltip: metres up and down since the run started, and
   over the stretch since the previous ping. Alongside them, distance and elapsed time in the same

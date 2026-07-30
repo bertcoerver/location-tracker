@@ -498,26 +498,27 @@ export function createProfile(root, {
   }
 
   /**
-   * Where the runner probably is right now: a dot, and a bar for the 80% range
-   * around it.
+   * Where the runner probably is right now: the 80% range, and nothing else.
    *
    * This is the forecast read the way round a distance axis can answer. The
    * tooltips ask "when will he be HERE"; the chart has no axis for a time, but it
    * has one for a place, so the marker asks "where is he NOW" instead — the same
    * model, inverted by `positionAt`.
    *
-   * Both the dot and the range ride the terrain itself — the range is drawn over
-   * the skyline for its whole span, so what it marks is the stretch of profile
-   * the runner is probably somewhere on. A flat bar in the axis gutter was using
-   * this chart's x-axis while sitting nowhere on its chart.
+   * Drawn over the skyline for its whole span rather than beside it, so what it
+   * marks is the stretch of profile the runner is probably somewhere on. A flat
+   * bar in the axis gutter was using this chart's x-axis while sitting nowhere on
+   * its chart.
    *
-   * The dot has no ring, unlike the ping dots: a ring is what keeps a pile of
-   * overlapping measurements legible as separate marks, and there is only ever
-   * one of these.
+   * Deliberately just the one mark: a dot at the mean and end caps at the bounds
+   * both draw the eye to exact positions the model does not actually claim. The
+   * range is the whole of what it knows, so the range is the whole of what it
+   * says — opaque and heavier than the terrain line so it reads as an assertion
+   * over the profile rather than a shadow of it.
    *
    * @param {object} scale from `scaleFor`
    * @param {ArrayLike<number>} ridge the smoothed series the skyline was drawn
-   *   from, so the marker lands ON the line rather than near it.
+   *   from, so the mark lands ON the line rather than near it.
    */
   function drawForecast(scale, ridge) {
     if (!marker) return;
@@ -529,8 +530,8 @@ export function createProfile(root, {
     const from = Math.max(0, Math.min(ridge.length - 1, Math.round(scale.x(marker.lo)) - left));
     const to = Math.max(from + 1, Math.min(ridge.length, Math.round(scale.x(marker.hi)) - left));
 
-    ctx.strokeStyle = `rgba(${ink.join(',')}, 0.7)`;
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = `rgb(${ink.join(',')})`;
+    ctx.lineWidth = 4;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -540,22 +541,6 @@ export function createProfile(root, {
     }
     ctx.stroke();
     ctx.lineCap = 'butt';
-
-    // End caps, so the range reads as bounded rather than as a line that ran out
-    // of room. Hung off the terrain at each end, like everything else here.
-    ctx.lineWidth = 1.5;
-    for (const cap of [from, to - 1]) {
-      const y = scale.y(ridge[cap]);
-      ctx.beginPath();
-      ctx.moveTo(left + cap + 0.5, y - 4.5);
-      ctx.lineTo(left + cap + 0.5, y + 4.5);
-      ctx.stroke();
-    }
-
-    ctx.beginPath();
-    ctx.arc(scale.x(marker.along), scale.y(ridgeAt(ridge, scale, marker.along)), 4, 0, Math.PI * 2);
-    ctx.fillStyle = `rgb(${ink.join(',')})`;
-    ctx.fill();
   }
 
   /**

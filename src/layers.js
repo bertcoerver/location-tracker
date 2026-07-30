@@ -3,7 +3,7 @@
 
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
-import { courseHoverAt, pathsBetween, pointAt } from './course.js';
+import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
 import { interpolateAt } from './stats.js';
 import { ago, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
@@ -354,18 +354,20 @@ export function hoverLayers(position) {
 }
 
 /**
- * Where the runner probably is right now, on the map: a dot on the trace, and
- * the stretch of trace the 80% range covers.
+ * Where the runner probably is right now, on the map: the stretch of trace the
+ * 80% range covers, and nothing else.
  *
  * The same mark the height strip carries, asking the same question of the same
  * model — this view has an axis for a place on the course just as the strip does,
- * so both can show it and they had better agree.
+ * so both can show it and they had better agree. Which is also why there is no
+ * dot at the mean here: the model claims a stretch, not a spot, and a dot on it
+ * invites the eye to read a precision that isn't there.
  *
  * The range is drawn as the route itself rather than as a band beside it, so
  * "probably somewhere along here" is said in the only units a map has for it. It
- * is wider than the 3 px route so it reads as a highlight of that route, and
- * neither layer is pickable: `course-hit` underneath owns the tooltip, and two
- * answers to one hover is a bug.
+ * is wider than the 3 px route so it reads as a highlight of that route, and it
+ * is not pickable: `course-hit` underneath owns the tooltip, and two answers to
+ * one hover is a bug.
  *
  * @param {object|null} course
  * @param {{along, lo, hi}|null} marker from `positionAt`
@@ -374,7 +376,6 @@ export function forecastLayers(course, marker) {
   if (!course || !marker) return [];
 
   const ink = accent();
-  const at = pointAt(course, marker.along);
 
   return [
     new deck.PathLayer({
@@ -386,23 +387,10 @@ export function forecastLayers(course, marker) {
       widthMinPixels: 4,
       capRounded: true,
       jointRounded: true,
-      getColor: [...ink, 150],
+      getColor: [...ink, 255],
       // The band slides along the course as the clock runs, so its contents
       // change without the array identity saying anything about it.
       updateTriggers: { getPath: `${marker.lo},${marker.hi}` }
-    }),
-
-    new deck.ScatterplotLayer({
-      id: 'forecast-now',
-      data: [[at.lon, at.lat]],
-      radiusUnits: 'pixels',
-      getPosition: p => p,
-      getRadius: 6,
-      // No ring, unlike the ping dots: a ring is what keeps a pile of
-      // overlapping measurements legible, and there is only ever one of these.
-      stroked: false,
-      getFillColor: [...ink, 255],
-      updateTriggers: { getPosition: String(marker.along) }
     })
   ];
 }
