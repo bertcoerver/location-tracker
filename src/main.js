@@ -4,7 +4,8 @@
 import { CONFIG, keysFor, LS_REFRESH } from './config.js';
 import { buildCourse } from './course.js';
 import {
-  cachedIndex, defaultRun, fetchCourse, hydrate, loadCache, RateLimitError, refreshIndex
+  cachedBeacons, cachedIndex, defaultRun, fetchCourse, hydrate, loadCache, RateLimitError,
+  refreshBeacons, refreshIndex
 } from './github.js';
 import { parseGpx } from './gpx.js';
 import { buildPoints, latestOf } from './points.js';
@@ -16,13 +17,16 @@ import { createMap } from './map.js';
 import { createProfile } from './profile.js';
 import { same } from './pin.js';
 import { createUi } from './ui.js';
-import { pinnedRun, urlFor } from './route.js';
+import { pinnedRun, pushRun } from './route.js';
 import { fmtClock, persistedAt, storage, throttle } from './util.js';
 
 // An explicit ?run= in the URL, which pins the view. Null means "show whichever
 // run is newest" — and that stays true as the page runs, so a plain link left
 // open picks up a race that starts later.
-const pinned = pinnedRun();
+//
+// Not a constant: picking another run rewrites this and pushes the matching URL,
+// rather than navigating to it. See `openRun`.
+let pinned = pinnedRun();
 
 let index = cachedIndex();
 let run = null;
@@ -47,7 +51,10 @@ const map = createMap(document.getElementById('map'), {
   onFollowChange: on => ui.setFollowPressed(on),
   onCourseHover: along => profile.setHover(along),
   onSelect: select,
-  onScrub: scrub
+  onScrub: scrub,
+  // Clicking another run's dot is the second way to change run, and it goes
+  // through exactly the same door as the dropdown.
+  onBeaconPick: name => openRun(name)
 });
 
 const profile = createProfile(document.getElementById('profile'), {
@@ -104,9 +111,7 @@ const ui = createUi({
   // the runner" — following is switched OFF by panning the map, which is the
   // gesture that actually means "leave the camera alone".
   onRecenter: () => map.recenter(),
-  // Picking a run pins it in the URL, so just navigate: a fresh load reads it
-  // back out and paints from that run's own cache. Nothing to tear down.
-  onRunPick: name => { location.href = urlFor(name); },
+  onRunPick: name => openRun(name),
   // One switch, two views: hiding the waypoints has to hide them on the height
   // strip too, or the toggle would be lying about half the screen.
   onLayers: flags => { map.setLayers(flags); profile.setLayers(flags); }
@@ -209,6 +214,13 @@ function resolve() {
   return defaultRun(index) ?? pinned;
 }
 
+// Whether the run change now being reconciled was ASKED for, and so should be
+// flown to rather than jumped to. Set by `openRun` and by the back button; read
+// and cleared by `reconcile`, which is the only thing that knows a change is
+// actually happening. A first load, or the newest run quietly changing under an
+// unpinned view, is not a request and lands without a flight.
+let flyToNext = false;
+
 /**
  * Bring the screen in line with the current index: pick the run, then fill in
  * its points. Every request this makes goes to the CDN, so it is free against
@@ -216,10 +228,14 @@ function resolve() {
  */
 async function reconcile() {
   const next = resolve();
+  // Consumed whether or not the run actually changed: a request that turned out
+  // to be for the run already on screen is spent, not saved up for the next one.
+  const fly = flyToNext;
+  flyToNext = false;
 
   if (next !== run) {
     run = next;
-    map.refit();              // a different run is a different place
+    map.refit(fly);           // a different run is a different place
     select(null);             // and a point pinned on the old one is gone
 
     course = null;
@@ -237,6 +253,11 @@ async function reconcile() {
   // course only changes what the pings are drawn ON, so it can land second.
   show(await hydrate(run, index));
   if (await loadCourse()) show(loadCache(run));
+
+  // The other runs go last, always. They are a signpost to somewhere else, and
+  // nothing about them may hold up the race being looked at — even though in the
+  // steady state this makes no requests at all. See `refreshBeacons`.
+  map.setBeacons(await refreshBeacons(index, run));
 }
 
 // Serialised, so a poll landing mid-hydrate can't have two passes writing the
@@ -246,6 +267,46 @@ function apply() {
   queue = queue.then(reconcile, reconcile);
   return queue;
 }
+
+/**
+ * Show a different run, without loading a page.
+ *
+ * This used to be `location.href = urlFor(name)`, which is why switching felt
+ * like a reload — it was one, and it threw away a warm index, a fetched course
+ * and every parsed cache to rebuild them all from scratch.
+ *
+ * Nothing about that was necessary. The index already covers every run, each has
+ * its own cache, and `reconcile` already knows how to change run: it re-fits the
+ * camera, drops the selection, clears the course and paints the new run from disk
+ * before the CDN answers. All that was missing was a way to ask it to.
+ *
+ * The URL is still rewritten, because a link to the run on screen has to keep
+ * working — pushed rather than replaced, so the back button walks back through
+ * the runs you looked at.
+ *
+ * @param {string} name a run from the index. Both the picker and the dots on the
+ *   map arrive here.
+ */
+function openRun(name) {
+  // Re-picking the run already on screen is not a change. Worth saying, because
+  // the picker fires `change` on any interaction and `reconcile` would otherwise
+  // do nothing while the camera flew off to where it already was.
+  if (!name || name === run) return;
+  pinned = name;
+  pushRun(name);
+  flyToNext = true;
+  apply();
+}
+
+// The back button, which now goes somewhere: a run switch is a history entry
+// rather than a page load, so this is the only thing that makes it undoable.
+// Flown, like any other asked-for change — the gesture means "take me back
+// there", not "reload that".
+addEventListener('popstate', () => {
+  pinned = pinnedRun();
+  flyToNext = true;
+  apply();
+});
 
 async function poll() {
   if (Date.now() < backoffUntil) return;
@@ -323,6 +384,14 @@ function frame() {
 // Paint from cache immediately and top it up from the CDN, both free, then go
 // and see whether GitHub has anything newer.
 ui.setState('loading');
+// The other runs' dots straight off disk, before any network call at all, so the
+// map doesn't open claiming to be the only race there has ever been.
+//
+// Filtered against `resolve()` rather than trusted as stored: the cache was
+// written when some OTHER run was on screen, so the one about to be shown here
+// may well be in it — and a dot marking the course you are looking at is just a
+// blob on the start line. `reconcile` replaces the whole list a moment later.
+map.setBeacons(cachedBeacons().filter(b => b.run !== resolve()));
 apply();
 refreshNow();
 

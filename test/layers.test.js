@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 
 import { buildCourse } from '../src/course.js';
 import {
-  fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip, tooltipHtml, waypointTooltipHtml
+  beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
+  tooltipHtml, waypointTooltipHtml
 } from '../src/layers.js';
 import { interpolateAt } from '../src/stats.js';
 
@@ -318,4 +319,33 @@ test('forecastLayers draws nothing without both a course and a marker', () => {
   assert.deepEqual(forecastLayers(null, { along: 100, lo: 50, hi: 200 }), []);
   assert.deepEqual(forecastLayers(course(), null), []);
   assert.deepEqual(forecastLayers(null, null), []);
+});
+
+// --- the other runs -----------------------------------------------------------
+
+test('beaconLayers draws nothing when there are no other runs', () => {
+  // The layers themselves need deck.gl's global; this is the guard that keeps a
+  // repo with one run in it from adding two empty layers to every frame.
+  assert.deepEqual(beaconLayers([]), []);
+});
+
+test('a beacon tooltip names the run, ages it, and says it can be opened', () => {
+  const html = beaconTooltipHtml({
+    run: 'utmb-2026',
+    latest: Date.now() - 2 * 3600000
+  });
+
+  const lines = text(html);
+  assert.match(lines, /utmb-2026/);
+  assert.match(lines, /Last ping 2h ago/);
+  // Without this the dot is a feature nobody finds: nothing else on the map
+  // navigates, so there is no convention to fall back on.
+  assert.match(lines, /Click to open/);
+  // No coordinates and no Maps link: this is a signpost, not a reading.
+  assert.ok(!html.includes('maps'), 'a beacon is not a place to go and look at');
+});
+
+test('a run name is escaped, since it comes from a folder in the repo', () => {
+  const html = beaconTooltipHtml({ run: '<script>x</script>', latest: Date.now() });
+  assert.ok(!html.includes('<script>'), html);
 });

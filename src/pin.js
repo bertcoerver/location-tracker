@@ -117,6 +117,18 @@ export function createPin(element = document.getElementById('pin')) {
       element.style.top = `${clampTop(clientY, element.offsetHeight, ceiling)}px`;
     },
 
+    /**
+     * Take it off the screen without forgetting it.
+     *
+     * The same mechanism `place` uses for an anchor that has panned out of the
+     * window, and for the same reason: the selection is still the viewer's, there
+     * is just nowhere honest to draw it. `place` clears this again by itself on
+     * the next frame the anchor is reachable, so there is no matching call.
+     */
+    conceal() {
+      element.style.visibility = 'hidden';
+    },
+
     hide() {
       element.hidden = true;
       element.innerHTML = '';

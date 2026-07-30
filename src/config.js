@@ -45,6 +45,21 @@ export const CONFIG = {
   // on its NEXT poll rather than on its own, there is nothing to find until then.
   lateJitterMs: 120000,
 
+  // --- the other runs, as dots on the map -----------------------------------
+  // How many of them to mark, most recently active first.
+  //
+  // Each one costs a single ~200-byte CDN fetch — the newest ping of that run,
+  // to find out where it is — and NOTHING against the API budget: the tree
+  // response already lists every run's files and their shas, which is how we
+  // know which file is newest and what its content address is. That fetch is
+  // content-addressed and persisted, so it happens once per ping in a browser's
+  // life; a run that has finished never costs anything again.
+  //
+  // So this cap is not about the request budget, it is about a cold start: a
+  // repo with 400 runs in it should open the newest 40 races rather than fan out
+  // 400 fetches to draw dots nobody can tell apart at that zoom.
+  beaconLimit: 40,
+
   // --- snapping pings onto a run's course, when it has a .gpx ---------------
   snapMeters: 500,     // further than this from the course and a ping is left where it is
   // Both of these are metres of cost per metre of movement, so they're directly
@@ -176,6 +191,11 @@ export function keysFor(run) {
 // Not per-run, because one request covers them all.
 export const LS_TREE      = `lt.tree.${V}`;
 export const LS_TREE_ETAG = `lt.tree-etag.${V}`;
+
+// Where every OTHER run was last seen: one small record per run, so the dots
+// marking them are on screen before any network call. Not per-run for the same
+// reason the tree isn't — it is one fact about all of them at once.
+export const LS_BEACONS   = `lt.beacons.${V}`;
 
 // When the index was last fetched. Persisted so the refresh throttle survives a
 // page reload — in memory it resets, and refresh-mashing spends the budget.

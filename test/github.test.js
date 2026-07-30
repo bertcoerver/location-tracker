@@ -5,9 +5,10 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONFIG, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
+import { CONFIG, LS_BEACONS, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
 import {
-  buildIndex, defaultRun, fetchCourse, hydrate, isLive, RateLimitError, refreshIndex
+  buildIndex, cachedBeacons, defaultRun, fetchCourse, hydrate, isLive, newestFile, RateLimitError,
+  refreshBeacons, refreshIndex
 } from '../src/github.js';
 
 // --- fakes -------------------------------------------------------------------
@@ -287,6 +288,159 @@ test('a run is live only if it pinged within the hour', () => {
   assert.equal(isLive(undefined, now), false, 'no run selected');
 });
 
+// --- the other runs, as dots -------------------------------------------------
+//
+// The contract these defend is the whole reason this feature is affordable:
+// marking every other run on the map must cost ZERO API requests, and in the
+// steady state zero requests of any kind. Everything it needs beyond a position
+// is already in the tree response.
+
+test('newestFile picks a run\'s last ping, by filename', () => {
+  const index = buildIndex(TREE);
+
+  assert.deepEqual(newestFile(index['new-race']),
+    { name: '2026-07-28T12_00_00+02_00.json', sha: 'c', t: Date.parse('2026-07-28T12:00:00+02:00') });
+});
+
+test('newestFile has nothing to say about a run with no pings', () => {
+  assert.equal(newestFile({ files: {} }), null);
+  assert.equal(newestFile(undefined), null);
+});
+
+/** Two runs, so there is always exactly one OTHER run to mark. */
+const OTHER = 'locations/other-race';
+
+function withOther() {
+  gh.files.set(`${OTHER}/2026-07-29T09_00_00+02_00.json`, { lat: 1.5, lon: 2.5, btry: 90 });
+}
+
+test('the other runs are marked without a single API request', async () => {
+  withOther();
+  const { index } = await poll('vendee-10k');
+  gh.reset();
+
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.equal(beacons.length, 1);
+  assert.deepEqual(
+    { run: beacons[0].run, lat: beacons[0].lat, lon: beacons[0].lon },
+    { run: 'other-race', lat: 1.5, lon: 2.5 });
+  assert.equal(beacons[0].latest, Date.parse('2026-07-29T09:00:00+02:00'),
+    'carried as `latest` so isLive reads one of these unchanged');
+  // One body, for one position. The tree told us which file and what its sha is.
+  assert.deepEqual(gh.counts(), { api: 0, raw: 1 });
+});
+
+test('the run on screen is drawn in full, so it never gets a dot', async () => {
+  withOther();
+  const { index } = await poll('vendee-10k');
+
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+  assert.deepEqual(beacons.map(b => b.run), ['other-race']);
+
+  // And the other way round, to be sure it is the argument doing the work.
+  const swapped = await refreshBeacons(index, 'other-race');
+  assert.deepEqual(swapped.map(b => b.run), ['vendee-10k']);
+});
+
+test('a second pass with nothing new costs nothing at all', async () => {
+  withOther();
+  const { index } = await poll('vendee-10k');
+  await refreshBeacons(index, 'vendee-10k');
+  gh.reset();
+
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.equal(beacons.length, 1);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 0 }, 'the persisted beacon still matches the sha');
+});
+
+test('the dots are persisted, so a reload has them before any network call', async () => {
+  withOther();
+  const { index } = await poll('vendee-10k');
+  await refreshBeacons(index, 'vendee-10k');
+
+  assert.equal(globalThis.localStorage.getItem(LS_BEACONS) !== null, true);
+  assert.deepEqual(cachedBeacons().map(b => b.run), ['other-race']);
+});
+
+test('a new ping on another run refetches only that run\'s position', async () => {
+  withOther();
+  gh.files.set('locations/third-race/2026-07-20T09_00_00+02_00.json', { lat: 3, lon: 4 });
+
+  let { index } = await poll('vendee-10k');
+  await refreshBeacons(index, 'vendee-10k');
+  gh.reset();
+
+  gh.files.set(`${OTHER}/2026-07-29T10_00_00+02_00.json`, { lat: 9.5, lon: 8.5 });
+  ({ index } = await poll('vendee-10k'));
+  gh.reset();
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.deepEqual(gh.counts(), { api: 0, raw: 1 }, 'the quiet run costs nothing again');
+  assert.equal(beacons.find(b => b.run === 'other-race').lat, 9.5);
+});
+
+test('a run you have already opened needs no fetch at all', async () => {
+  withOther();
+  const { index } = await poll('vendee-10k');
+  await hydrate('other-race', index);   // as opening that run would
+  gh.reset();
+
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.equal(beacons[0].lat, 1.5);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 0 }, 'read straight out of that run\'s own cache');
+});
+
+test('one unreadable run loses its own dot and nobody else\'s', async () => {
+  withOther();
+  gh.files.set('locations/third-race/2026-07-20T09_00_00+02_00.json', { lat: 3, lon: 4 });
+  const { index } = await poll('vendee-10k');
+  // Present in the tree, missing from the CDN — which is what a mid-poll delete
+  // looks like from here.
+  gh.files.delete(`${OTHER}/2026-07-29T09_00_00+02_00.json`);
+
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.deepEqual(beacons.map(b => b.run), ['third-race']);
+});
+
+test('a file with no usable coordinates is not a place, so it is not a dot', async () => {
+  gh.files.set(`${OTHER}/2026-07-29T09_00_00+02_00.json`, { lat: 'nope', lon: null });
+  const { index } = await poll('vendee-10k');
+
+  assert.deepEqual(await refreshBeacons(index, 'vendee-10k'), []);
+});
+
+test('beaconLimit caps a cold start, keeping the runs that moved most recently', async () => {
+  // A repo that has grown past what is worth drawing. The cap is about the cold
+  // fan-out, not the API budget — there is no API request here to spend.
+  const total = CONFIG.beaconLimit + 5;
+  for (let i = 0; i < total; i++) {
+    // Minutes apart, so every one of them is a real timestamp and they come out
+    // in a known order.
+    const n = String(i + 1).padStart(2, '0');
+    gh.files.set(`locations/race-${n}/2026-06-01T09_${n}_00+02_00.json`, { lat: i, lon: i });
+  }
+
+  const { index } = await poll('vendee-10k');
+  gh.reset();
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.equal(beacons.length, CONFIG.beaconLimit);
+  assert.deepEqual(gh.counts(), { api: 0, raw: CONFIG.beaconLimit });
+  // The five oldest are the ones dropped.
+  const kept = new Set(beacons.map(b => b.run));
+  assert.equal(kept.has('race-05'), false, 'the oldest is dropped');
+  assert.equal(kept.has(`race-${String(total).padStart(2, '0')}`), true, 'the newest is kept');
+});
+
+test('with no other runs there is nothing to mark', async () => {
+  const { index } = await poll('vendee-10k');
+  assert.deepEqual(await refreshBeacons(index, 'vendee-10k'), []);
+});
+
 // --- the course --------------------------------------------------------------
 
 const GPX = '<?xml version="1.0"?><gpx version="1.1"><trk><trkseg>' +
@@ -510,4 +664,30 @@ test('with storage unavailable, every poll still returns the full set', async ()
 
   assert.equal(Object.keys(cache).length, 3);
   assert.equal(globalThis.localStorage.getItem(keysFor('vendee-10k').points), null);
+});
+
+test('an index we have not heard about yet leaves the last visit\'s dots alone', async () => {
+  // The first `reconcile` runs before the first poll, on whatever the cache held.
+  // Writing [] over the stored beacons there would leave anyone who opened the
+  // page offline looking at a map with no other races on it.
+  withOther();
+  const { index } = await poll('vendee-10k');
+  await refreshBeacons(index, 'vendee-10k');
+  gh.reset();
+
+  const beacons = await refreshBeacons({}, 'vendee-10k');
+
+  assert.deepEqual(beacons.map(b => b.run), ['other-race']);
+  assert.deepEqual(cachedBeacons().map(b => b.run), ['other-race'], 'and it is still stored');
+  assert.deepEqual(gh.counts(), { api: 0, raw: 0 });
+});
+
+test('a stored dot for the run now on screen is still left out', async () => {
+  withOther();
+  const { index } = await poll('vendee-10k');
+  await refreshBeacons(index, 'vendee-10k');
+
+  // Switching to other-race: it is in the stored list, from when it wasn't the
+  // one being looked at.
+  assert.deepEqual(await refreshBeacons({}, 'other-race'), []);
 });

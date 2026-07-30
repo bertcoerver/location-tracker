@@ -31,6 +31,23 @@ export function urlFor(run) {
   return run ? `?run=${encodeURIComponent(run)}` : '.';
 }
 
+/**
+ * Change which run the URL asks for, WITHOUT loading a page.
+ *
+ * This used to be an assignment to `location.href`, and that is why switching
+ * runs felt like a reload: it was one. Every piece of state the new run needs is
+ * already reachable — the index covers all of them and each has its own cache —
+ * so the app can simply turn round and look somewhere else, and the URL only has
+ * to be kept honest so the link is still copyable.
+ *
+ * A push rather than a replace, so the back button walks back through the runs
+ * you looked at. main.js listens for `popstate` and treats it as another way of
+ * asking for a run.
+ */
+export function pushRun(run) {
+  globalThis.history?.pushState({}, '', urlFor(run));
+}
+
 /** The run pinned by the current URL, or null if it's asking for the newest. */
 export function pinnedRun() {
   return parseRun(globalThis.location?.search ?? '');

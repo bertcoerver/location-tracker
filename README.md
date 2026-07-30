@@ -32,6 +32,12 @@ or malformed `run` falls back to the newest run rather than erroring.
 Each run keeps its own point cache, and **switching runs costs no API requests at all**
 — see below.
 
+Every *other* run is also marked on the map, as an outlined dot with its name on it, sitting
+where that run was last seen. Clicking one opens it, which is the second way in besides the
+picker. Switching happens **in place** — the URL is pushed rather than navigated to, the camera
+flies from one course to the other, and nothing is torn down and rebuilt. The back button walks
+back through the runs you looked at.
+
 ## On screen
 
 Two numbers, both in the panel top left. **How long since the last ping**, on the top line, and
@@ -558,6 +564,30 @@ Steps 1–2 are the only rate-limited work, and they're independent of which run
 So **opening a run costs zero API requests**: the cached index already lists its files, and their
 bodies come from the CDN. Switching runs can never rate-limit you.
 
+### Marking the other runs
+
+The dots showing where every other run was last seen are the same trick applied again, and they add
+**no API requests whatsoever**. The tree response already names each run's newest ping and carries
+its blob SHA, so the only thing missing is two numbers out of a ~200-byte body — and that body is
+content-addressed and `force-cache`d like any other, so one SHA is fetched at most once per browser
+ever. The positions are persisted in one small `lt.beacons.*` entry, which means:
+
+- a reload draws every dot before making a single network call, and fetches nothing;
+- a poll that found no new ping for a run costs nothing for that run;
+- a run that has **finished** keeps the same newest SHA forever, so it is free on every poll after
+  the first sighting;
+- a run you have already *opened* is free even on the first sighting, because its newest point is
+  already in that run's own point cache.
+
+Steady state is therefore one ~200-byte fetch per *live* other run per ping it sends — usually zero
+or one. A cold first load fetches one per run, pooled at `CONFIG.concurrency` and capped at
+`CONFIG.beaconLimit` (40, newest first) so a repo that grows to hundreds of runs doesn't fan out to
+all of them. That cap is about the cold fan-out, not the budget; there is no budget to spend here.
+
+Only the raw fix is used, deliberately: snapping a ping to its course would mean downloading that
+course, and the whole point is to mark a run without opening it. At the zoom these are read at, the
+few metres a snap would move a dot are invisible.
+
 The trade is response size. A tree listing covers every ping in the repo, not one folder, so a
 changed poll transfers roughly 200 bytes per ping ever recorded. At race-day volumes that is tens
 of kilobytes; see "Known limit" for where it stops being reasonable.
@@ -636,7 +666,7 @@ src/
   stats.js          per-ping time, distance and climb, and interpolating a hovered spot
   predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
-  map.js            deck.gl instance, camera, follow-latest behaviour
+  map.js            deck.gl globe view, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
   colors.js         reads the CSS colour tokens
@@ -811,6 +841,38 @@ The snapping tests state the two claims worth stating out loud — that a finish
 the course end even from **beyond** the 500 m threshold, where the identical fix without the
 flag snaps nowhere at all, and that on a closed loop it resolves to the end rather than the
 start, which is the ambiguity the whole cost function exists to fight.
+
+## A note on the globe
+
+The view is deck.gl's `GlobeView`, not a flat `MapView`, because the zoomed-out state now has
+something in it: the other runs are dots scattered over a planet rather than over a Mercator sheet
+stretched to nothing at the poles. Three things about it are worth writing down, all of them
+verified against the 9.3.7 bundle rather than assumed:
+
+- **It is exported as `deck._GlobeView`**, underscore-prefixed — still flagged experimental in
+  9.3.7. Same for `_GlobeController` and `_GlobeViewport`.
+- **`GlobeView.getViewportType()` hands back a plain `WebMercatorViewport` above zoom 12** and a
+  `GlobeViewport` below it. So at every zoom where a course is on screen the projection is exactly
+  what it always was, and the sphere only appears in the overview. Zoom is continuous across that
+  switch, since the globe viewport applies its own `log2(π·cos(lat))` offset internally — nothing in
+  `fitView` has to convert between the two conventions. `fitView` keeps using
+  `WebMercatorViewport.fitBounds` as pure arithmetic, which is both necessary (`GlobeViewport` has
+  no `fitBounds`) and correct (a course-sized box always fits above zoom 12).
+- **`Deck._getViews()` copies the top-level `controller` prop onto the first view, and skips the
+  copy when it is falsy.** With one long-lived view instance that mutation *persists*, so
+  `setProps({ controller: false })` would set the flag once and never be able to clear it — silently
+  killing the drag-a-pinned-point gesture, which works by taking the camera away for the duration.
+  So the controller is declared *on* the view and switching it means handing over a fresh instance;
+  `map.js` has a `globeView(controller)` factory for exactly that, and nothing passes a top-level
+  `controller` prop at all.
+
+Two smaller consequences. The basemap's custom `renderSubLayers` has to set
+`_imageCoordinateSystem: COORDINATE_SYSTEM.LNGLAT` on its `BitmapLayer` — deck's own default does
+this and ours replaces it, and without it every raster tile is interpolated on the Mercator plane
+and shears visibly on a sphere. And `map.js` asks deck for the live viewport
+(`deckgl.getViewports()[0]`) instead of rebuilding one from the view state, because below zoom 12 a
+hand-made `WebMercatorViewport` would answer for a different planet and put pinned tooltips and the
+drag gesture in the wrong place.
 
 ## A note on waypoint labels
 

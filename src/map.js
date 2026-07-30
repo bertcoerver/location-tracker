@@ -4,8 +4,8 @@
 import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
-  basemapLayer, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml, makeTooltip,
-  pointLayers, tooltipHtml, waypointTooltipHtml
+  backgroundLayer, basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers,
+  hoverTooltipHtml, makeTooltip, pointLayers, tooltipHtml, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
@@ -23,14 +23,43 @@ const withoutTransition = ({
   transitionDuration, transitionInterpolator, onTransitionEnd, onTransitionInterrupt, ...rest
 }) => rest;
 
+/**
+ * The view. A globe rather than a flat map, which is what makes the world-scale
+ * state worth looking at: the other runs are dots scattered over a planet instead
+ * of over a Mercator sheet stretched to nothing at the poles.
+ *
+ * It costs less than it sounds like. deck's `GlobeView.getViewportType()` hands
+ * back a plain `WebMercatorViewport` above zoom 12 and a `GlobeViewport` below it,
+ * so at every zoom where a course is on screen the projection is exactly what it
+ * has always been, and the sphere only appears in the overview. Zoom is
+ * continuous across that switch — the globe viewport applies its own offset
+ * internally — so nothing here has to convert between the two.
+ *
+ * A FUNCTION, not a constant, and that is load-bearing. `Deck._getViews()` copies
+ * the top-level `controller` prop onto the first view and skips the copy when it
+ * is falsy, so with one long-lived view instance `setProps({ controller: false })`
+ * would set the flag once and then never be able to clear it — silently killing
+ * the drag-along-the-course gesture, which works by taking the camera away for
+ * the duration. So the controller is declared ON the view, and switching it means
+ * handing over a fresh one.
+ *
+ * `_GlobeView` really is the name: deck.gl 9.3.7 still exports it underscored as
+ * experimental.
+ */
+const globeView = controller => new deck._GlobeView({ id: 'globe', controller });
+
 export function createMap(container, {
   onFollowChange = () => {},
   onCourseHover = () => {},
   onSelect = () => {},
-  onScrub = () => {}
+  onScrub = () => {},
+  onBeaconPick = () => {}
 } = {}) {
   let points = [];
   let course = null;
+  // The other runs, each as one dot where it was last seen. Not part of this
+  // view's subject — they are the way OUT of it, to another run.
+  let beacons = [];
   // The run's pace model, or null, and where it says the runner is AT THIS
   // MOMENT — `{ along, lo, hi }` in metres, from `positionAt`. A prediction of a
   // TIME has no place on a view whose axes are both space, but a prediction of a
@@ -46,6 +75,10 @@ export function createMap(container, {
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
   let fitted = false;
+  // Whether the next fit should be flown or jumped. A first load has nowhere to
+  // fly FROM, so it jumps; a run switch has, and flying it is what makes the two
+  // races read as two places on one map rather than as two page loads.
+  let flyOnFit = false;
   let flying = false;
   let pulse = 0;
   // Mid-drag: the pinned point is being slid along the course. While this is
@@ -70,7 +103,11 @@ export function createMap(container, {
   /** The whole stack, in draw order. One place, so nothing can disagree. */
   function allLayers() {
     return [
+      backgroundLayer(),
       basemapLayer(),
+      // Under the course and the pings, deliberately: another race is context for
+      // this one, and nothing about it may sit on top of the reading.
+      ...beaconLayers(beacons),
       ...courseLayers(course, layerFlags.waypoints),
       ...pointLayers(points, pulse, layerFlags.raw),
       ...forecastLayers(course, marker),
@@ -152,16 +189,22 @@ export function createMap(container, {
     return { view: 'map', html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon, along };
   }
 
-  /** The current camera as a viewport, for going between coordinates and pixels. */
+  /**
+   * The current camera as a viewport, for going between coordinates and pixels.
+   *
+   * Asked of deck rather than rebuilt from `viewState`, and that matters now the
+   * view is a globe: below zoom 12 the projection is a `GlobeViewport` and a
+   * hand-made `WebMercatorViewport` would quietly answer for a different planet —
+   * putting pinned tooltips and the drag gesture in the wrong place. deck knows
+   * which class it is using, so ask it.
+   *
+   * `viewport` is null until deck has laid out once. Every caller has to cope:
+   * there is genuinely no answer yet.
+   */
   function viewport() {
-    const rect = container.getBoundingClientRect();
     return {
-      rect,
-      viewport: new deck.WebMercatorViewport({
-        ...viewState,
-        width: rect.width || 1,
-        height: rect.height || 1
-      })
+      rect: container.getBoundingClientRect(),
+      viewport: deckgl.getViewports?.()[0] ?? null
     };
   }
 
@@ -175,7 +218,14 @@ export function createMap(container, {
    */
   function placePin() {
     if (selection?.view !== 'map') return;
+    // Zoomed out this far the anchor can be on the FAR SIDE of the globe, which
+    // projects to a mirrored pixel on the near side — a tooltip pointing at the
+    // wrong ocean. Nothing is ever pinned from up here (a pin comes from clicking
+    // a point on a course, which means being zoomed into one), so there is nothing
+    // to lose by declining to place it.
+    if (viewState.zoom < 8) return pin.conceal();
     const { rect, viewport: view } = viewport();
+    if (!view) return;
     const [x, y] = view.project([selection.lon, selection.lat]);
     pin.place(rect.left + x, rect.top + y);
   }
@@ -193,15 +243,19 @@ export function createMap(container, {
    */
   function grabDistance(x, y) {
     if (!course || selection?.along == null) return null;
-    const [px, py] = viewport().viewport.project([selection.lon, selection.lat]);
+    const { viewport: view } = viewport();
+    if (!view) return null;
+    const [px, py] = view.project([selection.lon, selection.lat]);
     return Math.hypot(x - px, y - py);
   }
 
   const deckgl = new deck.DeckGL({
     container,
     viewState,
-    controller: true,
-    layers: [basemapLayer()],
+    // The controller rides on the view rather than being a prop of its own — see
+    // `globeView` for why it has to.
+    views: globeView(true),
+    layers: [backgroundLayer(), basemapLayer()],
     getTooltip: makeTooltip(
       () => points, () => course, () => Boolean(selection) || touchInput, () => forecast),
 
@@ -226,6 +280,11 @@ export function createMap(container, {
      * without having to find it again.
      */
     onClick: info => {
+      // Another run's dot is a door, not a thing to look at: it goes to that run
+      // rather than pinning a tooltip about it. Checked before `describe`, which
+      // has no case for it and would read it as bare basemap — putting the
+      // current selection down on the way out.
+      if (info.object?.kind === 'beacon') return onBeaconPick(info.object.run);
       onSelect(describe(info));
     },
 
@@ -311,7 +370,10 @@ export function createMap(container, {
     dragging = true;
     dragMoved = false;
     dragAlong = selection.along;
-    deckgl.setProps({ controller: false });
+    // A fresh view with the controller off, rather than a `controller: false`
+    // prop — see `globeView`. `render()` never passes `views`, so this stands
+    // until `endDrag` hands the camera back.
+    deckgl.setProps({ views: globeView(false) });
     container.setPointerCapture(event.pointerId);
     event.stopPropagation();
     event.preventDefault();
@@ -320,12 +382,18 @@ export function createMap(container, {
   container.addEventListener('pointermove', event => {
     if (!dragging) return;
     dragMoved = true;
-    const rect = container.getBoundingClientRect();
-    const [lon, lat] = viewport().viewport.unproject([
-      event.clientX - rect.left, event.clientY - rect.top
-    ]);
+    const { rect, viewport: view } = viewport();
+    const [lon, lat] = view
+      ? view.unproject([event.clientX - rect.left, event.clientY - rect.top])
+      : [NaN, NaN];
 
-    const along = courseHoverAt(course, lon, lat);
+    // Where the pointer is only ever MOVES the marker; it can't take it away. A
+    // coordinate that isn't one — off the globe entirely, which a sphere makes
+    // possible — leaves the last good distance standing, exactly as dragging off
+    // the route into a field does.
+    const along = Number.isFinite(lon) && Number.isFinite(lat)
+      ? courseHoverAt(course, lon, lat)
+      : null;
     if (along !== null) dragAlong = along;
     onScrub(atAlong(dragAlong));
     event.stopPropagation();
@@ -334,7 +402,7 @@ export function createMap(container, {
   function endDrag(event) {
     if (!dragging) return;
     dragging = false;
-    deckgl.setProps({ controller: true });
+    deckgl.setProps({ views: globeView(true) });
     if (container.hasPointerCapture(event.pointerId)) {
       container.releasePointerCapture(event.pointerId);
     }
@@ -416,6 +484,12 @@ export function createMap(container, {
 
     let fit = null;
     try {
+      // A `WebMercatorViewport` even though the view is a globe, because this is
+      // arithmetic and not a projection: `fitBounds` is the only thing being used
+      // and `GlobeViewport` hasn't got one. It is also exactly right here — a
+      // course-sized box always fits above zoom 12, which is where deck hands out
+      // a Mercator viewport anyway.
+      //
       // The profile strip covers the bottom of the window, so the fit has to
       // clear it or the start of the course hides behind it.
       fit = new deck.WebMercatorViewport(base).fitBounds(bounds, {
@@ -459,7 +533,7 @@ export function createMap(container, {
       if (!fitted) {
         const fit = fitView(points);
         fitted = true;
-        if (fit) return setViewState(fit, false);
+        if (fit) return setViewState(fit, flyOnFit);
         render();
       // Keyed on the drawn position, not just the filename: when a course lands
       // and the newest ping jumps onto it, the camera should go with it.
@@ -581,8 +655,34 @@ export function createMap(container, {
       placePin();
     },
 
-    /** Fit the next setPoints() again — a different run is a different place. */
-    refit() { fitted = false; },
+    /**
+     * Fit the next setPoints() again — a different run is a different place.
+     *
+     * @param {boolean} animate whether to FLY there. A first load jumps: there is
+     *   nowhere to fly from, and animating out of the default world view would
+     *   make every visit start with a swoop. A run switch flies, because that is
+     *   the difference between changing the subject and reloading the page.
+     *
+     *   Following comes back on with it, and that is not a side effect — asking
+     *   for another race means asking to be shown it, and a `follow: false` left
+     *   over from panning the previous one would strand the camera there.
+     */
+    refit(animate = false) {
+      fitted = false;
+      flyOnFit = animate;
+      if (animate) setFollow(true);
+    },
+
+    /**
+     * The other runs, as dots. Cheap enough to redraw on every poll — see
+     * `refreshBeacons`, which mostly answers out of localStorage.
+     *
+     * @param {Array} next from `refreshBeacons`, the run on screen already left out.
+     */
+    setBeacons(next) {
+      beacons = next;
+      render();
+    },
 
     isFollowing: () => follow,
 

@@ -10,7 +10,7 @@
 // (2) is why one recursive tree request answers everything the UI needs: which
 // runs exist, which are live, which is newest, and what's in the one on screen.
 
-import { CONFIG, keysFor, LS_TREE, LS_TREE_ETAG } from './config.js';
+import { CONFIG, keysFor, LS_BEACONS, LS_TREE, LS_TREE_ETAG } from './config.js';
 import { parseTime, pool, storage } from './util.js';
 
 /** Thrown when GitHub says we've spent our hourly budget. Carries when to retry. */
@@ -287,4 +287,100 @@ export async function hydrate(run, index) {
 
   if (run) storage.set(keysFor(run).points, cache);
   return cache;
+}
+
+/**
+ * A run's most recent ping, from the index alone.
+ *
+ * The times come out of the FILENAMES, exactly as `buildIndex` read them to
+ * compute `latest` — so this and that can never disagree about which ping is a
+ * run's last one. No file body is involved.
+ *
+ * @returns {{name: string, sha: string, t: number}|null} null for a run with no
+ *   pings, which `buildIndex` doesn't emit but a stale cached index might.
+ */
+export function newestFile(record) {
+  let best = null;
+  for (const [name, sha] of Object.entries(record?.files || {})) {
+    const t = parseTime(name);
+    if (Number.isNaN(t)) continue;
+    if (!best || t > best.t) best = { name, sha, t };
+  }
+  return best;
+}
+
+/** The last known position of every other run, so the dots are on screen before
+ *  any network call. Mirrors `cachedIndex`. */
+export function cachedBeacons() {
+  return storage.get(LS_BEACONS) || [];
+}
+
+/**
+ * Where every OTHER run was last seen — one dot's worth of data per run.
+ *
+ * This is the cheapest thing in the file, and deliberately so. It adds NO API
+ * requests: the tree response already names each run's newest ping and carries
+ * its blob sha, so all that is missing is two numbers out of a ~200-byte body,
+ * and that comes from the CDN.
+ *
+ * Three sources are tried in order, and the fetch is the last resort:
+ *
+ *   1. the persisted beacons, matched on sha — so a reload costs nothing at all,
+ *      and a poll that found no new ping for a run costs nothing either;
+ *   2. that run's own points cache, if you have ever opened it — already on disk;
+ *   3. `fetchPoint`, whose URL is content-addressed and `force-cache`d, so one
+ *      sha is fetched at most once per browser ever.
+ *
+ * In the steady state that means one small fetch per LIVE other run per new
+ * ping, and nothing whatsoever for runs that have finished.
+ *
+ * @param {string|null} current the run on screen, which is drawn in full and so
+ *   must not also be marked with a dot.
+ * @returns {Promise<Array<{run, name, sha, latest, lat, lon}>>} `latest` rather
+ *   than `t` so that `isLive` reads one of these unchanged — it is the same fact
+ *   about the same run, just carried on a smaller record.
+ */
+export async function refreshBeacons(index, current) {
+  // An empty index means GitHub hasn't answered yet — the first `reconcile` runs
+  // before the first poll — not that there is nowhere else to go. Persisting []
+  // over it would throw away what the last visit knew and leave a bare map for
+  // anyone who opened the page offline. Still filtered, because the run on screen
+  // now is very likely the one that was merely *another* run when this was
+  // written.
+  if (!Object.keys(index).length) return cachedBeacons().filter(b => b.run !== current);
+
+  const known = new Map(cachedBeacons().map(b => [b.run, b]));
+
+  const wanted = Object.keys(index)
+    .filter(run => run !== current)
+    .sort((a, b) => index[b].latest - index[a].latest)
+    .slice(0, CONFIG.beaconLimit)
+    .map(run => ({ run, file: newestFile(index[run]) }))
+    .filter(({ file }) => file);
+
+  const beacons = await pool(wanted, CONFIG.concurrency, async ({ run, file }) => {
+    const at = known.get(run) ?? loadCache(run)[file.name];
+    const found = at && at.sha === file.sha
+      ? at
+      // One bad file mustn't cost every other run its dot.
+      : await fetchPoint(run, file.name, file.sha).catch(() => null);
+    if (!found) return null;
+
+    return {
+      run,
+      name: file.name,
+      sha: file.sha,
+      latest: file.t,
+      // The RAW fix, always: snapping a ping onto its course needs that course
+      // parsed, and the whole point of a beacon is to mark a run cheaply enough
+      // that we never download one. At the zoom these are read at, the few
+      // metres a snap would move it are invisible.
+      lat: found.lat,
+      lon: found.lon
+    };
+  });
+
+  const found = beacons.filter(Boolean);
+  storage.set(LS_BEACONS, found);
+  return found;
 }

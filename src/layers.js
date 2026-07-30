@@ -4,9 +4,32 @@
 import { CONFIG } from './config.js';
 import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
 import { courseHoverAt, pathsBetween, pointAt } from './course.js';
+import { isLive } from './github.js';
 import { interpolateAt } from './stats.js';
-import { escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
+import { ago, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
 import { latestOf, posOf } from './points.js';
+
+/**
+ * The planet itself, under the tiles.
+ *
+ * On a flat map this would be invisible — the tiles cover the viewport and
+ * nothing shows through. On a globe there is a sphere with an edge, and without
+ * this it is transparent wherever a tile hasn't arrived yet: you see stars
+ * through the Atlantic while it loads. In the page's own surface colour, so the
+ * unloaded parts read as paper rather than as holes.
+ */
+export function backgroundLayer() {
+  return new deck.SolidPolygonLayer({
+    id: 'background',
+    // Three vertices along each of the top and bottom edges rather than two: a
+    // polygon spanning 360° of longitude in one step has no defined way round
+    // the sphere, and the midpoints are what pin it to the long way.
+    data: [[[-180, 90], [0, 90], [180, 90], [180, -90], [0, -90], [-180, -90]]],
+    getPolygon: p => p,
+    stroked: false,
+    getFillColor: [...surface(), 255]
+  });
+}
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
@@ -24,7 +47,13 @@ export function basemapLayer() {
       return new deck.BitmapLayer(props, {
         data: null,
         image: props.data,
-        bounds: [boundingBox[0][0], boundingBox[0][1], boundingBox[1][0], boundingBox[1][1]]
+        bounds: [boundingBox[0][0], boundingBox[0][1], boundingBox[1][0], boundingBox[1][1]],
+        // Read the tile's four corners as lon/lat and interpolate BETWEEN them on
+        // the sphere, rather than treating the image as a flat rectangle on the
+        // Mercator plane. deck's own default `renderSubLayers` does this and this
+        // one replaces it; without it every tile shears visibly once the view is
+        // a globe rather than a sheet.
+        _imageCoordinateSystem: deck.COORDINATE_SYSTEM.LNGLAT
       });
     }
   });
@@ -234,6 +263,93 @@ export function pointLayers(points, pulse, showRaw = true) {
       getFillColor: [...accent(), 255]
     })
   ];
+}
+
+/**
+ * The other runs: one dot each, where that run was last seen, with its name.
+ *
+ * They are the answer to "what else is there?", which until now only the dropdown
+ * could give — and a menu you have to open to discover is a menu nobody opens.
+ *
+ * Styled to be unmistakably NOT the run on screen. Every reading on this map is a
+ * solid fill; these are outlined — the surface colour with a course-coloured ring
+ * — which is the same argument the course itself makes by living off the blue
+ * ramp: this is context, not data. They also carry the course's colour rather
+ * than the accent, so nothing here can be mistaken for a ping.
+ *
+ * A run that is still going gets full-strength ink and a quiet one is faded, by
+ * exactly the test the picker's `●` uses. It is the one thing worth knowing about
+ * another race at a glance.
+ *
+ * @param {Array} beacons from `refreshBeacons`.
+ */
+export function beaconLayers(beacons) {
+  if (!beacons.length) return [];
+
+  const ink = courseColor();
+  const paper = surface();
+  const alpha = b => (isLive(b) ? 255 : 150);
+  // `kind` is what the tooltip dispatches on — a beacon is not a fix, and
+  // clicking one navigates rather than selecting.
+  const data = beacons.map(b => ({ ...b, kind: 'beacon' }));
+  // These move only when a run pings, but the array is rebuilt every frame, so
+  // its identity says nothing. One string covering every dot's place and state.
+  const trigger = data.map(b => `${b.run}:${b.sha}`).join();
+
+  return [
+    new deck.ScatterplotLayer({
+      id: 'beacons',
+      data,
+      pickable: true,
+      radiusUnits: 'pixels',
+      getPosition: b => [b.lon, b.lat],
+      getRadius: 5,
+      radiusMinPixels: 4,
+      stroked: true,
+      lineWidthUnits: 'pixels',
+      getLineWidth: 2,
+      getLineColor: b => [...ink, alpha(b)],
+      getFillColor: [...paper, 235],
+      updateTriggers: { getPosition: trigger, getLineColor: trigger }
+    }),
+
+    new deck.TextLayer({
+      id: 'beacon-labels',
+      data,
+      // Not pickable: the dot underneath owns the tooltip and the click.
+      getPosition: b => [b.lon, b.lat],
+      getText: b => b.run,
+      getSize: 11,
+      sizeUnits: 'pixels',
+      getPixelOffset: [0, -10],
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'bottom',
+      getColor: b => [...ink, alpha(b)],
+      // Same halo as the waypoint labels, for the same reason: whatever basemap
+      // happens to be under a name, the name has to survive it. See the note
+      // there for why there is no CollisionFilterExtension.
+      fontSettings: { sdf: true, radius: 12, cutoff: 0.25 },
+      outlineWidth: 0.3,
+      outlineColor: [...paper, 235],
+      updateTriggers: { getPosition: trigger, getText: trigger, getColor: trigger }
+    })
+  ];
+}
+
+/**
+ * Tooltip markup for another run's dot.
+ *
+ * Three lines and no coordinates: this is a signpost, not a reading. The last
+ * line is there because a dot that turns out to be clickable only if you try it
+ * is a feature nobody finds — and on a phone the tooltip never appears at all,
+ * since a tap goes straight through to the switch.
+ */
+export function beaconTooltipHtml(beacon) {
+  return [
+    `<div class="t">${escapeHtml(beacon.run)}</div>`,
+    `<div class="r">Last ping ${ago(beacon.latest)}</div>`,
+    '<div class="r">Click to open this course</div>'
+  ].join('');
 }
 
 /**
@@ -510,6 +626,7 @@ export function makeTooltip(
 
     if (!object) return null;
     if (object.kind === 'waypoint') return tip(waypointTooltipHtml(object));
+    if (object.kind === 'beacon') return tip(beaconTooltipHtml(object));
 
     const latest = latestOf(getPoints());
     return tip(tooltipHtml(object, !!latest && latest.name === object.name));
