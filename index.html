@@ -446,12 +446,24 @@
      apart from the numbers by being the one line here in a different voice — larger
      glyph, letter-spaced label, no tabular figures — because it is the only reading on
      the card that nothing about the run produced. */
+  /* Closed by a rule of its own, like the status bar above it: the weather is a third
+     kind of statement, neither the handset nor the run, and it was leaning against the
+     figures it is only the setting for.
+
+     Tighter than the other bands on purpose, and it is the one band that can afford to
+     be: a single centred line needs less room to read as its own thing than a block of
+     rows does, and at the same 6 px either side it took as much height as three
+     readings. The line-height is part of that — 1.45 is set for prose, and this is four
+     words. */
   .tip .wx {
     display: flex;
     align-items: baseline;
     justify-content: center;
     gap: 5px;
-    margin: 0 0 5px;
+    line-height: 1.2;
+    margin: -1px 0 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
     color: var(--text-secondary);
     font-size: 12px;
   }
@@ -508,6 +520,14 @@
     padding-top: 6px;
     border-top: 1px solid var(--border);
     text-align: center;
+    /* How wide the diagram is, and it is a FIXED number rather than the width of the
+       card. The bar's whole claim is that a given fill means a given number of minutes
+       — see `uncertaintyRefMs` — and a track that stretched to fit the card broke it in
+       the quietest possible way: "09:01" and "23:45⁺¹" are different numbers of
+       characters, so the same window drew a slightly different length on two tooltips.
+       The bar and the row of edge times share this, or the times stop labelling the
+       ends of the thing above them. */
+    --pred-w: 186px;
   }
   .tip .pred .k { margin-bottom: 1px; }
   /* Leading the card, which is where a hover tooltip puts it: no rule above it, and
@@ -526,6 +546,8 @@
   .tip .edges {
     display: flex;
     justify-content: space-between;
+    width: var(--pred-w);
+    margin: 0 auto;
     gap: 8px;
     font-size: 11px;
     color: var(--text-secondary);
@@ -551,7 +573,8 @@
      always means the same number of minutes. */
   .tip .bar {
     height: 3px;
-    margin: 4px 0 3px;
+    width: var(--pred-w);
+    margin: 4px auto 3px;
     border-radius: 2px;
     background: var(--border);
     overflow: hidden;

@@ -241,7 +241,8 @@ in that order:
 ```
 01:48:00⁺¹ · latest              ▭ 24%  ▂▄▆_
 ──────────────────────────
-⛅ 11°C  Partly Cloudy
+        ⛅ 11°C  Partly Cloudy
+──────────────────────────
 🕒  16h 48m    +42m
 📏  23.9 km    +1.1 km
 🏃  6:12 min/km   9.7 km/h
@@ -276,7 +277,10 @@ pointer both find it.
 **The weather is its own line**, between the status bar and the run, centred and in a different voice
 — larger glyph, italic label, no tabular figures — because it is the only reading on the card that
 nothing about the run produced, and the centring is most of what says so: every reading under it
-starts on one column, and this one deliberately does not. It is also the setting rather than the story, and it belongs above the
+starts on one column, and this one deliberately does not. It is closed by a rule like everything
+else — it was leaning against figures it is only the *setting* for — but sits tighter than the other
+bands, top and bottom. One centred line needs less room to read as its own thing than a block of
+rows does, and at the same 6 px either side it was taking up the height of three readings. It is also the setting rather than the story, and it belongs above the
 figures it explains: 4°C and rain is the first thing that accounts for a pace. There is no
 thermometer beside the temperature any more. The sky and the air are one reading from one sensor, and
 giving each an icon made two readings out of it, so the sky's own glyph does duty for both. The label
@@ -419,6 +423,13 @@ no prediction at all.
 The bar's **length is the width of the forecast window**. It is the only thing in a tooltip readable
 without reading: two predictions half an hour apart are worth comparing, and comparing
 `14:40 – 15:05` with `16:02 – 16:11` otherwise means arithmetic.
+
+Its track is a **fixed 186 px** (`--pred-w`), not the width of the card, and the row of edge times
+shares that width so it goes on labelling the ends of the bar above it. A track that stretched to fit
+broke the bar's one claim in the quietest possible way: a tooltip is only as wide as its contents, and
+`09:01` and `23:45⁺¹` are different numbers of characters, so the same window drew a slightly
+different length on two tooltips. Measured in a browser across both: 186 px each, whatever the times
+say.
 
 Its scale is fixed — `uncertaintyRefMs`, 30 minutes to the full track — so the same fill always means
 the same span, on every ping of every run. The two alternatives both fail: a track spanning the window
