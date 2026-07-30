@@ -559,9 +559,12 @@ test('a prediction is drawn as a diagram, centred on the predicted time', () => 
   assert.match(edges[2], /^(\d+h )?\d+m( \d+s)?$|^\d+s$/);
   assert.ok(!text(html).includes('wide'), html);
   assert.ok(!text(html).includes('Likely'), html);
-  // And the race clock at that moment, under the diagram, carrying the same glyph the
-  // measured elapsed time carries on a ping.
-  assert.match(html, /<div class="rc">.*🕒.*\d+h \d+m<\/div>/);
+  // And the race clock at that moment, under the diagram — as an ordinary reading row,
+  // typeset exactly as a ping states the elapsed time it measured. The diagram above it
+  // is the part that is a diagram.
+  const clock = html.slice(html.indexOf('class="edges"'));
+  assert.match(clock, /<div class="row big"><span class="i" aria-hidden="true">🕒<\/span>/);
+  assert.match(clock, /class="p">\d+h \d+m<\/span>/);
 });
 
 test('the prediction leads the card, and the distance follows it', () => {
@@ -611,8 +614,8 @@ test('a hovered spot past the runner predicts rather than refusing to answer', (
   assert.ok(text(html).includes('Predicted'), html);
   // Which replaces the refusal: there is a model, so there is an answer.
   assert.ok(!text(html).includes('Not reached yet'), html);
-  // And the elapsed race time at that moment, on a line of its own under the diagram.
-  assert.match(html, /<div class="rc">/);
+  // And the elapsed race time at that moment, on a row of its own under the diagram.
+  assert.match(html.slice(html.indexOf('class="edges"')), /class="row big"/);
 });
 
 // --- what getTooltip does with each layer --------------------------------------

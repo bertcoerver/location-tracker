@@ -936,9 +936,11 @@ function mapsLink(lat, lon, label) {
  * reading of the distance between them rather than a third figure under a pair. It
  * says only the duration: the bar directly above it already says the word "wide".
  *
- * Under all of it, the race clock at that moment, carrying the same glyph the ping
- * tooltips label their elapsed time with — the two are the same reading, one measured
- * and one predicted, and the glyph is what says so.
+ * Under all of it, the race clock at that moment — as an ordinary reading row, left
+ * aligned and at full weight, which is exactly how a ping tooltip states the elapsed
+ * time it measured. The two are the same reading, one measured and one predicted, and
+ * typesetting them alike is what says so; the diagram above is the part that is a
+ * diagram.
  *
  * @param {number}      t     the predicted moment
  * @param {number}      lo    near edge of the window
@@ -959,8 +961,7 @@ function predictionHtml({ t, lo, hi, sinceStart, origin = null }) {
     `<span class="wide">${fmtDuration(hi - lo)}</span>` +
     `<span>${stamp(hi)}</span></div>` +
     (sinceStart === undefined ? ''
-      : `<div class="rc"><span class="i" aria-hidden="true">${ICON.time}</span>` +
-        `${fmtDuration(sinceStart)}</div>`) +
+      : reading(ICON.time, fmtDuration(sinceStart), null, true)) +
     '</div>';
 }
 

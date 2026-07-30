@@ -93,7 +93,24 @@ export function createUi({ onRecenter, onRunPick }) {
   let run = null;
 
   tickerEl.addEventListener('click', onRecenter);
-  runEl.addEventListener('change', () => onRunPick(runEl.value));
+
+  // Whether a pointer is what reached into the picker. A `<select>` keeps focus after
+  // a mouse pick, and on this page that costs two things: the browser draws its focus
+  // ring over what is also the page's heading, and the next press on the map is spent
+  // moving focus off the control rather than starting a pan — so the first drag after
+  // switching runs went nowhere. Handing focus back to the document fixes both.
+  //
+  // Only for a pointer, though. Some browsers fire `change` for every step of
+  // arrowing through the options, and blurring there would take the control out from
+  // under a keyboard user mid-choice — and they are the one audience the focus ring is
+  // for.
+  let pickedByPointer = false;
+  runEl.addEventListener('pointerdown', () => { pickedByPointer = true; });
+  runEl.addEventListener('keydown', () => { pickedByPointer = false; });
+  runEl.addEventListener('change', () => {
+    if (pickedByPointer) runEl.blur();
+    onRunPick(runEl.value);
+  });
 
   /**
    * Is the phone still out there?

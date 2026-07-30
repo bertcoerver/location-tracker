@@ -109,6 +109,14 @@ it, as the old separate picker did, would now take the run's name off the screen
 the open list a `●` marks the runs that are still live; the one already on screen never gets one,
 because its own liveness is the pulsing dot one line above.
 
+**It hands focus back after a mouse pick.** A `<select>` keeps focus once it has been used, and on
+this page that cost two things: the browser drew its own focus ring around what is also the page's
+heading, and the next press on the map went on moving focus off the control instead of starting a pan
+— so the first drag after switching runs simply did not happen. It blurs itself on `change`, but only
+when a pointer is what reached into it: some browsers fire `change` for every step of arrowing through
+the options, and blurring there would take the control out from under a keyboard user mid-choice, who
+is the one person the focus ring is for.
+
 The heading is sized by an invisible span rather than by the control itself. A `<select>` is laid
 out from the browser's own metrics, not from the width of its option text, so at 20 px it comes out
 a few pixels too narrow and quietly clips the end of a longer name; the span carries the same string
@@ -265,9 +273,10 @@ decoration: a phone at 6% is a run about to stop reporting, and "about a fifth" 
 The signal has no text at all; `3/4` lives in the icon's label, where a screen reader and a resting
 pointer both find it.
 
-**The weather is its own line**, between the status bar and the run, in a different voice — larger
-glyph, italic label, no tabular figures — because it is the only reading on the card that nothing
-about the run produced. It is also the setting rather than the story, and it belongs above the
+**The weather is its own line**, between the status bar and the run, centred and in a different voice
+— larger glyph, italic label, no tabular figures — because it is the only reading on the card that
+nothing about the run produced, and the centring is most of what says so: every reading under it
+starts on one column, and this one deliberately does not. It is also the setting rather than the story, and it belongs above the
 figures it explains: 4°C and rain is the first thing that accounts for a pace. There is no
 thermometer beside the temperature any more. The sky and the air are one reading from one sensor, and
 giving each an icon made two readings out of it, so the sky's own glyph does duty for both. The label
@@ -387,7 +396,7 @@ everything that was measured, and drawn as a little diagram rather than written 
             09:01⁺¹
    ────────▄▄▄▄▄▄▄▄────────
    08:54⁺¹   15m 28s   09:09⁺¹
-            🕒 11h 2m
+🕒  11h 2m
 ```
 
 A forecast has a shape — a moment in the middle, a window either side of it, a width — so each part
@@ -396,8 +405,10 @@ from that same centre; the two edges of the window sit at the two ends of the ba
 between them written *between* them, where it reads as the gap those two numbers describe rather than
 as a third figure under a pair. Nothing has to be read to see how uncertain the answer is, which is
 what `Likely 14:40 – 15:05` asked for instead. The width says only the duration: the bar directly
-above it already says the word "wide". Under all of it, the race clock at that moment, carrying the
-same 🕒 a ping's measured elapsed time carries — they are one reading, and the glyph is what says so.
+above it already says the word "wide". Under all of it, the race clock at that moment — as an ordinary
+reading row, back on the left margin and at full weight, which is exactly how a ping states the
+elapsed time it *measured*. They are one reading, one of them a guess, and typesetting them alike is
+what says so. Only the part above it is a diagram.
 
 **The prediction leads the card**, above the distance and the climb, and is the one band there with no
 rule above it. It is the answer to the question that made somebody point at ground nobody has reached
@@ -678,6 +689,15 @@ This is a **trade**, and it is the right way round rather than free. Where the t
 discs cover the route, so hovering the course *between* two pings gets harder the further you zoom
 out. The pings are the readings; the ground between them is context, and it is still reachable
 wherever the dots are not.
+
+**Its tooltip can be walked into.** The strip's hover tooltip sits directly above the strip and holds
+a Google Maps link, so reaching that link means taking the cursor off the canvas — and the tooltip
+used to dismiss itself on the way. Checking `relatedTarget` for the tooltip was supposed to allow
+that one move, and it does, but the tip is only as wide as its contents and there are nine pixels of
+gap under it: a cursor heading for the link crosses the map, or the space beside the tip, and every
+one of those is a `relatedTarget` that is not the tooltip. So leaving the strip now *schedules* the
+dismissal (`TIP_GRACE_MS`, 320 ms) and arriving at the tip — or returning to the strip — cancels it.
+A pointer that has really gone elsewhere never cancels, and the tooltip goes a moment later.
 
 The height strip makes the same trade harder. There, a dot's target is a **full-height column** of the
 chart: the hit test measures horizontal distance only, and ignores the cursor's y entirely. The strip's
@@ -1299,6 +1319,13 @@ that a rebuilt tooltip for the same place still counts as the same point, that t
 on a lap sharing a coordinate do not, and that the same place clicked from the *other*
 view is a move rather than a dismissal. `clampLeft` keeps a tooltip on screen at either
 edge and when it is wider than the window at all.
+
+Two interaction fixes are verified the same way, over CDP, because both are about where a
+pointer *is* rather than about what any function returns: that the run picker leaves focus on
+the document after a mouse pick and keeps it after a keyboard one, and that the strip's hover
+tooltip survives the walk from the canvas to its own link. The second was checked by
+falsification as well — with `TIP_GRACE_MS` set to 0 the walk ends with the cursor over the
+map and the tooltip gone, which is exactly the bug.
 
 Dragging a pinned point is deliberately **not** unit-tested. It is pointer plumbing over
 functions that are already covered — the same `readAt`, `interpolateAt` and `courseHoverAt`

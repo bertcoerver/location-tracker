@@ -35,6 +35,14 @@ const PAD_RIGHT = 14;
 const HIT_RADIUS = 18;
 
 /**
+ * How long the hover tooltip survives the cursor leaving the strip.
+ *
+ * The whole reason it survives at all is that its Google Maps link has to be
+ * reachable, and reaching it means crossing off the canvas. See `leaveSoon`.
+ */
+const TIP_GRACE_MS = 320;
+
+/**
  * How far a press has to travel before it counts as a drag rather than a tap.
  *
  * A finger held still on a screen still reports movement, and every pixel of
@@ -357,6 +365,9 @@ export function createProfile(root, {
   let forecast = null;
   let marker = null;
   let hover = null;      // distance in metres under the cursor, or null
+  // A pending dismissal of the hover tooltip, from the cursor having left the strip.
+  // See `leaveSoon`.
+  let leaveTimer = null;
   // The pinned point, from a click in either view. While one is held, hovering
   // is suspended everywhere: the user has said which point they want to read,
   // and a crosshair chasing the cursor across it is just noise.
@@ -766,6 +777,24 @@ export function createProfile(root, {
   }
 
   /**
+   * Dismiss the hover tooltip, but not yet — see the `pointerleave` handler below
+   * for why the delay is what makes the tooltip's own link reachable at all.
+   *
+   * `TIP_GRACE_MS` is long enough to cross the gap between the strip and the tip at
+   * any human speed, and short enough that a tooltip left behind by a cursor which
+   * went somewhere else is gone before anybody wonders why it is still there.
+   */
+  function leaveSoon() {
+    cancelLeave();
+    leaveTimer = setTimeout(leave, TIP_GRACE_MS);
+  }
+
+  function cancelLeave() {
+    clearTimeout(leaveTimer);
+    leaveTimer = null;
+  }
+
+  /**
    * What is under the cursor: a ping if there's one close enough, otherwise the
    * ground itself. The two branches differ only in where the numbers come from,
    * so hovering and clicking ask this the same question and can't disagree
@@ -814,6 +843,8 @@ export function createProfile(root, {
   }
 
   canvas.addEventListener('pointermove', event => {
+    // Back on the strip, so whatever leaving it started is off.
+    cancelLeave();
     // Sliding the pinned point along the course. It reads through `readAt`, the
     // same function the hover and click paths use, so a scrub passing over a
     // ping shows that ping rather than the ground beneath it.
@@ -966,6 +997,7 @@ export function createProfile(root, {
    */
   function leave(event) {
     if (event?.relatedTarget && tip.contains(event.relatedTarget)) return;
+    cancelLeave();
     owned = false;
     hideTip();
     // A pinned point outlives the cursor — that is the whole point of pinning
@@ -976,11 +1008,30 @@ export function createProfile(root, {
     draw();
   }
 
-  canvas.addEventListener('pointerleave', leave);
+  // Leaving the strip is not the same as being finished with it, and the
+  // difference is a few hundred milliseconds wide.
+  //
+  // `relatedTarget` alone was supposed to allow the move from the strip into the
+  // tooltip, and in principle it does — but the tip sits ABOVE the strip and is
+  // only as wide as its own contents, so the cursor on its way to the Google Maps
+  // link crosses whatever is beside or below it: the gap, the map, the panel. Every
+  // one of those is a `relatedTarget` that is not the tip, and the tooltip vanished
+  // before the cursor arrived. The link was there and could not be reached.
+  //
+  // So leaving schedules the dismissal instead of performing it, and getting to the
+  // tip — or back onto the strip — cancels it. A pointer that really has gone
+  // somewhere else simply never cancels, and the tip goes away a moment later.
+  canvas.addEventListener('pointerleave', event => {
+    if (event.relatedTarget && tip.contains(event.relatedTarget)) return;
+    leaveSoon();
+  });
   // Touch doesn't reliably deliver `pointerleave` — a tap elsewhere is how a
   // phone says "done", and without this the tip would stay up for good.
   canvas.addEventListener('pointercancel', leave);
+  // Arriving is what the grace period was held open for.
+  tip.addEventListener('pointerenter', cancelLeave);
   // And leaving the tooltip itself, for anywhere that isn't back on the canvas.
+  // Immediate: the cursor was already there, so there is nothing to reach for.
   tip.addEventListener('pointerleave', leave);
   document.addEventListener('pointerdown', event => {
     // The pin is exempt as well as the hover tip: clicking the Google Maps link

@@ -449,6 +449,7 @@
   .tip .wx {
     display: flex;
     align-items: baseline;
+    justify-content: center;
     gap: 5px;
     margin: 0 0 5px;
     color: var(--text-secondary);
@@ -531,15 +532,10 @@
     font-variant-numeric: tabular-nums;
   }
   .tip .edges .wide { color: var(--text-muted); }
-  /* The race clock at the predicted moment, under the diagram and carrying the glyph
-     the measured elapsed time carries — the same reading, one of them a guess. */
-  .tip .rc {
-    margin-top: 3px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-  }
-  .tip .rc .i { margin-right: 4px; }
+  /* The race clock at the predicted moment. An ordinary reading row, which is what
+     puts it back on the left margin at full weight — the same way a ping states the
+     elapsed time it measured. Only the diagram above it is a diagram. */
+  .tip .pred .row { margin-top: 3px; text-align: left; }
   /* The one number here worth reading first. Deliberately smaller than the panel's
      `.v` — a tooltip is not the panel, and 20 px inside a 260 px box shouts. */
   .tip .pv {
