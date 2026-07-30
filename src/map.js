@@ -44,6 +44,14 @@ export function createMap(container, {
   // Whether this drag has actually moved the point yet. A press that goes
   // nowhere is not a drag — it is the click that puts the point down.
   let dragMoved = false;
+  // Whether the last press came from a finger rather than a cursor.
+  //
+  // This is what stops a tap producing TWO tooltips. deck shows its hover
+  // tooltip from the same press that then pins the point, and on a touch screen
+  // nothing moves afterwards to take it away again — so the hover tooltip sat
+  // beside the pinned one until the map was next panned. A finger has no hover
+  // to report in the first place: its tap is a click on its way to happening.
+  let touchInput = false;
 
   /** The whole stack, in draw order. One place, so nothing can disagree. */
   function allLayers() {
@@ -167,7 +175,7 @@ export function createMap(container, {
     controller: true,
     layers: [basemapLayer()],
     getTooltip: makeTooltip(
-      () => points, () => course, () => Boolean(selection), () => forecast),
+      () => points, () => course, () => Boolean(selection) || touchInput, () => forecast),
 
     /**
      * Deck rewrites the cursor on every hover, so a scrub has to be declared
@@ -258,6 +266,15 @@ export function createMap(container, {
    * and not for a press that never moved. Both outcomes have to be produced
    * here, in `endDrag`.
    */
+  // What is pointing at the map, tracked whatever the gesture turns out to be:
+  // deck asks for a tooltip during the very gesture that answers this, and it
+  // gets a different answer for a finger. Capture phase on the container, so it
+  // is known before deck's own listeners on the canvas inside it have run — and
+  // on both events, so a mouse plugged into a tablet takes hovering back.
+  for (const type of ['pointerdown', 'pointermove']) {
+    container.addEventListener(type, event => { touchInput = event.pointerType !== 'mouse'; }, true);
+  }
+
   container.addEventListener('pointerdown', event => {
     const rect = container.getBoundingClientRect();
     const near = grabDistance(event.clientX - rect.left, event.clientY - rect.top);

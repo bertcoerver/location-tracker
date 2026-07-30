@@ -427,19 +427,21 @@ export function fmtDistance(m) {
  * enough to reach: deck only listens for pointer events on its own canvas, so
  * once the cursor is over the tooltip div deck never learns it left the object.
  *
- * @param {() => boolean} isPinned whether a point is currently selected. Hover
- *   is suspended while one is — a hover tooltip appearing beside the pinned one
- *   would be two answers to a question the user has already settled.
+ * @param {() => boolean} isSuppressed whether there should be no hover tooltip at
+ *   all right now. Two things say so, and map.js owns both: a point is pinned —
+ *   a hover tooltip beside the pinned one is two answers to a question the user
+ *   has already settled — or the pointer is a finger, which has no hover to
+ *   speak of and whose tap is on its way to pinning something anyway.
  * @param {() => object|null} getForecast the run's pace model, so hovering ground
  *   the runner hasn't reached says when they probably will.
  */
 export function makeTooltip(
-  getPoints, getCourse = () => null, isPinned = () => false, getForecast = () => null
+  getPoints, getCourse = () => null, isSuppressed = () => false, getForecast = () => null
 ) {
   const tip = html => (html ? { html, className: 'tip', style: { pointerEvents: 'auto' } } : null);
 
   return ({ object, layer, coordinate }) => {
-    if (isPinned()) return null;
+    if (isSuppressed()) return null;
 
     // The hit band is pickable so that hovering the route drives the profile
     // crosshair. What comes back as `object` is a segment — an array of
