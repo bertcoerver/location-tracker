@@ -368,53 +368,6 @@ function solve(forecast, end, when, edge) {
   return lo;
 }
 
-/**
- * Hang each ping's own prediction error off its stats, in place.
- *
- * A walk-forward backtest, and strictly so: the forecast for ping *i* is fitted
- * on pings `0..i-1` and anchored at ping `i-1`, so nothing from ping *i* or after
- * it reaches the fit. That is what makes the figure in the tooltip a test of the
- * model rather than a look at its own residuals — and it is the regime the model
- * was actually in when that ping landed, which is the thing worth knowing.
- *
- * One leg ahead is a modest test, and that is the point: it is the only forecast
- * the data supported at the time.
- *
- * Cost is quadratic — n fits over up to n legs — but the legs are cut once and
- * this runs on a poll rather than on a frame, so a few hundred pings is a
- * few hundred thousand floating-point operations and nobody notices.
- *
- * @param {Array}       points sorted oldest-first, already through `deriveStats`
- * @param {object|null} course
- */
-export function deriveForecastErrors(points, course) {
-  if (!course || !points?.length) return points;
-
-  const snapped = points.filter(p => p.snap);
-  const legs = legsOf(snapped, course);
-
-  // legs[k] runs from snapped[k] to snapped[k+1], so the legs known before ping
-  // i are legs[0..i-2] — i-1 of them. Needing `predictMinLegs` of those is what
-  // puts the first error on the fourth snapped ping of a run.
-  for (let i = CONFIG.predictMinLegs + 1; i < snapped.length; i++) {
-    const forecast = assemble(course, snapped[i - 1], legs.slice(0, i - 1));
-    const at = predictAt(forecast, snapped[i].snap.along);
-    if (!at) continue;
-
-    const point = snapped[i];
-    // Positive means the runner arrived later than predicted, which reads as
-    // "late" in the tooltip. The sign convention is the tooltip's, not the
-    // model's — a residual would have it the other way round.
-    //
-    // `??=` only so that calling this without `deriveStats` first is a missing
-    // row in a tooltip rather than a thrown exception that takes the paint with
-    // it. Ordinarily the object is already there.
-    (point.stats ??= {}).forecast = { t: at.t, error: point.t - at.t, lo: at.lo, hi: at.hi };
-  }
-
-  return points;
-}
-
 // --- 3x3 linear algebra, which is all this model ever needs ------------------
 
 /** Inverse by adjugate, or null if the matrix is singular. */

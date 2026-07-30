@@ -10,7 +10,7 @@ import {
 import { createGeo, geoMessage, isDenied, viewerFrom } from './geo.js';
 import { parseGpx } from './gpx.js';
 import { buildPoints, latestOf } from './points.js';
-import { buildForecast, deriveForecastErrors } from './predict.js';
+import { buildForecast } from './predict.js';
 import { nextPollMs } from './schedule.js';
 import { applySnaps, snapAll } from './snap.js';
 import { deriveStats } from './stats.js';
@@ -186,16 +186,11 @@ function show(cache) {
   // depends on the snaps above, so it goes here rather than being cached.
   deriveStats(points, course, start);
 
-  // Then the pace model, fitted to THIS run and nothing else, and each ping's
-  // score against the forecast that was made before it arrived. Both derived on
-  // every paint rather than cached: they are a few hundred floating-point
-  // operations over arrays already in hand, and a cached forecast is one that
-  // can disagree with the pings it was fitted to.
-  //
-  // After `deriveStats`, because the errors are hung off the `stats` object it
-  // creates — and that object is rebuilt from scratch each time through.
+  // Then the pace model, fitted to THIS run and nothing else. Derived on every
+  // paint rather than cached: it is a few hundred floating-point operations over
+  // arrays already in hand, and a cached forecast is one that can disagree with the
+  // pings it was fitted to.
   const forecast = buildForecast(points, course);
-  deriveForecastErrors(points, course);
 
   latest = latestOf(points);
 

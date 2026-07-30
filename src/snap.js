@@ -154,7 +154,7 @@ export function snapAll(course, points, cache, { start = null, nearest = nearest
     // built on it would be counting a warm-up as race progress.
     //
     // This is the whole of the exclusion. `deriveStats`' distance and climb,
-    // `buildForecast`, `deriveForecastErrors`, `interpolateAt` and both of the
+    // `buildForecast`, `interpolateAt` and both of the
     // height strip's loops all key on `snap`, so a ping without one is already
     // invisible to every one of them; nothing downstream has to learn what a gun is.
     //

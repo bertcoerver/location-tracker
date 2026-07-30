@@ -30,7 +30,7 @@ const text = html => html
   .replace(/&thinsp;|&#8202;|&nbsp;/g, ' ');
 
 /** How many reading rows a tooltip drew — the icon-and-value kind. */
-const rowCount = html => (html.match(/class="row"/g) || []).length;
+const rowCount = html => (html.match(/class="row\b/g) || []).length;
 
 test('a bare fix says the time and nothing else', () => {
   const html = tooltipHtml(point, false);
@@ -142,8 +142,8 @@ test('climb is two rows, each a total with its leg beside it', () => {
   assert.ok(out.includes('+124 m'), out);
   assert.ok(out.includes('980 m'), out);
   assert.ok(out.includes('+38 m'), out);
-  // Time, distance, pace, up, down.
-  assert.equal(rowCount(html), 5, html);
+  // Time, distance, pace, speed, up, down.
+  assert.equal(rowCount(html), 6, html);
 });
 
 test('distance and time each read as a total with the leg that got there', () => {
@@ -155,19 +155,26 @@ test('distance and time each read as a total with the leg that got there', () =>
   assert.ok(out.includes('+4m 12s'), out);
 });
 
-test('pace over the last leg is a reading of its own', () => {
-  // The number a runner actually wants, and the only row with no total to lead on:
-  // a pace is always about a stretch, and the stretch that matters is the last one.
+test('pace over the last leg is a reading of its own, in both units', () => {
+  // The number a runner actually wants, and neither row has a total to lead on: a pace
+  // is always about a stretch, and the stretch that matters is the last one.
+  //
+  // Both units from one measurement, because the two audiences don't convert: a runner
+  // thinks in min/km, anyone following by car or bike thinks in km/h.
   const out = text(tooltipHtml(rich, false));
 
   assert.ok(out.includes('3:30 /km'), out);
+  assert.ok(out.includes('17.1 km/h'), out);
 });
 
-test('a ping with no pace yet shows no pace row', () => {
+test('a ping with no pace yet shows neither pace nor speed', () => {
   // The first snapped ping of a run, or a runner who has not moved. See `deriveStats`.
+  // One missing measurement, so both readings of it go.
   const html = tooltipHtml({ ...rich, stats: { ...rich.stats, pace: undefined } }, false);
+  const out = text(html);
 
-  assert.ok(!text(html).includes('/km'), html);
+  assert.ok(!out.includes('/km'), out);
+  assert.ok(!out.includes('km/h'), out);
   assert.equal(rowCount(html), 4, html);
 });
 
@@ -192,61 +199,98 @@ test('the newest fix is marked, and a message and battery still come through', (
   assert.ok(out.includes('over the top'));
 });
 
-// --- what the phone was dealing with ------------------------------------------
+// --- the status bar, and the weather ------------------------------------------
 
-test('the five sensor readings are one line, whichever of them are present', () => {
-  const html = tooltipHtml(
-    { ...point, btry: 73, ntwrk: 3, wthr: '29°C and Sunny', bpm: 69 }, false);
+test('battery and signal sit on the title line, drawn rather than lettered', () => {
+  const html = tooltipHtml({ ...point, btry: 73, ntwrk: 3 }, false);
 
-  // Exactly one, however many readings went into it. They used to be three rows.
-  assert.equal((html.match(/class="meta"/g) || []).length, 1, html);
-  const out = text(html);
-  assert.ok(out.includes('73%'), out);
-  assert.ok(out.includes('29°C'), out);
-  assert.ok(out.includes('3/4'), out);
-  assert.ok(out.includes('69'), out);
-  assert.ok(out.includes('☀️'), out);
+  // Both inside the one status group, which is inside the title row — this is a
+  // phone's status bar, and it is one line with the time.
+  const bar = /<div class="t">.*?<span class="st">(.*?)<\/span><\/div>/s.exec(html);
+  assert.ok(bar, html);
+  assert.ok(bar[1].includes('73%'), bar[1]);
+  // The signal has no text at all: the icon IS the reading, so its label is where
+  // "3/4" survives — for a screen reader and for a pointer resting on it.
+  assert.ok(bar[1].includes('aria-label="Signal 3/4"'), bar[1]);
+  assert.ok(bar[1].includes('aria-label="Battery 73%"'), bar[1]);
 });
 
-test('each sensor reading can be missing on its own', () => {
+test('the drawn battery is as full as the phone was', () => {
+  // The whole reason these two are SVG and everything else is an emoji: 🔋 is the
+  // same glyph at 4% as at 100%, so it could only ever label a number. A drawn cell
+  // carries the reading in its shape.
+  const fill = pct => Number(/<rect x="2" y="2" width="([\d.]+)"/
+    .exec(tooltipHtml({ ...point, btry: pct }, false))[1]);
+
+  assert.ok(fill(100) > fill(50), 'a full battery is not drawn fuller than a half one');
+  assert.ok(fill(50) > fill(10));
+  // A floor, so 1% is a sliver: an empty shell reads as "no reading", which is a
+  // different thing from "nearly flat".
+  assert.ok(fill(1) > 0);
+  assert.equal(fill(0), 0);
+});
+
+test('the drawn signal lights as many bars as the phone had', () => {
+  const lit = n => (tooltipHtml({ ...point, ntwrk: n }, false)
+    .match(/fill-opacity="1"/g) || []).length;
+
+  assert.equal(lit(4), 4);
+  assert.equal(lit(2), 2);
+  // A phone with no bars is exactly the interesting case: it explains the gap in the
+  // trail on either side of this ping. `0` must be drawn, and drawn as empty.
+  assert.equal(lit(0), 0);
+  assert.ok(tooltipHtml({ ...point, ntwrk: 0 }, false).includes('aria-label="Signal 0/4"'));
+});
+
+test('each status reading can be missing on its own', () => {
   // Every file written before a field existed has none of it, which is most of them.
-  assert.ok(text(tooltipHtml({ ...point, btry: 76 }, false)).includes('76%'));
-  assert.ok(text(tooltipHtml({ ...point, bpm: 142 }, false)).includes('142'));
+  assert.ok(tooltipHtml({ ...point, btry: 76 }, false).includes('76%'));
+  assert.ok(tooltipHtml({ ...point, btry: 76 }, false).includes('class="st"'));
 
-  const signal = tooltipHtml({ ...point, ntwrk: 0 }, false);
-  assert.ok(text(signal).includes('0/4'), signal);
-  // No separator glyphs left hanging off the one reading that is there — the cells
-  // are spaced by CSS now rather than by a `·` that had to be counted out.
-  assert.ok(!signal.includes('&middot;'), signal);
+  const signal = tooltipHtml({ ...point, ntwrk: 2 }, false);
+  assert.ok(signal.includes('aria-label="Signal 2/4"'), signal);
+  // And no battery beside it. Read out of the status group rather than off the whole
+  // card, since the Maps link's URL escaping is full of percent signs.
+  const bar = /<span class="st">(.*?)<\/span><\/div>/s.exec(signal);
+  assert.ok(!bar[1].includes('%'), bar[1]);
 });
 
-test('no sensors at all means no sensor line at all', () => {
-  assert.ok(!tooltipHtml(point, false).includes('class="meta"'));
+test('a ping with neither battery nor signal has no status group at all', () => {
+  const html = tooltipHtml(point, false);
+  assert.ok(!html.includes('class="st"'), html);
+  assert.ok(!html.includes('<svg'), html);
 });
 
-test('no signal is 0/4 rather than nothing at all', () => {
-  // A phone with no bars is exactly the interesting case: it explains the gap in
-  // the trail on either side of this ping. `0` must not be read as absent.
-  assert.ok(text(tooltipHtml({ ...point, ntwrk: 0 }, false)).includes('0/4'));
-});
+test('a heart rate is a reading of the run, with its unit', () => {
+  // In with the pace and the climb rather than off among the handset readings: it is
+  // what the last kilometre COST, which is a fact about the run.
+  const html = tooltipHtml({ ...point, bpm: 69 }, false);
+  const out = text(html);
 
-test('a heart rate is a sensor reading like the others', () => {
-  const out = text(tooltipHtml({ ...point, bpm: 69 }, false));
-  assert.ok(out.includes('69'), out);
+  assert.ok(out.includes('69 bpm'), out);
   assert.ok(out.includes('❤️'), out);
+  assert.equal(rowCount(html), 1, html);
 });
 
-test('the temperature is split off the weather string and the sky becomes a glyph', () => {
-  // The phone sends "29°C and Sunny" as one string. Those are two readings: a number
-  // you compare with the last ping's, and a word you don't — which is now a glyph.
+test('the weather is its own line: one glyph, the temperature, and the label', () => {
+  // The phone sends "28°C and Sunny" as one string. Those are two readings — a number
+  // you compare with the last ping's, and a word you don't — but one sensor took both,
+  // so the sky's glyph does duty for the thermometer that used to sit beside the number.
   const html = tooltipHtml({ ...point, wthr: '28°C and Sunny' }, false);
   const out = text(html);
 
+  assert.equal((html.match(/class="wx"/g) || []).length, 1, html);
   assert.ok(out.includes('28°C'), out);
   assert.ok(out.includes('☀️'), out);
-  // The label survives where it can still be read, rather than being thrown away
-  // with the word: "Rain and thunder" and "Isolated Thunderstorms" share a glyph.
-  assert.ok(html.includes('title="Sunny"'), html);
+  // The label is kept, not replaced by the glyph: "Rain and thunder" and "Isolated
+  // Thunderstorms" draw the same cloud, and this is where the difference survives.
+  assert.ok(out.includes('Sunny'), out);
+  // No thermometer anywhere. One sensor, one icon.
+  assert.ok(!html.includes('🌡'), html);
+});
+
+test('a ping with no weather has no weather line', () => {
+  assert.ok(!tooltipHtml(point, false).includes('class="wx"'));
 });
 
 test('a weather label with no temperature beside it still draws its glyph', () => {
@@ -421,16 +465,24 @@ const ping = (name, minutes, along) => ({
   snap: { along, lon: 0, lat: LAT0, ele: 0, off: 4 }
 });
 
-test('a spot between two pings reads as an estimated time', () => {
+test('a spot between two pings describes the ground, and claims no time', () => {
   const c = course();
   const points = [ping('a', 0, 0), ping('b', 20, 2000)];
-  const out = text(hoverTooltipHtml(interpolateAt(points, c, 1000)));
+  const html = hoverTooltipHtml(interpolateAt(points, c, 1000));
+  const out = text(html);
 
-  assert.ok(out.includes('1.0 km in'), out);
-  // Halfway along a 20-minute leg.
-  assert.ok(out.includes('10m'), out);
-  assert.ok(out.includes('estimated'), out, 'an interpolated time must say so');
-  assert.ok(out.includes('↑'), out, 'climb is a fact about the course, known here');
+  // The distance leads, carrying the same ruler the ping tooltips label theirs with,
+  // and without the word "in" that a bare number used to need.
+  assert.ok(out.includes('📏'), out);
+  assert.ok(out.includes('1.0 km'), out);
+  assert.ok(!out.includes('km in'), out);
+  // No interpolated time. Straight-lining a clock across a leg that was climbed at
+  // whatever pace it was climbed at is arithmetic, and the fixes either side both
+  // carry times somebody actually recorded.
+  assert.ok(!out.includes('estimated'), out);
+  assert.ok(!out.includes('10m'), out);
+  assert.ok(!out.includes('Not reached yet'), out, 'the runner has been past here');
+  assert.ok(out.includes('📈'), out, 'climb is a fact about the course, known here');
 });
 
 test('past the last ping it says so rather than extrapolating a pace', () => {
@@ -439,10 +491,9 @@ test('past the last ping it says so rather than extrapolating a pace', () => {
   const out = text(hoverTooltipHtml(interpolateAt(points, c, 3500)));
 
   assert.ok(out.includes('Not reached yet'), out);
-  assert.ok(!out.includes('estimated'), out);
   // The ground is still described — height and climb don't wait for a runner.
-  assert.ok(out.includes('↑'), out);
-  assert.ok(out.includes('3.5 km in'), out);
+  assert.ok(out.includes('📈'), out);
+  assert.ok(out.includes('3.5 km'), out);
 });
 
 test('the hovered spot links to itself on the course, interpolated', () => {
@@ -464,60 +515,59 @@ test('hoverTooltipHtml renders nothing at all when there is nothing to describe'
 
 const MIN = 60000;
 
-test('a forecast is fenced off from everything that was measured', () => {
-  // The border is the only thing on a tooltip saying which figures came from a phone
-  // and which from a model. Before this, the forecast was one grey line among nine.
-  const html = tooltipHtml({
-    ...rich,
-    stats: { ...rich.stats, forecast: { t: rich.t - 47000, error: 47000, lo: rich.t - 12 * MIN, hi: rich.t + 13 * MIN } }
-  }, false);
+test('a ping tooltip carries no prediction at all', () => {
+  // It used to score each ping against the forecast made before it arrived — "47s
+  // late" — which was a reading about the MODEL on a card about a runner. The one
+  // place a prediction belongs is ground nobody has reached yet, which is the hover.
+  const html = tooltipHtml(rich, true);
+
+  assert.ok(!html.includes('class="pred"'), html);
+  assert.ok(!html.includes('class="bar"'), html);
+  // The scoring wording is gone with it. `\b` because the tag on the newest fix is
+  // "latest", which is not a verdict on anybody's timekeeping.
+  assert.ok(!/\blate\b|\bearly\b|spot on/.test(text(html)), html);
+  assert.ok(!text(html).includes('Forecast'), html);
+});
+
+/** The prediction section for a spot the runner hasn't reached. */
+function predicted(along = 3500) {
+  const c = course();
+  const points = [ping('a', 0, 0), ping('b', 20, 1000), ping('c', 40, 2000)];
+  return hoverTooltipHtml(interpolateAt(points, c, along, buildForecast(points, c)));
+}
+
+test('a prediction is drawn as a diagram, centred on the predicted time', () => {
+  // The window's two edges sit at the two ends of the bar, and the bar grows out from
+  // the middle where the predicted time is — so nothing has to be read to see how
+  // uncertain the answer is. "Likely 14:40 – 15:05" asked for arithmetic instead.
+  const html = predicted();
 
   assert.equal((html.match(/class="pred"/g) || []).length, 1, html);
-  const out = text(html);
-  assert.ok(out.includes('Forecast'), out);
-  // "Late" describes the RUNNER against the prediction: they arrived after it.
-  assert.ok(out.includes('47s late'), out);
-  assert.ok(out.includes('Likely'), out);
-  assert.ok(out.includes('25m wide'), out);
-});
-
-test('a forecast that was right says so rather than quoting a sub-second miss', () => {
-  const out = text(tooltipHtml({
-    ...rich,
-    stats: { ...rich.stats, forecast: { t: rich.t - 400, error: 400, lo: rich.t - MIN, hi: rich.t + MIN } }
-  }, false));
-
-  assert.ok(out.includes('spot on'), out);
-  assert.ok(!out.includes('late'), out);
-  assert.ok(!out.includes('early'), out);
-});
-
-test('arriving before the prediction is early, not a negative lateness', () => {
-  const out = text(tooltipHtml({
-    ...rich,
-    stats: { ...rich.stats, forecast: { t: rich.t + 90000, error: -90000, lo: rich.t, hi: rich.t + 5 * MIN } }
-  }, false));
-
-  assert.ok(out.includes('1m 30s early'), out);
-  assert.ok(!out.includes('-'), out);
-});
-
-test('no forecast means no prediction section', () => {
-  assert.ok(!tooltipHtml(rich, false).includes('class="pred"'));
+  assert.ok(html.includes('class="pv"'), html);
+  assert.ok(html.includes('class="bar"'), html);
+  // Two times in the edges row, in order, one at each end.
+  const edges = /<div class="edges"><span>(\d\d:\d\d)<\/span><span>(\d\d:\d\d)<\/span><\/div>/
+    .exec(html);
+  assert.ok(edges, html);
+  assert.ok(edges[1] < edges[2], `${edges[1]} is not before ${edges[2]}`);
+  // And the width underneath, as a duration and nothing else: the bar above it already
+  // says the word "wide".
+  const wide = /<div class="s wide">([^<]+)<\/div>/.exec(html);
+  assert.ok(wide, html);
+  assert.match(wide[1], /^(\d+h )?\d+m( \d+s)?$|^\d+s$/);
+  assert.ok(!text(html).includes('wide'), html);
+  assert.ok(!text(html).includes('Likely'), html);
 });
 
 test('the bar grows with the window and pins at full width', () => {
   const width = spanMs => {
-    const html = tooltipHtml({
-      ...rich,
-      stats: { ...rich.stats, forecast: { t: rich.t, error: 0, lo: rich.t, hi: rich.t + spanMs } }
-    }, false);
+    const html = predictionSection({ t: 0, lo: 0, hi: spanMs });
     return Number(html.match(/width:([\d.]+)%/)[1]);
   };
 
   // Scaled to `uncertaintyRefMs`, which is 30 minutes: a quarter-hour window is half
-  // the track, on every ping of every run. That fixed ruler is what makes two bars
-  // worth comparing at all.
+  // the track, on every prediction of every run. That fixed ruler is what makes two
+  // bars worth comparing at all.
   assert.equal(width(15 * MIN), 50);
   assert.ok(width(6 * MIN) < width(20 * MIN));
   // A window wider than the reference pins rather than overflowing its own track.
@@ -525,18 +575,27 @@ test('the bar grows with the window and pins at full width', () => {
   assert.equal(width(0), 0);
 });
 
-test('a hovered spot past the runner predicts, in the same section as a ping does', () => {
-  // Typeset by the same builder, because it is the same claim — one made about the
-  // future and one about the past. Two builders would make them look like two kinds.
+/**
+ * `predictionHtml` is module-private, so it is reached the way the app reaches it:
+ * through a hovered spot whose forecast has been replaced with a known window. The
+ * geometry of the bar is what is under test, not the model behind it.
+ */
+function predictionSection({ t, lo, hi }) {
   const c = course();
   const points = [ping('a', 0, 0), ping('b', 20, 1000), ping('c', 40, 2000)];
-  const forecast = buildForecast(points, c);
-  const html = hoverTooltipHtml(interpolateAt(points, c, 3500, forecast));
+  const at = interpolateAt(points, c, 3500, buildForecast(points, c));
+  return hoverTooltipHtml({ ...at, predicted: { t, lo, hi } });
+}
 
-  assert.ok(html.includes('class="pred"'), html);
+test('a hovered spot past the runner predicts rather than refusing to answer', () => {
+  const html = predicted();
+
   assert.ok(text(html).includes('Predicted'), html);
-  assert.ok(html.includes('class="bar"'), html);
+  // Which replaces the refusal: there is a model, so there is an answer.
   assert.ok(!text(html).includes('Not reached yet'), html);
+  // And the elapsed race time at that moment, beside the caption rather than as a
+  // fourth number inside the diagram.
+  assert.match(html, /Predicted &middot; <span class="cased">\d+h \d+m in<\/span>/);
 });
 
 // --- what getTooltip does with each layer --------------------------------------
@@ -556,7 +615,7 @@ test('hovering the course hit band describes the spot, not the segment', () => {
     coordinate: [at.lon, at.lat]
   });
 
-  assert.ok(out.html.includes('1.0 km in'), out.html);
+  assert.ok(out.html.includes('1.0 km'), out.html);
   assert.equal(tooltip({ object: null, layer: { id: 'trail' } }), null);
 });
 

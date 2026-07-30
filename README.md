@@ -227,62 +227,98 @@ snapper had done. **Your own location** is asked for as the page opens; see "Whe
 
 ### What a tooltip says
 
-A tooltip is **four bands**, and the rules between them are the design:
+A ping tooltip is a **status bar, the weather, the run's figures, and then whatever a person wrote**,
+in that order:
 
 ```
-01:48:00⁺¹ · latest
+01:48:00⁺¹ · latest              ▭ 24%  ▂▄▆_
+⛅ 11°C  Partly Cloudy
 🕒  16h 48m    +42m
 📏  23.9 km    +1.1 km
 🏃  6:12 /km
-↑   1,400 m    +141 m
-↓   195 m      +54 m
-──────────────────────────
-🔋 24%  🌡 11°C  📶 3/4  ⛈  ❤️ 141
-──────────────────────────
-FORECAST
-01:47⁺¹ · 48s late
-Likely 01:42 – 01:52 · 9m 57s wide
-▂▂▂▂▂▂▂▂▂▂▂▂▂▂
+⚡️  9.7 km/h
+📈  1,400 m    +141 m
+📉  195 m      +54 m
+❤️  141 bpm
 ──────────────────────────
 Over the Col du Bonhomme, legs are going
 Open in Google Maps
 ```
 
-Top band, what the run has done: each reading is a **total** with the leg that got there beside it,
-quieter. These were typeset identically before, which turned three answers into six equal numbers.
-Climb is two rows rather than one, because "focus on the total" cannot be done to a row holding two
-totals and two legs. Second band, what the **phone** was dealing with — five readings that are not
-about the race, grouped so that the rows above can be only about the race. Third band, anything that
-is a **guess**. Fourth, anything a person wrote.
+**The top line is a phone's status bar.** The time on the left, the battery and the signal on the
+right — which is exactly what those three readings are, so a reader who has held a phone already
+knows how to read it. It also gets two readings off the list below without losing them.
 
-Two rows are gone. **The coordinates**, six decimal places of them, and `snapped 12 m` beside them:
-diagnostics, and they used to be the first two things under the title, above how far in and how long
-in. The raw fix still reaches the one place it is worth anything, which is the Google Maps link.
+Those two icons are **drawn, not lettered**, and they are the only SVG on a card otherwise made of
+emoji. The reason is that they carry their readings *in their shape*: `🔋` is the same glyph at 4% as
+at 100%, so it could only ever label a number, while a cell drawn one fifth full has already said it,
+and `📶` is four bars whatever the signal is. Twelve lines of SVG buys a status bar that means what a
+status bar means. Both inherit the line's ink through `currentColor`, so neither needs a rule in
+either colour scheme, and neither goes red when low — this page spends its one accent colour on the
+run itself. The battery keeps its percentage as text beside the cell, because on a tracker that is not
+decoration: a phone at 6% is a run about to stop reporting, and "about a fifth" is not that warning.
+The signal has no text at all; `3/4` lives in the icon's label, where a screen reader and a resting
+pointer both find it.
 
-One row is new. **Pace over the last leg** — the number a runner actually wants, and the only row with
-no total to lead on, because a pace is always about a stretch and the stretch that matters is the one
-just finished. It is timed against the previous *snapped* ping rather than the previous ping: the
-numerator is course distance, so a gap timed from a fix that never landed on the route would divide
-this stretch of ground by less time than it took.
+**The weather is its own line**, between the status bar and the run, in a different voice — larger
+glyph, italic label, no tabular figures — because it is the only reading on the card that nothing
+about the run produced. It is also the setting rather than the story, and it belongs above the
+figures it explains: 4°C and rain is the first thing that accounts for a pace. There is no
+thermometer beside the temperature any more. The sky and the air are one reading from one sensor, and
+giving each an icon made two readings out of it, so the sky's own glyph does duty for both. The label
+stays next to the glyph rather than being replaced by it — a glyph is a category, and "Rain and
+thunder" and "Isolated Thunderstorms" draw the same cloud.
+
+**Time and distance lead the readings, at full weight.** They are the two figures somebody opened the
+tooltip for; everything under them qualifies one of the two, and that is the difference between a
+hierarchy and a list. Each reading is a **total** with the leg that got there beside it, quieter —
+these were typeset identically before, which turned three answers into six equal numbers. Climb is two
+rows rather than one, because "focus on the total" cannot be done to a row holding two totals and two
+legs.
+
+Two rows are gone from the top of the card. **The coordinates**, six decimal places of them, and
+`snapped 12 m` beside them: diagnostics, and they used to sit above how far in and how long in. The
+raw fix still reaches the one place it is worth anything, which is the Google Maps link.
+
+**Pace is stated twice, in both units.** One measurement — a `km/h` figure is one division away from a
+`min/km` one — but the two audiences for it do not convert: a runner thinks in minutes per kilometre
+and will not divide 3600 by anything, while anyone following by car, bike or map thinks in km/h.
+Deriving the second from the first costs a division and means the two can never disagree.
+
+Neither pace row has a total to lead on, because a pace is always about a stretch and the stretch that
+matters is the one just finished. It is timed against the previous *snapped* ping rather than the
+previous ping: the numerator is course distance, so a gap timed from a fix that never landed on the
+route would divide this stretch of ground by less time than it took.
 
 A pace also needs a leg long enough to divide. On the 165 km run in this repo, a five-minute ping that
 advanced 24 m along the course reported `209:47/km` — arithmetically exact, and about nothing at all,
 because a pace divides distance by time and a short enough distance divides *noise* by time. Below
-`paceMinMeters` (100 m, a tenth of the unit being quoted) there is simply no pace row. This is not a
-cap on slow paces: 22:14/km up a col is a fact and it gets printed.
+`paceMinMeters` (100 m, a tenth of the unit being quoted) there is simply no pace row, and no speed row
+either: one missing measurement, so both readings of it go. This is not a cap on slow paces: 22:14/km
+up a col is a fact and it gets printed.
 
-Legs that round away are left off for the same kind of reason. `stats.down` comes back as fractions of
-a metre left over from the elevation threshold, so a flat kilometre used to draw a column of `+0 m` —
-and beside a total, `+0 m` reads as a measured zero rather than as a number too small to have a digit.
+**Heart rate is in with the run's figures**, last of them, rather than off among the handset readings.
+It is the one number on the card that says what the last kilometre *cost*, which makes it a fact about
+the run in the way a pace is; battery and signal are facts about a handset, and they are up in the
+status bar where handset facts go.
+
+Legs that round away are left off. `stats.down` comes back as fractions of a metre left over from the
+elevation threshold, so a flat kilometre used to draw a column of `+0 m` — and beside a total, `+0 m`
+reads as a measured zero rather than as a number too small to have a digit.
 
 **The icons are emoji**, which is a trade taken with open eyes: they arrive in the platform's own
 colour and metrics and no stylesheet here can reach them. What buys that back is the weather, where a
 drawn set would need fifteen glyphs for a vocabulary everybody can already read. Having accepted them
-there, using them for the rest is the only way the tooltip has one voice. Two exceptions survived
-contact with a screenshot: `⬆️` and `⬇️` render as filled blue tiles that outweighed every number on
-the card and fought the one accent colour the page has, so the climb rows use plain `↑` and `↓`, which
-inherit the row's ink. And pace is a **runner**, not the stopwatch it obviously wanted — a stopwatch at
-11 px is a small circle with hands on it, and so is the clock two rows above.
+there, using them for the rest is the only way the tooltip has one voice — the two status icons
+excepted, for the reason above.
+
+Three of the choices took a screenshot to make. Climb is a **rising and a falling chart**, not an
+arrow: `⬆️` and `⬇️` render as filled blue tiles that outweighed every number on the card and fought
+the one accent colour the page has, while `📈` and `📉` are the shape the height strip at the bottom of
+the page draws these very numbers as, so the glyph and the graph agree. Pace is a **runner**, not the
+stopwatch it obviously wanted — a stopwatch at 11 px is a small circle with hands on it, and so is the
+clock two rows above. And distance is a **ruler** rather than a map pin, because a pin says "a place"
+and the reading is a length.
 
 The **weather glyph is matched on keywords**, worst weather first, rather than looked up in a table of
 Apple's condition names. The phone composes its own wording — every ping here says `Sunny`, which is
@@ -291,12 +327,17 @@ string formatting, and a label that missed it would draw nothing, which is the o
 drawing something approximate. The order carries real information too: "Rain and thunder" is a
 thunderstorm and not rain, and "Mostly Cloudy" is the cloudy answer while "Partly Cloudy" and "Mostly
 Clear" are both the in-between one. An unrecognised label falls through to `🌡` rather than to nothing,
-so the line keeps its shape. The label itself survives as the glyph's `title` and `aria-label`, which
-is where the difference between "Rain and thunder" and "Isolated Thunderstorms" lives.
+so the line keeps its shape — and that case is genuinely "some temperature, no idea what sky", which
+is the one place a thermometer is still the right icon.
 
 Night is deliberately not distinguished. A moon for "Clear" at 02:00 needs a sunrise table to be
 right, and would be wrong for half the year anywhere far enough north — which is where these races
 tend to be.
+
+**A ping carries no prediction.** It used to be scored against the forecast made before it arrived —
+`Predicted 12:36 · 47s late` — which was a reading about the *model* on a card about a runner, and it
+cost a quadratic walk-forward backtest on every paint to produce. The one place a prediction belongs is
+ground nobody has reached yet, which is the hover tooltip, and that is now the only place it appears.
 
 ### Times are 24-hour, and say which day of the race they are on
 
@@ -329,18 +370,39 @@ which is why the day-tag cases can be written at all. `metres()` went the same w
 every word in a tooltip is English, so a number grouped to some other convention beside them is a page
 that cannot decide.
 
-### The uncertainty bar
+### The prediction, as a diagram
 
-Under a prediction sits a bar whose **length is the width of the forecast window**. It is the only
-thing in a tooltip readable without reading: two predictions half an hour apart are worth comparing,
-and comparing `14:40 – 15:05` with `16:02 – 16:11` otherwise means arithmetic.
+Hovering ground the runner hasn't reached gives the one guess on the page, fenced off by a rule from
+everything that was measured, and drawn as a little diagram rather than written as three sentences:
+
+```
+      PREDICTED · 11h 2m in
+             09:01⁺¹
+     ────────▄▄▄▄▄▄▄▄────────
+     08:54⁺¹          09:09⁺¹
+             15m 28s
+```
+
+A forecast has a shape — a moment in the middle, a window either side of it, a width — so each part
+sits where the part it describes is. The predicted time is centred; the bar under it grows outwards
+from that same centre; the two edges of the window sit at the two ends of the bar; the width is
+underneath. Nothing has to be read to see how uncertain the answer is, which is what
+`Likely 14:40 – 15:05` asked for instead. The width says only the duration: the bar directly above it
+already says the word "wide". The elapsed race time at that moment goes beside the caption rather than
+becoming a fourth number in the diagram.
+
+The bar's **length is the width of the forecast window**. It is the only thing in a tooltip readable
+without reading: two predictions half an hour apart are worth comparing, and comparing
+`14:40 – 15:05` with `16:02 – 16:11` otherwise means arithmetic.
 
 Its scale is fixed — `uncertaintyRefMs`, 30 minutes to the full track — so the same fill always means
 the same span, on every ping of every run. The two alternatives both fail: a track spanning the window
 itself would be full width always and so say nothing about how uncertain anything is, and one scaled
 to the time remaining would change the ruler between one tooltip and the next. Windows wider than the
 reference pin at full width rather than overflowing; a forecast that uncertain is simply "very", and
-the figures are written out beside it.
+the figures are written out beside it. The fill grows from the middle rather than from a left edge,
+because the middle is where the predicted time is and the window is symmetric about it; growing from
+one end would draw the near edge as fixed and the far edge as the only uncertain one.
 
 ### Click to keep a tooltip
 
@@ -547,25 +609,29 @@ With a course present, three things change:
 
 - **Each ping carries its climb**, in the tooltip: metres up and down since the run started, and
   over the stretch since the previous ping. Alongside them, distance and elapsed time in the same
-  shape — how far and how long since the start, and since the ping before. Later pings also carry
-  **how the forecast did** — `Predicted 12:36 · 47s late` — scored against a model that had never
-  seen that ping or any after it. See "Predicting the rest".
+  shape — how far and how long since the start, and since the ping before — and the pace of the leg
+  just finished, in both units.
 
 - **Anywhere on the course can be asked about.** Hovering the route on the map, or the terrain on
   the strip, gives a tooltip for that spot: how far in, how high, and what the climb is to there.
-  Behind the runner the time is **interpolated between the pings either side** and labelled as an
-  estimate, since a constant pace across a five-minute gap is a guess — the only one the data
-  supports. Ahead of them it is **forecast**, with a window:
+  Behind the runner it says only that, and no time: interpolating a clock across a five-minute gap is
+  arithmetic on a straight line through ground that was climbed at whatever pace it was climbed at,
+  and the pings either side both carry times somebody actually recorded. Ahead of them the time is
+  **forecast**, with a window:
 
   ```
-  15.0 km in
-  81 m
-  12:55 · 1h 18m in
-  Likely 12:51 – 13:00
+  📏 15.0 km
+  ⛰️ 81 m
+
+        PREDICTED · 1h 18m in
+               12:55
+       ──────▄▄▄▄▄▄▄▄──────
+       12:51          13:00
+               8m 52s
   ```
 
-  Two rows, because they answer two different questions: when, as a single number you can hold in
-  your head, and how much that number is worth. A run too young to fit a model still says "Not
+  Drawn as a diagram, so the answer and how much it is worth arrive together rather than as two
+  sentences — see "The prediction, as a diagram". A run too young to fit a model still says "Not
   reached yet" rather than drawing a pace through two dots.
 
 ### Hovering works both ways
@@ -700,25 +766,19 @@ The residual scatter is floored twice over (`predictMinSigmaMs`, `predictSigmaFl
 legs can be fitted almost perfectly by three coefficients, and a band claiming ten seconds of
 certainty an hour out would be the most misleading thing on the screen.
 
-### Judging it
-
-Every ping late enough in the run carries a **`Predicted 12:36 · 47s late`** row. That figure comes
-from a walk-forward backtest, and strictly so: the forecast for ping *i* is fitted on pings `0..i-1`
-and anchored at ping `i-1`, so nothing from ping *i* or after it reaches the fit. It is a test of the
-prediction rather than a look at its own residuals, and it is the regime the model was actually in
-when that ping landed. One leg ahead is a modest test, and that is the point — it is the only
-forecast the data supported at the time.
-
-Measured on the sample runs, where `test_3` is a 13-ping prefix of `test_2` and so has ground truth
-for everything it cannot see: mean absolute error **1.6 min** over the nine unseen pings, all nine
-inside the 80% band, and a finish predicted at 13:24 (13:16–13:33) against an actual 13:22.
-
 ### Known limitation
 
 `flat` is **moving** pace. Time spent standing still widens the band, because it is real scatter, but
 it does not push the estimate later — so on a race with long aid-station stops the forecast will run
-optimistic. The per-ping scores are where that shows up: consistently "late" errors are this, and the
-fix would be a stoppage term rather than a tweak to any constant in `config.js`.
+optimistic. The fix would be a stoppage term rather than a tweak to any constant in `config.js`.
+
+The model was measured this way while it was being built, by a walk-forward backtest that fitted the
+forecast for ping *i* on pings `0..i-1` only: mean absolute error **1.6 min** over the nine unseen
+pings of `test_3`, all nine inside the 80% band, and a finish predicted at 13:24 (13:16–13:33) against
+an actual 13:22. That code (`deriveForecastErrors`) has been **deleted** along with the tooltip row it
+fed. It was quadratic — n fits over up to n legs, on every paint — and it was answering a question
+about the model on a card about a runner. Anyone wanting the figure again should write it as a test
+rather than as a row.
 
 ## Data format
 
@@ -772,7 +832,7 @@ resting heart rate of nought is not a reading anyone should be shown.
 `wthr` arrives as one string with the temperature and the sky glued together by an " and " the phone
 composed. Those are two readings, not one — a number you compare with the last ping's, and a word you
 don't — so `splitWeather` pulls them apart for display: the temperature keeps its digits and the sky
-becomes a glyph. It splits on the *first* " and " only, so a label carrying one of its own ("Rain and
+becomes a glyph *and* keeps its wording, on the tooltip's own weather line. It splits on the *first* " and " only, so a label carrying one of its own ("Rain and
 thunder") survives intact, and a string with none is passed through whole rather than sliced on a
 guess — which is also what covers a phone that one day sends the label alone.
 
@@ -1047,9 +1107,10 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
   committed before the reader learned to look for it, and `hydrate` diffs on sha, which never changes,
   so without the bump it stays invisible forever on exactly the browsers that had visited before. This
   has now happened four times (`v6`, `v8`, `v10`); assume it applies rather than checking.
-- A new sensor reading — something about the phone or its surroundings rather than about the run →
-  the `.meta` line in `tooltipHtml`, not a row of its own. That grouping is what lets the rows above
-  be only about the race.
+- A new reading → decide first which of the three it is, because the card is laid out by that and
+  nothing else. A fact about the **handset** goes in the status bar on the title line (`statusHtml`);
+  a fact about the **weather** joins the weather line; a fact about the **run** is a `reading()` row.
+  Putting a phone's battery among the race figures is what the status bar exists to undo.
 - Another weather label the ladder has not met → a keyword in `WEATHER` in `layers.js`, in the right
   place in the order. Deliberately not a table of Apple's condition names: the phone composes its own
   wording, and the ladder's order is what decides that "Rain and thunder" is a storm rather than rain.
@@ -1259,8 +1320,14 @@ are all reachable without a DOM or a clock that has to be believed.
 The tooltips are tested as markup, since that is what they are: `tooltipHtml` and its two
 siblings are pure functions returning strings, and the tests strip the tags and read what a
 person would see. Row counts are asserted as well as wording — a ping with nothing derived
-gets exactly zero reading rows, a full one gets five — because the failure mode of a tooltip is
+gets exactly zero reading rows, a full one gets six — because the failure mode of a tooltip is
 not a wrong number, it is a row that quietly stopped appearing.
+
+The two drawn icons are tested on the thing that makes them worth being SVG: that the battery's fill
+rectangle is *wider at 100% than at 50%*, that 1% is still a sliver rather than an empty shell, and
+that a phone with two bars lights two. The prediction is tested as a diagram — one section, the two
+edge times in order at the two ends, a width that is a bare duration — and a ping tooltip is asserted
+to carry no prediction and none of the scoring wording at all, which is the row that was deleted.
 
 The clock functions are the reason those tests can exist at all. Every case is built from
 **local** date components rather than from an absolute instant, so the assertions hold under any

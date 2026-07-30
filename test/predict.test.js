@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { buildCourse } from '../src/course.js';
 import {
-  buildForecast, deriveForecastErrors, fitPace, legsOf, positionAt, predictAt
+  buildForecast, fitPace, legsOf, positionAt, predictAt
 } from '../src/predict.js';
 import { deriveStats } from '../src/stats.js';
 
@@ -234,44 +234,6 @@ test('the positional range brackets the estimate, and runs out at the finish', (
   assert.equal(positionAt(forecast, points[0].t), null);
 });
 
-// --- the backtest -----------------------------------------------------------
-
-test('each ping is scored against a forecast that never saw it', () => {
-  const course = flat();
-  const points = steady(8, 1000, course);
-  deriveForecastErrors(points, course);
-
-  // Two legs are needed before anything can be fitted, so the first three pings
-  // carry no score.
-  assert.equal(points[0].stats.forecast, undefined);
-  assert.equal(points[2].stats.forecast, undefined);
-  assert.ok(points[3].stats.forecast, 'the fourth ping went unscored');
-
-  // A perfectly steady run should be predicted perfectly.
-  for (const point of points.slice(3)) {
-    assert.ok(Math.abs(point.stats.forecast.error) < 1000,
-      `${point.name} was ${point.stats.forecast.error} ms out`);
-  }
-});
-
-test('a ping that arrives late is scored late, and one that hurries is early', () => {
-  const course = flat();
-  const points = steady(6, 1000, course);
-  // A seventh ping five minutes later than the pace so far implies.
-  points.push(ping('slow', 10 + 5 * 5, 6000));
-  deriveStats(points, course);
-  deriveForecastErrors(points, course);
-
-  assert.ok(points[6].stats.forecast.error > 4 * MINUTE,
-    `scored ${points[6].stats.forecast.error} ms`);
-
-  const hurried = steady(6, 1000, course);
-  hurried.push(ping('fast', 26, 7000));
-  deriveStats(hurried, course);
-  deriveForecastErrors(hurried, course);
-  assert.ok(hurried[6].stats.forecast.error < 0, 'a fast leg was not scored early');
-});
-
 // --- refusing to answer -----------------------------------------------------
 
 test('nothing to fit means no forecast rather than a bad one', () => {
@@ -297,10 +259,6 @@ test('a finished run has no rest of the course to forecast', () => {
   points[points.length - 1].is_finish = true;
 
   assert.equal(buildForecast(points, course), null);
-  // The per-ping scores survive it: how the forecast did is still worth knowing
-  // after the race, and is the only way to judge it.
-  deriveForecastErrors(points, course);
-  assert.ok(points[5].stats.forecast, 'a finish erased the scores too');
 });
 
 test('a course with no descent leaves that coefficient on its prior', () => {
