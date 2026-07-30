@@ -26,7 +26,8 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   const finishTimeEl  = el('finish-time');
   const finishRangeEl = el('finish-range');
   const togglesEl = el('toggles');
-  const boxes = { waypoints: el('t-waypoints'), raw: el('t-raw') };
+  const boxes = { waypoints: el('t-waypoints'), raw: el('t-raw'), viewer: el('t-viewer') };
+  const viewerNoteEl = el('t-viewer-note');
 
   let points = [];
   // The ping the phone marked as its last, when there is one. Derived rather
@@ -39,7 +40,11 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
   let run = null;
   // Which toggles have anything to toggle: no waypoints in the GPX, no
   // waypoints checkbox. Same rule as the run picker below.
-  let available = { waypoints: false, raw: false };
+  //
+  // `viewer` is the odd one out and stays out of the per-run reset: whether the
+  // browser can locate you at all is a fact about the browser, settled once at
+  // startup, not something a course can take away.
+  let available = { waypoints: false, raw: false, viewer: false };
 
   tickerEl.addEventListener('click', onRecenter);
   runEl.addEventListener('change', () => onRunPick(runEl.value));
@@ -50,15 +55,23 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
    * Not per-run: whether you want to see the raw fixes behind the snapped ones
    * is a preference about how you read a map, not a fact about a race.
    *
-   * The two defaults are deliberately opposite ways round. Waypoints are part
+   * The defaults are deliberately not all the same way round. Waypoints are part
    * of the course and belong on it, so they are on unless switched off. The raw
    * fixes are an audit of the SNAPPING — the thing to look at when a dot seems
    * wrong, and clutter the rest of the time — so they are off unless asked for.
+   * Your own location is off for a stronger reason than clutter: switching it on
+   * is what asks the browser for permission, and that question may only be
+   * raised by someone choosing to raise it.
+   *
+   * Remembering it is what makes a second visit quiet. The permission has already
+   * been granted by then, so restoring the tick re-acquires the position without
+   * a prompt — and a visitor who left it off is still never asked.
    */
   const saved = storage.get(LS_LAYERS) || {};
   const flags = {
     waypoints: saved.waypoints !== false,
-    raw: saved.raw === true
+    raw: saved.raw === true,
+    viewer: saved.viewer === true
   };
 
   for (const [name, box] of Object.entries(boxes)) {
@@ -74,7 +87,10 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
     for (const [name, box] of Object.entries(boxes)) {
       box.parentElement.hidden = !available[name];
     }
-    togglesEl.hidden = !available.waypoints && !available.raw;
+    // The group goes when every one of its rows has gone, which is now a question
+    // about all three rather than about the course's two: on a run with no GPX at
+    // all, "My location" is still a real choice and still has to be reachable.
+    togglesEl.hidden = !Object.keys(boxes).some(name => available[name]);
   }
 
   /**
@@ -295,6 +311,37 @@ export function createUi({ onRecenter, onRunPick, onLayers = () => {} }) {
 
     /** The current toggle state, for whoever needs it before the first change. */
     layers: () => ({ ...flags }),
+
+    /**
+     * How the location request is getting on, said on the label of the checkbox
+     * that made it.
+     *
+     * Deliberately not `setError`: that line belongs to the poll loop, which
+     * rewrites it on every pass, so a permission message put there would flicker
+     * out within the minute. Here the explanation sits on the control it is about,
+     * which is also where someone will look for it.
+     *
+     * A refusal is the one state that changes the control rather than just
+     * annotating it. The tick comes off, the box is disabled, and the preference
+     * is forgotten — a permission revoked in the browser's own settings must not
+     * leave the page asking again on every load, and only those settings can give
+     * it back.
+     *
+     * @param {'locating'|'on'|'denied'|'error'} state
+     * @param {string} [note] from `geoMessage`, for the 'error' case.
+     */
+    setViewerState(state, note = '') {
+      viewerNoteEl.textContent =
+        state === 'locating' ? 'locating…' :
+        state === 'denied' ? 'blocked' :
+        state === 'error' ? note : '';
+
+      if (state !== 'denied') return;
+      boxes.viewer.checked = false;
+      boxes.viewer.disabled = true;
+      flags.viewer = false;
+      storage.set(LS_LAYERS, flags);
+    },
 
     /** @param {string|null} next the run now on screen, null when there are none. */
     setRun(next) {

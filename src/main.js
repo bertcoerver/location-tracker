@@ -7,6 +7,7 @@ import {
   cachedBeacons, cachedIndex, defaultRun, fetchCourse, hydrate, loadCache, RateLimitError,
   refreshBeacons, refreshIndex
 } from './github.js';
+import { createGeo, geoMessage, isDenied, viewerFrom } from './geo.js';
 import { parseGpx } from './gpx.js';
 import { buildPoints, latestOf } from './points.js';
 import { buildForecast, deriveForecastErrors } from './predict.js';
@@ -114,14 +115,63 @@ const ui = createUi({
   onRunPick: name => openRun(name),
   // One switch, two views: hiding the waypoints has to hide them on the height
   // strip too, or the toggle would be lying about half the screen.
-  onLayers: flags => { map.setLayers(flags); profile.setLayers(flags); }
+  onLayers: applyLayers
 });
+
+/**
+ * The panel's checkboxes, sent where each of them belongs.
+ *
+ * Two of the three are layer flags and go to both views. `viewer` looks like one
+ * and isn't: there is no layer to switch, because the dot exists only while the
+ * browser is actually reporting a position — so what the tick controls is the
+ * WATCH, and the dot follows from whether that watch has answered. Splitting it
+ * off here keeps a flag neither view could act on out of both of them.
+ *
+ * One function rather than an inline callback, because startup has to do exactly
+ * this too: a preference restored from the last visit has to take effect the same
+ * way as one just changed.
+ */
+function applyLayers({ viewer, ...flags }) {
+  map.setLayers(flags);
+  profile.setLayers(flags);
+  if (viewer) ui.setViewerState('locating');
+  else map.setViewer(null);
+  geo.enable(viewer);
+}
+
+// Asking the device where it is — the one thing here that isn't the network. The
+// dot it produces is not part of the run: no cache, nothing persisted about the
+// position itself, and no effect on the camera.
+const geo = createGeo({
+  onPosition: position => {
+    map.setViewer(viewerFrom(position));
+    ui.setViewerState('on');
+  },
+  // A failure takes the dot away rather than leaving the last known position
+  // sitting there: a stale "you are here" is a worse answer than none, and this
+  // one would be stale without saying so.
+  onError: error => {
+    map.setViewer(null);
+    if (!isDenied(error)) return ui.setViewerState('error', geoMessage(error));
+    // A refusal is final until the browser's own settings change, so let the watch
+    // go rather than leaving one running that can never report anything. The panel
+    // unticks and disables its box to match — otherwise the switch would be off
+    // while the thing it switches was still on, and nothing could turn it back.
+    ui.setViewerState('denied');
+    geo.enable(false);
+  }
+});
+
+// Whether the control is offered at all. Settled once, because it is a fact about
+// the browser: no geolocation API, or a page served over plain http from anything
+// but localhost, and there is nothing a tick could achieve. See `supported`.
+ui.setAvailable({ viewer: geo.supported() });
 
 // The panel restores its toggles from the last visit, so both views need to be
 // told once at startup — a checkbox that comes back unticked has to arrive with
-// its layer already gone.
-map.setLayers(ui.layers());
-profile.setLayers(ui.layers());
+// its layer already gone. This is also what re-acquires a position the visitor
+// asked for on an earlier visit, silently, the permission already being granted.
+applyLayers(ui.layers());
 
 /**
  * Paint one run's points, snapped to its course if it has one.

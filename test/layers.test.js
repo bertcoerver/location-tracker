@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import {
   beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
-  tooltipHtml, waypointTooltipHtml
+  tooltipHtml, viewerLayers, waypointTooltipHtml
 } from '../src/layers.js';
 import { interpolateAt } from '../src/stats.js';
 
@@ -348,4 +348,12 @@ test('a beacon tooltip names the run, ages it, and says it can be opened', () =>
 test('a run name is escaped, since it comes from a folder in the repo', () => {
   const html = beaconTooltipHtml({ run: '<script>x</script>', latest: Date.now() });
   assert.ok(!html.includes('<script>'), html);
+});
+
+// --- the visitor's own position -----------------------------------------------
+
+test('viewerLayers draws nothing until the visitor asks to be located', () => {
+  // Which is the default and the common case: three layers per frame for a
+  // permission nobody granted. The layers themselves need deck.gl's global.
+  assert.deepEqual(viewerLayers(null, 0), []);
 });

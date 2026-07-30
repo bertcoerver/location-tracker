@@ -1,10 +1,11 @@
 // Colour comes from the CSS custom properties in index.html, so light/dark are
 // defined in exactly one place and this file just reads whichever is active.
 //
-// There are four colours and each one means something: a ping, the newest ping,
-// the course, and the surface they sit on. Age used to be encoded in a ramp,
-// which needed a legend to decode; the status panel says how old the newest fix
-// is in words instead, which is what people were reading the ramp for anyway.
+// There are five colours and each one means something: a ping, the newest ping,
+// the course, the person looking at the page, and the surface they all sit on.
+// Age used to be encoded in a ramp, which needed a legend to decode; the status
+// panel says how old the newest fix is in words instead, which is what people
+// were reading the ramp for anyway.
 
 export function hexToRgb(hex) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -25,7 +26,8 @@ export function getPalette() {
     point: read('--point'),
     accent: read('--accent'),
     surface: read('--surface-1'),
-    course: read('--course')
+    course: read('--course'),
+    viewer: read('--viewer')
   };
   return palette;
 }
@@ -38,6 +40,10 @@ export const surface = () => getPalette().surface;
 
 /** The race course. Off the blue ramp on purpose: the route is context, not data. */
 export const course  = () => getPalette().course;
+
+/** The page's visitor. Blue, like every "you are here" dot ever made — and a
+ *  deeper blue than `point()`, which is the pings. */
+export const viewer  = () => getPalette().viewer;
 
 export const prefersDark = () =>
   globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;

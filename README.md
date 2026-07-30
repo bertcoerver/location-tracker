@@ -226,8 +226,55 @@ coordinate *and* names it. Links without a label stay on the documented one. See
 Every ping is one colour, with the newest in the accent colour and a pulsing halo. There used to
 be a time ramp and a legend to decode it, but the only thing anyone read off it was how fresh the
 newest fix was, and the ticker now says that in words. All the colours are CSS custom properties in
-[`index.html`](index.html) — `--point`, `--accent`, `--course`, `--surface-*` — and
+[`index.html`](index.html) — `--point`, `--accent`, `--course`, `--viewer`, `--surface-*` — and
 [`colors.js`](src/colors.js) reads whichever of light or dark is active.
+
+### Where *you* are
+
+Tick **My location** in the panel and the page asks the browser where you are, then marks it with a
+blue pulsing dot. It is the only thing on the map that isn't about the race, and it is the other half
+of a spectator's question: the pings say where the runner is, and without this anyone planning to
+intercept them had to hold their own position in their head or go and look at a different map.
+
+Blue, because a blue dot has meant "you" on every map anyone has used — which is awkward here, since
+the pings are blue too. So the distinction is made three times over: its own deeper token rather than
+`--point`, a 3 px ring where a ping has 1.5, and a blue halo where the only other pulsing thing on
+screen pulses orange. It sits **under** the course and the pings, like the other runs' dots, for one
+extra reason: the accuracy circle can be a kilometre across and would wash the route out.
+
+That circle is drawn at whatever radius the browser admits to, in **metres**, so it shrinks as you
+zoom out — it is an area of ground, not a mark on a screen. A wifi-derived fix can be a kilometre
+wide and a GPS one ten metres, and those two must not look alike. It is the same refusal to
+over-claim as the raw-versus-snapped trail and the forecast's band; a bare dot on a 1 km fix would be
+the same lie in a new place. A fix that reports no usable accuracy gets no circle at all rather than
+one drawn from a number that means nothing.
+
+Three things it deliberately does **not** do:
+
+- **It never moves the camera.** Ticking the box while watching a race on another continent draws a
+  dot you cannot see, and that is the honest outcome — the alternative is taking the race off screen
+  to show you a fact about yourself you already knew.
+- **It never asks unprompted.** The checkbox is off by default and switching it on is what raises the
+  permission prompt, so a visitor who doesn't want it is never asked. The choice is remembered, so a
+  second visit re-acquires silently — the permission having already been granted — and one that was
+  left off stays off.
+- **It stores nothing about the position.** Where you were last time is a fact about a person, not
+  about a race, and this page has no reason to keep it.
+
+Nothing appears on the height strip. The visitor has no place on an axis of distance-along-the-course,
+and inventing one would mean claiming they are on it.
+
+If the browser refuses, the reason is appended to the checkbox's own label — `blocked`,
+`unavailable`, `no signal` — rather than going to the panel's error line, which belongs to the poll
+loop and is rewritten every pass. A refusal is the one case that changes the control instead of
+merely annotating it: the tick comes off, the box is disabled and the preference is forgotten, since
+only the browser's own site settings can give the permission back and a page that re-asks on every
+load is a page that has stopped listening. See [`geo.js`](src/geo.js).
+
+> ⚠️ Geolocation needs a **secure context**. `https://` and `localhost` count; `http://192.168.x.x`
+> does not — and over that the API is fully present and every call to it fails, which looks exactly
+> like a bug in this code. The checkbox is hidden entirely when it can't work, so if it isn't there,
+> check the URL first. See "Running it".
 
 ## The course
 
@@ -689,6 +736,7 @@ src/
   config.js         repo coordinates, poll interval — the only file to edit
   route.js          which run the URL pins, if any
   github.js         data layer: the tree request, the run index, the point cache
+  geo.js            the visitor's own position, from the browser (the only device API here)
   points.js         cache -> sorted array, time position, bounding box
   gpx.js            reads a .gpx into segments and waypoints (no dependencies)
   course.js         projects it to metres: distance along, climb, loop detection, grid index
@@ -749,6 +797,10 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
   know how the other one found it.
 - Another optional layer → a checkbox in `index.html`, a flag through `ui.js`'s `onLayers`, and
   `setLayers` on `map.js` and/or `profile.js`. Nothing that carries a reading should get one.
+- Anything else asked of the DEVICE rather than of GitHub → `geo.js`, and route it through
+  `applyLayers` in `main.js`, which is where a checkbox that controls a permission rather than a layer
+  gets separated from the ones that don't. Keep the pure half exported and tested: a device API can't
+  be exercised in `node --test`, but the shape of what it hands back can.
 
 ## Running it
 
@@ -759,6 +811,12 @@ npm run dev          # or: python3 -m http.server 8000
 ```
 
 Then open http://localhost:8000/.
+
+**Use `localhost`, not your machine's LAN address**, if you want to test "My location". Geolocation
+is only available in a secure context: `https://` and `localhost` qualify, `http://192.168.x.x` does
+not. Over that address `navigator.geolocation` is fully present and every call to it fails, so the
+symptom looks like broken code rather than a blocked API — the checkbox hides itself there for
+exactly that reason. To try it on a phone, use the deployed HTTPS URL.
 
 ## Tests
 

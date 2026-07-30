@@ -60,6 +60,22 @@ export const CONFIG = {
   // 400 fetches to draw dots nobody can tell apart at that zoom.
   beaconLimit: 40,
 
+  // --- where the person LOOKING at the page is ------------------------------
+  // Passed straight to `watchPosition`. Nothing here touches the network, so
+  // none of it costs anything against the API budget.
+  //
+  // High accuracy is off on purpose. This dot answers "roughly where am I
+  // relative to this race", which a coarse fix answers perfectly well at any
+  // zoom a course is legible at — and the accuracy circle is drawn at its true
+  // radius, so a poor fix cannot pretend to be a good one. Turning it on wakes
+  // the GPS chip and drains the battery of the person watching, who may well be
+  // out on the course themselves.
+  viewerHighAccuracy: false,
+  // A fix half a minute old is a fine answer to "roughly where am I" and costs
+  // nothing to give, so let the browser serve one from its own cache.
+  viewerMaxAgeMs: 30000,
+  viewerTimeoutMs: 15000,
+
   // --- snapping pings onto a run's course, when it has a .gpx ---------------
   snapMeters: 500,     // further than this from the course and a ping is left where it is
   // Both of these are metres of cost per metre of movement, so they're directly

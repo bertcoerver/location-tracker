@@ -2,7 +2,9 @@
 // index.html, not an import.
 
 import { CONFIG } from './config.js';
-import { accent, course as courseColor, point as pointColor, surface, prefersDark } from './colors.js';
+import {
+  accent, course as courseColor, point as pointColor, surface, viewer as viewerColor, prefersDark
+} from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
 import { interpolateAt } from './stats.js';
@@ -304,6 +306,89 @@ export function beaconLayers(beacons) {
       outlineWidth: 0.3,
       outlineColor: [...paper, 235],
       updateTriggers: { getPosition: trigger, getText: trigger, getColor: trigger }
+    })
+  ];
+}
+
+/**
+ * Where the person looking at the page is: a blue dot, its pulse, and the circle
+ * the browser's own uncertainty describes.
+ *
+ * The one mark on this map that isn't about the race. It answers the other half of
+ * a spectator's question — the pings say where the runner is, and until now
+ * nothing said where *you* are, so anyone planning to intercept a runner had to
+ * hold one of those two facts in their head or go and look at a different map.
+ *
+ * Blue because a blue dot has meant "you" on every map anyone has used. That
+ * creates the one real hazard here, since the pings are blue too, so the
+ * distinction is made three times over: its own deeper token rather than
+ * `point()`, a 3 px ring where a ping has 1.5, and a blue halo where the only
+ * other pulsing thing on screen — the newest ping — pulses orange.
+ *
+ * The accuracy circle is drawn in METRES, at whatever radius the browser admits
+ * to. A wifi-derived fix can be a kilometre wide and a GPS one ten metres, and
+ * those two must not look alike: this map already refuses to over-claim in the
+ * raw-versus-snapped trail and in the forecast's band, and a bare dot on a
+ * 1 km fix would be the same lie in a new place.
+ *
+ * Nothing here is pickable. It carries no reading a tooltip could add to, and a
+ * hit area the size of the accuracy circle would sit over the route swallowing
+ * hovers meant for the race.
+ *
+ * @param {{lat, lon, accuracy}|null} viewer from `viewerFrom`, or null when the
+ *   visitor hasn't asked to be located — which is the default and the common case.
+ * @param {number} pulse 0..1, the same value the newest ping's halo rides.
+ */
+export function viewerLayers(viewer, pulse) {
+  if (!viewer) return [];
+
+  const ink = viewerColor();
+  const data = [[viewer.lon, viewer.lat]];
+  // The dot moves as the visitor does, and the array is rebuilt every frame, so
+  // its identity says nothing about whether the position changed.
+  const at = String(data[0]);
+
+  return [
+    // How sure the browser is, to scale. `radiusUnits: 'meters'` is the point of
+    // this layer: it has to shrink as you zoom out, because it is an area of
+    // ground and not a mark on a screen.
+    ...(viewer.accuracy ? [new deck.ScatterplotLayer({
+      id: 'viewer-accuracy',
+      data,
+      radiusUnits: 'meters',
+      getPosition: p => p,
+      getRadius: viewer.accuracy,
+      // So a very good fix doesn't vanish under its own dot — at which point the
+      // circle has stopped being a claim about metres and is just a soft edge.
+      radiusMinPixels: 12,
+      getFillColor: [...ink, 38],
+      updateTriggers: { getPosition: at, getRadius: viewer.accuracy }
+    })] : []),
+
+    new deck.ScatterplotLayer({
+      id: 'viewer-halo',
+      data,
+      radiusUnits: 'pixels',
+      getPosition: p => p,
+      getRadius: 11 + pulse * 9,
+      getFillColor: [...ink, Math.round(70 - pulse * 45)],
+      updateTriggers: { getPosition: at, getRadius: pulse, getFillColor: pulse }
+    }),
+
+    new deck.ScatterplotLayer({
+      id: 'viewer',
+      data,
+      radiusUnits: 'pixels',
+      getPosition: p => p,
+      getRadius: 7,
+      stroked: true,
+      lineWidthUnits: 'pixels',
+      // Twice the ring a ping gets. On a phone-map dot this width is most of what
+      // makes it read as "you" rather than as another measurement.
+      getLineWidth: 3,
+      getLineColor: [...surface(), 255],
+      getFillColor: [...ink, 255],
+      updateTriggers: { getPosition: at }
     })
   ];
 }

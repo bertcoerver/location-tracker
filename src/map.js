@@ -5,7 +5,7 @@ import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
-  makeTooltip, pointLayers, tooltipHtml, waypointTooltipHtml
+  makeTooltip, pointLayers, tooltipHtml, viewerLayers, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
@@ -35,6 +35,11 @@ export function createMap(container, {
   // The other runs, each as one dot where it was last seen. Not part of this
   // view's subject — they are the way OUT of it, to another run.
   let beacons = [];
+  // Where the person LOOKING at the page is, once they have asked to be shown —
+  // `{ lat, lon, accuracy }`, or null, which is the default. Not part of the run
+  // and not part of the camera: acquiring it never moves the view. See
+  // `viewerLayers`.
+  let viewer = null;
   // The run's pace model, or null, and where it says the runner is AT THIS
   // MOMENT — `{ along, lo, hi }` in metres, from `positionAt`. A prediction of a
   // TIME has no place on a view whose axes are both space, but a prediction of a
@@ -85,6 +90,12 @@ export function createMap(container, {
       // Under the course and the pings, deliberately: another race is context for
       // this one, and nothing about it may sit on top of the reading.
       ...beaconLayers(beacons),
+      // Under the course as well, and for a sharper reason than the beacons: the
+      // accuracy circle can be a kilometre across, and drawn over the route it
+      // would wash the race out. The cost is that a visitor standing on the
+      // course can be partly covered by a ping — but the halo still reads around
+      // the edge of one, and the race is what the page is for.
+      ...viewerLayers(viewer, pulse),
       ...courseLayers(course, layerFlags.waypoints),
       ...pointLayers(points, pulse, layerFlags.raw),
       ...forecastLayers(course, marker),
@@ -728,6 +739,21 @@ export function createMap(container, {
       render();
     },
 
+    /**
+     * Where the page's visitor is, or null to stop showing them.
+     *
+     * Deliberately does nothing to the camera. Someone watching a race in another
+     * country and ticking the box gets a dot they cannot see, and that is the
+     * honest outcome — moving the view would take the race off screen to show
+     * them a fact about themselves they already knew.
+     *
+     * @param {{lat, lon, accuracy}|null} next from `viewerFrom`.
+     */
+    setViewer(next) {
+      viewer = next;
+      render();
+    },
+
     isFollowing: () => follow,
 
     /** Turn following back on and fly to the newest fix. */
@@ -749,7 +775,11 @@ export function createMap(container, {
     /** Drive the halo animation. Called once per frame from main.js. */
     tick() {
       pulse = (Math.sin(Date.now() / 500) + 1) / 2;
-      if (points.length) deckgl.setProps({ layers: allLayers() });
+      // Two things pulse, and either one is reason enough to repaint. The viewer's
+      // dot is the case with no pings behind it: a run that hasn't started yet is
+      // exactly when someone checks where they are relative to it, and without
+      // this the halo would sit frozen.
+      if (points.length || viewer) deckgl.setProps({ layers: allLayers() });
       // Here rather than in render(): a fly-to moves the camera for a second
       // without anything calling render, and a pinned tooltip left behind at
       // the old screen position would be pointing at nothing.

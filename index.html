@@ -36,6 +36,14 @@
        more, because the panel now says how old the newest fix is and that is
        the only part of the answer anyone was reading off the colours. */
     --point: #2a78d6;
+
+    /* Where the PERSON LOOKING at the page is, which is the one mark here that
+       isn't about the race at all. Blue because a blue dot means "you" on every
+       map anyone has ever used — and its own token rather than `--point`, deeper
+       than it, because the pings are blue too and these two must never be
+       confused. The colour alone doesn't carry that: see `viewerLayers` for the
+       heavier ring and the halo that finish the job. */
+    --viewer: #1a73e8;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -51,6 +59,7 @@
 
       /* Same hue, lifted for the dark surface. */
       --point:          #5598e7;
+      --viewer:         #4a9eff;
     }
   }
 
@@ -326,6 +335,23 @@
     accent-color: var(--accent);
     cursor: pointer;
   }
+  /* Why the location isn't showing, appended to the label of the control it is
+     about — see `geoMessage`. Empty most of the time, and `:empty` is what keeps
+     it from reserving the gap the flex row would otherwise give it. */
+  #t-viewer-note {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  #t-viewer-note:empty { display: none; }
+  /* Permission refused: the control stays visible, because its label is now the
+     only thing on screen explaining why there is no dot, but it stops pretending
+     to be usable. Only the browser's own site settings can undo this. */
+  #toggles label:has(input:disabled) {
+    color: var(--text-muted);
+    cursor: default;
+  }
+  #toggles label:has(input:disabled):hover { color: var(--text-muted); }
+  #toggles input:disabled { cursor: default; }
 
   #error {
     margin-top: 7px;
@@ -490,6 +516,11 @@
   <div id="toggles" hidden>
     <label><input type="checkbox" id="t-waypoints" checked> Points of interest</label>
     <label><input type="checkbox" id="t-raw"> Raw points</label>
+    <!-- Unlike the two above, this one isn't a fact about the course — it is what
+         asks the browser for the visitor's own position, so ticking it is what
+         raises the permission prompt. Off by default: a page that demands your
+         location before you've asked it for anything is a page nobody trusts. -->
+    <label><input type="checkbox" id="t-viewer"> My location <span id="t-viewer-note"></span></label>
   </div>
   <div id="error"></div>
 </div>
