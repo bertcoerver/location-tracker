@@ -147,10 +147,23 @@ Once the phone says it is done, the line says that instead:
 ● Finished 12m ago
 ```
 
-The clock ticks each second while the run is live. It **stops** when the run finishes — either
-because the phone said so, or because nothing has arrived for an hour — and its label changes from
-"Elapsed" to "Total". A clock still counting hours after the finish would be claiming the race is
-still on.
+The clock ticks each second while the run is live. It **stops** when the run is over, and its label
+changes from "Elapsed" to "Total". A clock still counting hours after the finish would be claiming the
+race is still on.
+
+Deciding *when* it is over is the interesting part, and an hour of silence is not the answer. That was
+the rule, and a mountain section with no network beat it outright: the clock froze mid-race, relabelled
+itself "Total", and the panel announced a finish two ridges early. So a quiet phone gets a second
+question asked about it — could the runner still plausibly be on the course? The forecast already
+answers that, because it is the same condition that keeps the orange marker on the map, and the clock
+now stops exactly when the marker does: when the predicted position crosses the finish line.
+
+The order of authority is: a ping marked `is_finish` ends the run outright, whatever anything else
+thinks; otherwise a ping within the hour, or a prediction that has not yet reached the line, keeps it
+running. That bounds the failure honestly rather than removing it — a phone that dies at 20 km of 160
+keeps the clock going for as long as the last measured pace says the rest would take, and then every
+reading reverts at once. A run with no course has no forecast and so keeps the plain one-hour rule,
+which is the honest answer there: with no route there is no finish line to predict crossing.
 
 What it counts *from* has two answers, in order of authority. If the course filename named a start,
 that is the gun, and it wins: a ping written on the drive to the start line is not the beginning of
@@ -177,12 +190,19 @@ says which silence you're looking at: `Not started yet` before the gun, `No loca
 Under it, once the run has enough legs to fit one, sits the **predicted finish** and its range:
 
 ```
-FINISH
-~13:24
+ESTIMATED FINISH
+13:24
 13:16 – 13:33
 ```
 
-On a race longer than a day both lines pick up a `+1`; see "Times are 24-hour". The same question as
+The caption carries the hedge, which is why the number does not. It used to read `FINISH` over a
+`~13:24`, and a tilde is a hedge fighting tabular figures for room in the one place on the panel where
+the digits have to stay aligned; the word says it better and costs nothing, because the box only ever
+appears while the run is live and so every time in it is a guess.
+
+On a race longer than a day all three times pick up a raised `⁺¹`; see "Times are 24-hour". It is the
+same rule the tooltips use, in ems, so it raises correctly over a 20 px value and an 11 px range
+alike. The same question as
 the clock, asked forwards, and typeset identically to it — the range underneath
 is what says which of the two is a guess, and it is not decoration: it is the part that stops a single
 number being read as a promise. It shows only while the run is live, and never at all for a run that has
@@ -190,8 +210,9 @@ finished: a forecast is a claim about a phone that is still out there. See "Pred
 
 ### Knowing a run is over
 
-Without being told, the page can only guess from the clock: no ping for an hour means finished. That
-guess cannot tell a finished race from a phone in a tunnel, and it is an hour late either way.
+Without being told, the page can only guess — from the clock and from the forecast, as above. Neither
+can tell a finished race from a phone in a tunnel, and the guess is an hour late at best and a whole
+predicted race late at worst.
 
 So the phone marks its last upload. It is an **ordinary ping** — coordinates, battery and all — with
 one extra field, `"is_finish": true`. Three things change the moment it lands:
@@ -213,8 +234,8 @@ picker for the usual hour. The index comes from GitHub's tree API, which lists p
 contents, so a run has to be opened before its finish is visible.
 
 **One dot, two signals.** Its colour is the last poll's outcome — green for fine, red for failed,
-with the reason spelled out underneath — and it pulses while the run is live, meaning it has pinged
-within the last hour. There used to be a second dot for that; two of them side by side just read as
+with the reason spelled out underneath — and it pulses while the run is live, by the same test the
+clock uses: a ping within the hour, or a prediction still short of the finish line. There used to be a second dot for that; two of them side by side just read as
 decoration.
 
 That ticker is also the main control. **Click it to fly back to the newest fix**; panning the map
@@ -641,7 +662,14 @@ With a course present, three things change:
   both views it is deliberately *only* the range: no dot at the mean, no caps at the bounds, because
   the model claims a stretch and marking a point on it invites the eye to read a precision that
   isn't there. Once the prediction runs off the end of the course it disappears: a phone that
-  stopped reporting three days ago is not "probably at the finish line".
+  stopped reporting three days ago is not "probably at the finish line". That disappearance is also
+  what stops the elapsed clock — see "The race clock" — so the map and the panel cannot disagree
+  about whether the run is still on.
+
+  In both views the band is drawn **under the pings**. It is a guess about the course; a ping is a
+  measurement. Drawn on top, as it was on the map, it covered the pulsing dot whenever the phone went
+  quiet long enough for the band to slide over the newest fix — hiding the one mark on screen that is
+  known behind the one that isn't, in exactly the situation where the known one matters most.
 
 - **Each ping carries its climb**, in the tooltip: metres up and down since the run started, and
   over the stretch since the previous ping. Alongside them, distance and elapsed time in the same
@@ -1395,11 +1423,16 @@ cache even though the course file's SHA is unchanged. The forecast tests then as
 the whole design leans on rather than merely arguing it: adding unsnapped warm-up pings to a
 run changes the fitted pace by *nothing at all*.
 
-The clock is the one piece of the panel with its own tests, because it is the one piece with
-a decision in it — six branches, three of which only happen on race morning and so cannot be
-waited for. `clockReading` is pure and returns the label and the value as data, so the
-countdown, the flip to zero at the gun, the gap before the first ping, and elapsed-from-the-gun
-are all reachable without a DOM or a clock that has to be believed.
+The panel has two pieces with their own tests, because it has two pieces with a decision in
+them. `clockReading` has six branches, three of which only happen on race morning and so cannot
+be waited for; it is pure and returns the label and the value as data, so the countdown, the flip
+to zero at the gun, the gap before the first ping, and elapsed-from-the-gun are all reachable
+without a DOM or a clock that has to be believed. `stillRunning` is the other, and its cases are
+hours apart in real time: a run that pinged eight times and then went quiet is built once, and the
+tests assert that the ping rule has given up on it an hour later while the forecast has not, that
+the answer flips at the predicted crossing and not a minute either side, that it stays flipped
+fifty hours on, and that an `is_finish` outranks all of it. Both are exported for the tests and
+called from one place each, so nothing in the panel can hold a second opinion.
 
 The tooltips are tested as markup, since that is what they are: `tooltipHtml` and its two
 siblings are pure functions returning strings, and the tests strip the tags and read what a

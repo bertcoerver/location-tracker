@@ -96,8 +96,13 @@ export function createMap(container, {
       // the edge of one, and the race is what the page is for.
       ...viewerLayers(viewer, pulse),
       ...courseLayers(course),
-      ...pointLayers(points, pulse),
+      // Above the course and under the pings, which is the same order the height
+      // strip draws these two in. The band is a guess about the course; a ping is
+      // a measurement. Drawn last it covered the pulsing dot whenever the phone
+      // went quiet for a while and the band slid over the newest fix — hiding the
+      // one mark on the map that is actually known, behind the one that isn't.
       ...forecastLayers(course, marker),
+      ...pointLayers(points, pulse),
       ...hoverLayers(hover)
     ];
   }

@@ -3,7 +3,7 @@
 import { byRecency, isLive } from './github.js';
 import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
-import { predictAt } from './predict.js';
+import { positionAt, predictAt } from './predict.js';
 import { originOf } from './stats.js';
 import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm } from './util.js';
 
@@ -62,6 +62,54 @@ export function clockReading({ start, points, finish, live, now }) {
   return { label: live ? 'Elapsed' : 'Total', value: fmtElapsed(to - from) };
 }
 
+/**
+ * Is the run on screen still underway?
+ *
+ * Pure and exported for the same reason `clockReading` is: it is a decision, three
+ * of its cases take hours of real time to reach, and everything downstream of it —
+ * the pulsing dot, the elapsed clock, the "next ping" estimate, the predicted
+ * finish — says something different depending on the answer.
+ *
+ * Three conditions, and only the first is a fact. A finish marker is an assertion by
+ * the phone that the race is over, and it outranks everything: it says so the instant
+ * it lands rather than an hour later.
+ *
+ * After that there are two ways to still be running, and either will do:
+ *
+ *   1. a recent ping. `isLive` can only guess from the clock, and its hour is a guess
+ *      about a phone that pings every few minutes.
+ *   2. a prediction that has not yet reached the finish line. `positionAt` returns
+ *      null once the forecast has walked off the end of the course, so this is
+ *      exactly the condition that keeps the orange marker on the map: the clock and
+ *      the marker stop together, which they did not before.
+ *
+ * The second is there because an hour of silence is normal on the terrain this page
+ * is for. A mountain section with no network beat the ping-only rule outright — the
+ * elapsed clock froze mid-race, relabelled itself "Total", and the panel announced a
+ * finish two ridges early, which is the one thing it must never do. Judging from the
+ * forecast instead keeps the run live for as long as the runner could plausibly still
+ * be out there, and no longer: a phone that dies at 20 km of 160 keeps the clock
+ * going, but only until the predicted position crosses the line, and then every
+ * reading reverts at once.
+ *
+ * A run with no course has no forecast, so it gets the ping-only rule. That is the
+ * honest answer there: with no route there is no finish line to predict crossing, and
+ * nothing but the clock to go on.
+ *
+ * Only for the run on screen. The picker's per-run marker keeps plain `isLive`,
+ * because the index is built from the tree API and knows nothing about file contents;
+ * a run has to be opened before its finish or its course is visible.
+ *
+ * @param {object|null} finish   the ping the phone marked as its last, if any
+ * @param {object|null} record   this run's index entry, for its `latest`
+ * @param {object|null} forecast from `buildForecast`, or null with no course
+ * @param {number}      now
+ */
+export function stillRunning({ finish, record, forecast, now }) {
+  if (finish) return false;
+  return isLive(record, now) || Boolean(forecast && positionAt(forecast, now));
+}
+
 export function createUi({ onRecenter, onRunPick }) {
   const el = id => document.getElementById(id);
   // The heading IS the run picker — see `renderRuns`. `titleEl` is its wrapper,
@@ -88,6 +136,9 @@ export function createUi({ onRecenter, onRunPick }) {
   let finish = null;
   // The run's pace model, or null. `buildForecast` already refuses to produce one
   // for a finished run, so the panel never has to decide between the two.
+  //
+  // Two readings depend on it, not one: the predicted finish is made out of it, and
+  // `stillRunning` asks it whether a quiet phone could still be on the course.
   let forecast = null;
   let index = {};
   let run = null;
@@ -112,20 +163,9 @@ export function createUi({ onRecenter, onRunPick }) {
     onRunPick(runEl.value);
   });
 
-  /**
-   * Is the phone still out there?
-   *
-   * Two conditions, and the second is the one worth having. `isLive` can only
-   * guess from the clock — a run stays "live" for an hour after its last ping —
-   * so it cannot tell a finished race from a phone in a tunnel. A finish marker
-   * can, and it says so the instant it lands rather than an hour later.
-   *
-   * Only for the run on screen. The picker's per-run marker keeps plain
-   * `isLive`, because the index is built from the tree API and knows nothing
-   * about file contents; a run has to be opened before its finish is visible.
-   */
+  /** Is the phone still out there? See [`stillRunning`](#stillRunning). */
   function live(now = Date.now()) {
-    return !finish && isLive(index[run], now);
+    return stillRunning({ finish, record: index[run], forecast, now });
   }
 
   /**
@@ -241,12 +281,20 @@ export function createUi({ onRecenter, onRunPick }) {
     // finish line 24 hours early. The range carries it too — a window can straddle
     // midnight while the estimate inside it doesn't.
     const origin = originOf(points);
-    const stamp = t => `${fmtHm(t)}${dayTag(t, origin)}`;
+    //
+    // Raised and quietened, exactly as the tooltips do it — `.d` is one rule in ems
+    // shared by both. Written through `innerHTML` for the sake of that one span;
+    // everything either side of it is digits out of `fmtHm` and a sign out of
+    // `dayTag`, so there is no untrusted text anywhere near this.
+    const stamp = t => {
+      const day = dayTag(t, origin);
+      return `${fmtHm(t)}${day ? `<span class="d">${day}</span>` : ''}`;
+    };
 
-    // The tilde is doing real work: it is the difference between "13:24" and
-    // "about 13:24", and this box has no room to say the second one in words.
-    finishTimeEl.textContent = `~${stamp(at.t)}`;
-    finishRangeEl.textContent = `${stamp(at.lo)} – ${stamp(at.hi)}`;
+    // No tilde. It was carrying "about" in one character, but the caption above says
+    // "Estimated" in a word now, and a hedge said twice is a hedge nobody reads.
+    finishTimeEl.innerHTML = stamp(at.t);
+    finishRangeEl.innerHTML = `${stamp(at.lo)} – ${stamp(at.hi)}`;
   }
 
   /**
@@ -330,6 +378,11 @@ export function createUi({ onRecenter, onRunPick }) {
      */
     setForecast(next) {
       forecast = next;
+      // The clock too, not just the finish: liveness reads the forecast now, so a
+      // model arriving is what turns "Total" back into a running "Elapsed" on a run
+      // that has been quiet for over an hour. It would right itself on the next tick
+      // a second later; this is so the panel is never briefly wrong on first paint.
+      renderClock();
       renderFinish();
     },
 

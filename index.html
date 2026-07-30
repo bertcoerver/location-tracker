@@ -472,8 +472,10 @@
   .tip .wl { letter-spacing: .02em; font-style: italic; }
   /* "+1" — which day of the race a time falls on. Raised and quietened, so it reads
      as an annotation on the time rather than as part of it: "09:12+1" at full weight
-     is a number nobody can parse at a glance. */
-  .tip .d {
+     is a number nobody can parse at a glance.
+     Not scoped to `.tip`: the panel's estimated finish carries the same tag for the
+     same reason, and one rule in ems raises it correctly at both sizes. */
+  .d {
     font-size: .8em;
     vertical-align: .25em;
     margin-left: 1px;
@@ -666,7 +668,12 @@
     <div id="clock-time" class="v">0:00:00</div>
   </div>
   <div id="finish" hidden>
-    <div class="k">Finish</div>
+    <!-- "Estimated", not "Finish". The box only ever appears while the run is
+         live, so every time in it is a guess — and saying so in the caption is
+         what lets the value below be a plain time. It used to carry a "~", which
+         put the hedge on the number itself where it had to fight the tabular
+         figures for room. -->
+    <div class="k">Estimated finish</div>
     <div id="finish-time" class="v"></div>
     <div id="finish-range"></div>
   </div>

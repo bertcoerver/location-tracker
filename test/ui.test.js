@@ -6,9 +6,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { clockReading } from '../src/ui.js';
+import { buildCourse } from '../src/course.js';
+import { isLive } from '../src/github.js';
+import { buildForecast, predictAt } from '../src/predict.js';
+import { deriveStats } from '../src/stats.js';
+import { clockReading, stillRunning } from '../src/ui.js';
 
 const MINUTE = 60000;
+const LAT0 = 46.5;
 const GUN = Date.parse('2026-08-28T09:00:00+02:00');
 
 /** A ping `minutes` after the gun — negative for one before it. */
@@ -100,4 +105,82 @@ test('an unscheduled quiet run reads first-to-last as a total', () => {
   assert.deepEqual(read({ points: [ping(10), ping(130)], live: false, now: GUN + 900 * MINUTE }), {
     label: 'Total', value: '2:00:00'
   });
+});
+
+// --- is the run still underway? ----------------------------------------------
+// The other pure decision in the panel, and the one every reading in it hangs off.
+// Its interesting cases are hours apart in real time, which is exactly why they are
+// here: a phone that has been silent for two hours mid-race cannot be waited for.
+
+/** 20 km of dead-flat course, a vertex every 100 m. */
+function flatCourse() {
+  const M_LON = 111320 * Math.cos((LAT0 * Math.PI) / 180);
+  const segments = [Array.from({ length: 201 },
+    (_, i) => ({ lat: LAT0, lon: (i * 100) / M_LON, ele: 100 }))];
+  return buildCourse({ segments, waypoints: [], hasElevation: true }, 'sha');
+}
+
+/**
+ * A run that pinged every 5 minutes from the gun, a kilometre at a time, and then
+ * went quiet — so its last ping is at 7 km and 35 minutes past the gun, and 13 km
+ * of course are left at 5 min/km. The forecast has it finishing 65 minutes later.
+ */
+function quietAt7km() {
+  const course = flatCourse();
+  const points = Array.from({ length: 8 }, (_, i) => ({
+    name: `p${i}.json`, t: GUN + i * 5 * MINUTE, lat: LAT0, lon: 0,
+    snap: { along: i * 1000, lat: LAT0, lon: 0, ele: 100, off: 3 }
+  }));
+  deriveStats(points, course);
+  return { course, points, forecast: buildForecast(points, course), last: points[7].t };
+}
+
+test('a recent ping is enough on its own, course or no course', () => {
+  const record = { latest: GUN + 30 * MINUTE };
+  assert.equal(stillRunning({
+    finish: null, record, forecast: null, now: GUN + 40 * MINUTE
+  }), true);
+});
+
+test('with no course, silence past the hour ends the run — the old rule, kept', () => {
+  // Nothing to predict a finish line from, so the clock is all there is to go on.
+  const record = { latest: GUN + 30 * MINUTE };
+  assert.equal(stillRunning({
+    finish: null, record, forecast: null, now: GUN + 95 * MINUTE
+  }), false);
+});
+
+test('a two-hour blackout mid-race is still a race', () => {
+  // The reported bug: a mountain section with no network, and the panel called the
+  // race over an hour in. 13 km of course left at the pace it had measured, so the
+  // runner is plausibly out there for another hour after `isLive` has given up.
+  const { forecast, last } = quietAt7km();
+  const record = { latest: last };
+  const now = last + 60 * MINUTE;
+
+  assert.equal(isLive(record, now), false, 'the ping rule has given up by now');
+  assert.equal(stillRunning({ finish: null, record, forecast, now }), true);
+});
+
+test('and it ends when the prediction crosses the line, not before', () => {
+  const { forecast, course, last } = quietAt7km();
+  const record = { latest: last };
+  // 13 km at 5 min/km after the last ping, so the crossing is 65 minutes out.
+  const crossing = predictAt(forecast, course.length).t;
+
+  assert.ok(crossing > last + 60 * MINUTE, `crossing is only ${(crossing - last) / MINUTE} min out`);
+  assert.equal(stillRunning({ finish: null, record, forecast, now: crossing - MINUTE }), true);
+  assert.equal(stillRunning({ finish: null, record, forecast, now: crossing + MINUTE }), false);
+  // And it stays over: this is not a window that reopens.
+  assert.equal(stillRunning({ finish: null, record, forecast, now: crossing + 3000 * MINUTE }), false);
+});
+
+test('a finish outranks a prediction that has not reached the line', () => {
+  // The phone said it was done. Whatever the arithmetic thinks is left of the
+  // course, the race ended when the phone said so.
+  const { forecast, points, last } = quietAt7km();
+  const finish = { ...points[7], is_finish: true };
+  assert.equal(stillRunning({
+    finish, record: { latest: last }, forecast, now: last + MINUTE
+  }), false);
 });
