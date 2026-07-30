@@ -46,12 +46,26 @@ unrelated. Short moves — following the runner to the next ping, centring a poi
 height strip — keep the fixed 900 ms; they are already on screen, and the flight is only there to
 say the view moved rather than jumped.
 
-One trap worth recording, because the symptom is nothing like the cause: **handing deck a view state
-mid-flight ends the transition where it stands** — even the interpolated one deck itself just
-reported. So `render()` updates layers alone while a flight is running, and only `setViewState` is
-allowed to push a camera. Without that, a switch flew out and then froze the instant the new points,
-the forecast and the other runs' dots arrived — three redraws within a few milliseconds — leaving the
-camera roughly over the new course and never zooming in.
+**The flight leaves immediately**, before anything has been fetched. The dot drawn for that run is a
+position the page has had all along, so the camera sets off towards it at once and the real fit —
+the pings, then the whole course — retargets the arc as each arrives. Waiting for the data to land
+before starting to move is what made a switch still feel like the page load it replaced. For the
+same reason the panel says `Loading…` rather than `No locations yet` while it waits: the latter is a
+claim about the *run*, and nothing has been asked yet.
+
+Two traps worth recording, because in both cases the symptom is nothing like the cause:
+
+- **Handing deck a view state mid-flight ends the transition where it stands** — even the
+  interpolated one deck itself just reported. So `render()` updates layers alone while a flight is
+  running, and only `setViewState` may push a camera. Without that, a switch flew out and then froze
+  the instant the new points, the forecast and the other runs' dots arrived — three redraws within a
+  few milliseconds — leaving the camera roughly over the new course and never zooming in.
+- **Replacing one flight with another has deck report the interruption *while* it is being handed the
+  replacement**, from inside that very `setProps`. So the `onTransitionInterrupt` handler cannot
+  simply settle: it would strip the transition props off the flight that is only just starting and
+  clear the in-flight flag, and the next redraw would then end it on the spot. Each move carries a
+  token and only the current one's callbacks act. This is exactly the path a switch takes, twice
+  over, as it retargets from the dot to the pings to the course.
 
 ## On screen
 

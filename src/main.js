@@ -232,10 +232,13 @@ async function reconcile() {
   // to be for the run already on screen is spent, not saved up for the next one.
   const fly = flyToNext;
   flyToNext = false;
+  const switching = next !== run;
 
-  if (next !== run) {
+  if (switching) {
     run = next;
-    map.refit(fly);           // a different run is a different place
+    // The destination, so the camera can set off from the dot already drawn for
+    // that run instead of waiting for its files.
+    map.refit(fly, next);     // a different run is a different place
     select(null);             // and a point pinned on the old one is gone
 
     course = null;
@@ -244,6 +247,11 @@ async function reconcile() {
     profile.setCourse(null);
     ui.setAvailable({ waypoints: false, raw: false });
     ui.setRun(run);
+    // Before painting, because painting an empty cache is what makes the panel
+    // speak. "No locations yet" is a claim about the RUN; with nothing fetched
+    // yet the true statement is that we are fetching. A switch is a load, and
+    // `poll` brackets its own the same way.
+    ui.setState('loading');
     show(loadCache(run));     // paint that run's cache before the CDN answers
   }
   ui.setRuns(index, run);
@@ -253,6 +261,12 @@ async function reconcile() {
   // course only changes what the pings are drawn ON, so it can land second.
   show(await hydrate(run, index));
   if (await loadCourse()) show(loadCache(run));
+
+  // This pass started the load, so this pass has to end it — otherwise the dot
+  // pulses forever, claiming a run is live when all it means is that the page is
+  // still thinking. Only when we were the one switching: a poll owns the state
+  // otherwise, and stamping 'ok' over an error it just reported would hide it.
+  if (switching) ui.setState('ok');
 
   // The other runs go last, always. They are a signpost to somewhere else, and
   // nothing about them may hold up the race being looked at — even though in the

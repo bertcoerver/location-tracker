@@ -55,6 +55,9 @@ export function createMap(container, {
   // races read as two places on one map rather than as two page loads.
   let flyOnFit = false;
   let flying = false;
+  // Which camera move is the current one. Only its own callbacks may act — see
+  // `settle`.
+  let flight = 0;
   let pulse = 0;
   // Mid-drag: the pinned point is being slid along the course. While this is
   // true the camera controller is switched off entirely — see `pointerdown`.
@@ -401,9 +404,20 @@ export function createMap(container, {
     paint();
   }
 
-  /** Drop the transition props once a flight ends, so a later render() doesn't
-   *  re-trigger an animation to where we already are. */
-  function settle() {
+  /**
+   * Drop the transition props once a flight ends, so a later render() doesn't
+   * re-trigger an animation to where we already are.
+   *
+   * Ignored when a LATER flight has already been set up, and that guard is
+   * load-bearing rather than defensive. Replacing one flight with another — which
+   * is how a switch retargets itself as the pings and then the course arrive — has
+   * deck report the interruption *while* it is being handed the replacement, from
+   * inside `paint()`. Settling on that would strip the props off the flight that
+   * is only just starting and clear `flying`, and the next render() would then end
+   * it on the spot: the camera would stall wherever the arc had got to.
+   */
+  function settle(id) {
+    if (id !== flight) return;
     flying = false;
     viewState = withoutTransition(viewState);
   }
@@ -428,6 +442,10 @@ export function createMap(container, {
    *   a cut to somewhere unrelated.
    */
   function setViewState(next, animate) {
+    // Every camera move retires the one before it, so a callback arriving from an
+    // older flight can be recognised and ignored. See `settle`.
+    const id = ++flight;
+
     if (animate) {
       flying = true;
       viewState = {
@@ -436,8 +454,8 @@ export function createMap(container, {
         // `curve` is how high the arc goes; a little above deck's √2 default, so
         // the zoom out and back in is unmistakable rather than merely present.
         transitionInterpolator: new deck.FlyToInterpolator({ speed: 1.6, curve: 1.5 }),
-        onTransitionEnd: settle,
-        onTransitionInterrupt: settle
+        onTransitionEnd: () => settle(id),
+        onTransitionInterrupt: () => settle(id)
       };
     } else {
       flying = false;
@@ -672,11 +690,31 @@ export function createMap(container, {
      *   Following comes back on with it, and that is not a side effect — asking
      *   for another race means asking to be shown it, and a `follow: false` left
      *   over from panning the previous one would strand the camera there.
+     *
+     * @param {string|null} run where we are heading, so the flight can LEAVE NOW
+     *   rather than when the data lands. The dot already drawn for that run is a
+     *   position we have had all along — see `beaconLayers` — and waiting for a
+     *   fetch to start moving makes a switch feel like the page load it replaced.
+     *   The real fit follows whenever it is ready and retargets this mid-arc.
      */
-    refit(animate = false) {
+    refit(animate = false, run = null) {
       fitted = false;
       flyOnFit = animate;
-      if (animate) setFollow(true);
+      if (!animate) return;
+      setFollow(true);
+
+      const at = beacons.find(b => b.run === run);
+      if (!at) return;
+      setViewState({
+        ...viewState,
+        longitude: at.lon,
+        latitude: at.lat,
+        // A single dot says where the race is and nothing about how big it is, so
+        // this is a guess at "close enough to be looking at one" — and a floor
+        // rather than a setting, so a switch made while already zoomed in doesn't
+        // pull the camera back out. The fit that follows knows the real answer.
+        zoom: Math.max(viewState.zoom, 12)
+      }, 'far');
     },
 
     /**
