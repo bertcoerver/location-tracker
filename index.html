@@ -405,11 +405,98 @@
     color: var(--text-primary) !important;
     max-width: 260px;
   }
-  .tip .t { font-weight: 600; margin-bottom: 3px; }
+  .tip .t { font-weight: 600; margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+  /* "+1" — which day of the race a time falls on. Raised and quietened, so it reads
+     as an annotation on the time rather than as part of it: "09:12+1" at full weight
+     is a number nobody can parse at a glance. */
+  .tip .d {
+    font-size: .8em;
+    vertical-align: .25em;
+    margin-left: 1px;
+    color: var(--text-muted);
+  }
   .tip .r {
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+
+  /* One reading: a glyph, the answer, and quietly beside it the context.
+     A grid rather than a flex row so the glyphs form a column and every answer starts
+     at the same x — which is what makes five rows scannable instead of five sentences.
+     The third column takes the remaining width, so the "since last" figures align
+     down their own left edge too. */
+  .tip .row {
+    display: grid;
+    grid-template-columns: 1.5em max-content 1fr;
+    align-items: baseline;
+    column-gap: 7px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* Emoji come from the system font at whatever size it likes; a step down is what
+     keeps them from out-weighing the numbers they label. The weight is for the two
+     glyphs that are NOT emoji — the climb arrows — which need it to hold their own
+     beside them, and which emoji ignore. */
+  .tip .i { font-size: .9em; font-weight: 600; font-style: normal; }
+  .tip .row .i { text-align: center; }
+  .tip .row .p { color: var(--text-primary); }
+  .tip .s { color: var(--text-muted); font-size: 11px; }
+
+  /* The sensor line: what the phone was dealing with, as against what the run did.
+     The one row allowed to wrap — five readings will not always fit 260 px, and
+     `nowrap` here would clip a heart rate rather than move it down a line. */
+  .tip .meta {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 10px;
+    row-gap: 2px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  .tip .meta .c { white-space: nowrap; }
+  .tip .meta .c .i { margin-right: 3px; }
+
+  /* Predictions, fenced off. Everything above this border was measured and
+     everything below it is a guess, and the border is the only thing on the tooltip
+     that says which is which. */
+  .tip .pred {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+  .tip .pred .k { margin-bottom: 1px; }
+  /* The one number here worth reading first. Deliberately smaller than the panel's
+     `.v` — a tooltip is not the panel, and 20 px inside a 260 px box shouts. */
+  .tip .pv {
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  /* How wide the window is, as a length — the only thing in a tooltip readable
+     without reading. Scaled to a fixed span (`uncertaintyRefMs`), so the same fill
+     always means the same number of minutes. */
+  .tip .bar {
+    height: 3px;
+    /* The bottom margin is not symmetry: without it the bar sits three pixels above
+       the Maps link and reads as a rule underlining the section rather than as a
+       meter belonging to the numbers above it. */
+    margin: 5px 0 3px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .tip .bar > i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
   }
   .tip .m {
     margin-top: 5px; padding-top: 5px;

@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ago, coarse, escapeHtml, fmtCountdown, fmtDuration, fmtElapsed, mapsUrl, parseStamp, parseTime,
-  persistedAt, pool, throttle
+  ago, coarse, dayOffset, dayTag, escapeHtml, fmtClock, fmtCountdown, fmtDuration, fmtElapsed,
+  fmtHm, fmtPace, mapsUrl, parseStamp, parseTime, persistedAt, pool, throttle
 } from '../src/util.js';
 
 test('parseTime recovers the ISO timestamp from a filename', () => {
@@ -404,4 +404,100 @@ test('mapsUrl keeps a label from breaking out of its own delimiters', () => {
   // And everything else is percent-encoded rather than trusted — waypoint names
   // come out of a GPX file somebody else wrote.
   assert.ok(mapsUrl(46.5, 8.1, 'a&b="c"').endsWith('(a%26b%3D%22c%22)'));
+});
+
+// --- the wall clock ------------------------------------------------------------
+// Every case here is built from LOCAL date components rather than from an absolute
+// instant, so the assertions hold whatever `TZ` the suite runs under. That is also
+// the point of these functions having stopped being `Intl.DateTimeFormat`: there is
+// nothing left for a locale to decide, so there is nothing left to be flaky.
+
+/** A local wall-clock moment, as an epoch. */
+const at = (y, m, d, h, min = 0, s = 0) => new Date(y, m - 1, d, h, min, s).getTime();
+
+test('fmtClock is a 24-hour time and nothing else', () => {
+  assert.equal(fmtClock(at(2026, 7, 28, 14, 6, 1)), '14:06:01');
+  // The reading that made the old 12-hour formatter unusable next to a race clock.
+  assert.equal(fmtClock(at(2026, 7, 28, 23, 59, 59)), '23:59:59');
+  assert.equal(fmtClock(at(2026, 7, 28, 12, 0, 0)), '12:00:00');
+});
+
+test('midnight is 00:00:00, not 24: and not 0:', () => {
+  // Both of the wrong answers are ones a hand-rolled formatter can give: `getHours`
+  // returns 0 and `padStart` is what makes it two digits.
+  assert.equal(fmtClock(at(2026, 7, 28, 0, 0, 0)), '00:00:00');
+  assert.equal(fmtHm(at(2026, 7, 28, 0, 5, 0)), '00:05');
+});
+
+test('fmtHm drops the seconds, for times nobody measured', () => {
+  // A forecast is exact to about ten minutes. Quoting "13:24:40" for it would claim
+  // a precision the window printed beside it explicitly denies.
+  assert.equal(fmtHm(at(2026, 7, 28, 13, 24, 40)), '13:24');
+  assert.equal(fmtHm(at(2026, 7, 28, 9, 5, 0)), '09:05');
+});
+
+test('neither clock ever says AM or PM', () => {
+  for (const hour of [0, 1, 11, 12, 13, 23]) {
+    const t = at(2026, 7, 28, hour, 30, 0);
+    assert.ok(!/[AaPp]\.?[Mm]/.test(fmtClock(t)), fmtClock(t));
+    assert.ok(!/[AaPp]\.?[Mm]/.test(fmtHm(t)), fmtHm(t));
+  }
+});
+
+// --- which day of the race ------------------------------------------------------
+
+test('dayOffset counts calendar days, not 24-hour blocks', () => {
+  const gun = at(2026, 7, 28, 6, 0);
+
+  // Sixteen hours, one calendar day: a race that starts at dawn and finishes the
+  // same evening is entirely day 0, however long it took.
+  assert.equal(dayOffset(at(2026, 7, 28, 22, 0), gun), 0);
+  // One hour, two calendar days: 23:30 to 00:30 crosses midnight and so crosses days.
+  assert.equal(dayOffset(at(2026, 7, 29, 0, 30), at(2026, 7, 28, 23, 30)), 1);
+  assert.equal(dayOffset(at(2026, 7, 30, 5, 0), gun), 2);
+});
+
+test('dayOffset goes backwards for a moment before the start', () => {
+  // Warm-up pings sent the evening before a 06:00 gun really are on the day before,
+  // and a run whose pre-gun fixes silently read as day 0 would hide what makes them
+  // pre-gun.
+  assert.equal(dayOffset(at(2026, 7, 27, 21, 0), at(2026, 7, 28, 6, 0)), -1);
+});
+
+test('dayTag writes the offset only when there is one', () => {
+  const gun = at(2026, 8, 28, 9, 0);
+
+  assert.equal(dayTag(at(2026, 8, 28, 23, 0), gun), '');
+  assert.equal(dayTag(at(2026, 8, 29, 9, 12), gun), '+1');
+  assert.equal(dayTag(at(2026, 8, 30, 2, 0), gun), '+2');
+  assert.equal(dayTag(at(2026, 8, 27, 20, 0), gun), '-1');
+});
+
+test('dayTag says nothing at all when there is no race day to count from', () => {
+  // A run with nothing raced yet: `originOf` has no answer, so neither has this.
+  assert.equal(dayTag(Date.now(), null), '');
+  assert.equal(dayTag(Date.now(), undefined), '');
+  assert.equal(dayTag(Date.now(), NaN), '');
+});
+
+// --- pace -----------------------------------------------------------------------
+
+test('fmtPace is minutes and seconds per kilometre', () => {
+  assert.equal(fmtPace(5.5 * 60000), '5:30');
+  assert.equal(fmtPace(210000), '3:30');
+  // Padded, so a column of paces lines up under tabular figures.
+  assert.equal(fmtPace(4 * 60000 + 5000), '4:05');
+});
+
+test('fmtPace does not cap at an hour, because a runner can be that slow', () => {
+  // Walking a steep col really does take twenty minutes a kilometre, and that is the
+  // fact. `fmtElapsed` makes the same choice for the same reason.
+  assert.equal(fmtPace(22 * 60000 + 14000), '22:14');
+  assert.equal(fmtPace(75 * 60000), '75:00');
+});
+
+test('fmtPace rounds to the nearest second and never goes negative', () => {
+  assert.equal(fmtPace(300400), '5:00');
+  assert.equal(fmtPace(300600), '5:01');
+  assert.equal(fmtPace(-1000), '0:00');
 });

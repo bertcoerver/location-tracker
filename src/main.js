@@ -373,7 +373,7 @@ async function poll() {
   } catch (err) {
     if (err instanceof RateLimitError) {
       backoffUntil = err.retryAt;
-      ui.setError(`GitHub rate limit reached — retrying at ${fmtClock.format(err.retryAt)}`);
+      ui.setError(`GitHub rate limit reached — retrying at ${fmtClock(err.retryAt)}`);
     } else {
       ui.setError(err.message);
     }

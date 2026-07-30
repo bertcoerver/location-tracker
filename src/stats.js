@@ -6,6 +6,7 @@
 // few hundred points reading arrays the course already built. Caching it would
 // only mean versioning a cache against `eleThresholdM`.
 
+import { CONFIG } from './config.js';
 import { gainAt, pointAt } from './course.js';
 import { predictAt } from './predict.js';
 
@@ -26,6 +27,7 @@ import { predictAt } from './predict.js';
  *   sincePrev   ms since the previous ping — absent on the first
  *   distTotal   metres along the course
  *   dist        metres of course covered since the previous SNAPPED ping
+ *   pace        ms per kilometre over that same stretch
  *   upTotal     metres climbed from the start of the course to here
  *   downTotal   and descended
  *   up, down    the same over the stretch since the previous SNAPPED ping
@@ -65,6 +67,26 @@ export function deriveStats(points, course, start = null) {
       stats.dist = previousSnapped
         ? Math.abs(point.snap.along - previousSnapped.snap.along)
         : 0;
+
+      // How fast that stretch went, in ms per kilometre.
+      //
+      // Timed against the previous SNAPPED ping rather than the previous one,
+      // because the numerator is course distance: `dist` measures from the last fix
+      // that landed on the route, so a gap timed from a fix that missed it would be
+      // dividing this stretch of ground by less than the time it took.
+      //
+      // Absent rather than zero whenever there is nothing to divide — the first
+      // snapped ping, a runner who hasn't moved along the course, two fixes sharing
+      // a timestamp. A pace of 0:00/km is a claim about speed, and "no pace yet" is
+      // a different statement from "infinitely fast".
+      //
+      // And absent below `paceMinMeters`, which is the same objection at the other
+      // end: dividing a 24-metre leg by five minutes reports "209:47/km", a number
+      // that is exactly right about nothing. See config.js.
+      const legMs = previousSnapped ? point.t - previousSnapped.t : 0;
+      if (stats.dist >= CONFIG.paceMinMeters && legMs > 0) {
+        stats.pace = legMs / (stats.dist / 1000);
+      }
 
       if (climbable) {
         const total = gainAt(course, point.snap.along);
@@ -128,7 +150,7 @@ export function originOf(points) {
  *   out, ground past the last ping simply reads as not reached — which is what
  *   every caller did before there was a model, and still the right answer for a
  *   run too young to fit one.
- * @returns {{along, lat, lon, ele, upTotal, downTotal, state, sinceStart?, predicted?}|null}
+ * @returns {{along, lat, lon, ele, origin, upTotal, downTotal, state, sinceStart?, predicted?}|null}
  *   `state` is one of:
  *     'between' — bracketed by two pings; `sinceStart` is interpolated
  *     'beyond'  — past the furthest point the run has reached; `predicted`
@@ -141,23 +163,27 @@ export function interpolateAt(points, course, along, forecast = null) {
 
   const at = pointAt(course, along);
   const total = course.hasElevation ? gainAt(course, along) : null;
+  // Every elapsed figure below is measured from `origin`, so a course hovered on a
+  // run with a scheduled start reads the same as the pings on it do. The `??`
+  // fallback is for a caller that skipped `deriveStats`; snapped pings always have
+  // stats in the app itself, since `show()` derives them one line after it snaps.
+  //
+  // Handed back on the result as well as used here, so that a caller with a
+  // predicted time to typeset can say which DAY it lands on without re-deriving the
+  // race start from the points it already gave us. See `dayTag`.
+  const origin = points.length ? originOf(points) ?? points[0].t : null;
   const base = {
     along,
     lat: at.lat,
     lon: at.lon,
     ele: at.ele,
+    origin,
     upTotal: total ? total.up : undefined,
     downTotal: total ? total.down : undefined
   };
 
   const snapped = points.filter(p => p.snap);
   if (!snapped.length) return { ...base, state: 'unknown' };
-
-  // Every elapsed figure below is measured from here, so a course hovered on a run
-  // with a scheduled start reads the same as the pings on it do. The fallback is
-  // for a caller that skipped `deriveStats`; snapped pings always have stats in the
-  // app itself, since `show()` derives them one line after it snaps.
-  const origin = originOf(points) ?? points[0].t;
 
   const alongs = snapped.map(p => p.snap.along);
   if (along > Math.max(...alongs)) {

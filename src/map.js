@@ -10,7 +10,7 @@ import {
 import { createPin } from './pin.js';
 import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
 import { positionAt } from './predict.js';
-import { interpolateAt } from './stats.js';
+import { interpolateAt, originOf } from './stats.js';
 
 /**
  * A view state with any in-flight transition props stripped off.
@@ -147,7 +147,7 @@ export function createMap(container, {
       const [lon, lat] = posOf(object);
       return {
         view: 'map',
-        html: tooltipHtml(object, !!latest && latest.name === object.name),
+        html: tooltipHtml(object, !!latest && latest.name === object.name, originOf(points)),
         lat,
         lon,
         along: object.snap ? object.snap.along : null

@@ -329,3 +329,98 @@ test('interpolateAt still answers for points that never saw deriveStats', () => 
 
   assert.equal(at.sinceStart, 10 * MINUTE);
 });
+
+// --- pace ----------------------------------------------------------------------
+
+test('pace is the last leg, in ms per kilometre', () => {
+  // 2 km in 10 minutes is 5:00/km.
+  const points = deriveStats([ping('a', 0, 0), ping('b', 10, 2000)], slope());
+
+  assert.equal(points[1].stats.pace, 5 * MINUTE);
+});
+
+test('pace is timed against the previous SNAPPED ping, not the previous one', () => {
+  // `dist` measures from the last fix that landed on the route, so the gap has to be
+  // measured from the same fix. Timing it from an unsnapped ping in between would
+  // divide this stretch of ground by less time than it actually took.
+  const withGap = deriveStats([
+    ping('a', 0, 0), ping('off-course', 6, null), ping('b', 10, 2000)
+  ], slope());
+  const without = deriveStats([ping('a', 0, 0), ping('b', 10, 2000)], slope());
+
+  assert.equal(withGap[2].stats.pace, without[1].stats.pace);
+  assert.equal(withGap[2].stats.pace, 5 * MINUTE);
+  // And the fix that missed the course has no pace of its own — it has no distance.
+  assert.equal(withGap[1].stats.pace, undefined);
+});
+
+test('the first snapped ping has no pace — a pace needs two fixes', () => {
+  const points = deriveStats([ping('a', 0, 0), ping('b', 10, 2000)], slope());
+
+  assert.equal(points[0].stats.pace, undefined);
+});
+
+test('a runner who has not moved has no pace rather than a pace of zero', () => {
+  // Two fixes at the same place: 0:00/km is a claim about speed, and "no pace" is a
+  // different statement from "infinitely fast".
+  const points = deriveStats([ping('a', 0, 1000), ping('b', 10, 1000)], slope());
+
+  assert.equal(points[1].stats.dist, 0);
+  assert.equal(points[1].stats.pace, undefined);
+});
+
+test('two fixes sharing a timestamp produce no pace either', () => {
+  const points = deriveStats([ping('a', 5, 0), ping('b', 5, 1000)], slope());
+
+  assert.equal(points[1].stats.pace, undefined);
+});
+
+test('a pace survives a ping that snapped backwards', () => {
+  // `dist` is absolute, so the ground counts either way round — and the pace with it.
+  const points = deriveStats([ping('a', 0, 2000), ping('b', 10, 1000)], slope());
+
+  assert.equal(points[1].stats.pace, 10 * MINUTE);
+});
+
+// --- what the hover hands back --------------------------------------------------
+
+test('interpolateAt reports the origin it measured from', () => {
+  // So a caller with a predicted time to typeset can say which DAY it lands on
+  // without re-deriving the race start from the points it just handed over.
+  const course = slope();
+  const gun = 10 * MINUTE;
+  const points = deriveStats([ping('a', 15, 0), ping('b', 35, 2000)], course, gun);
+
+  assert.equal(interpolateAt(points, course, 1000).origin, gun);
+  // And with no gun, the first ping — the same fallback everything else uses.
+  const unscheduled = deriveStats([ping('a', 15, 0), ping('b', 35, 2000)], course);
+  assert.equal(interpolateAt(unscheduled, course, 1000).origin, 15 * MINUTE);
+});
+
+test('interpolateAt still answers when no ping has landed on the course', () => {
+  // The `'unknown'` case reaches for the origin before it knows there is one.
+  const course = slope();
+  const at = interpolateAt([ping('a', 5, null)], course, 1000);
+
+  assert.equal(at.state, 'unknown');
+  assert.equal(at.origin, 5 * MINUTE);
+});
+
+test('a leg too short to divide gets no pace at all', () => {
+  // Found on the real 165 km run in this repo: a five-minute ping that advanced 24 m
+  // along the course reported "209:47/km". Exact, and about nothing — a pace divides
+  // distance by time, so a short enough distance divides noise by time. See
+  // `paceMinMeters`.
+  const points = deriveStats([ping('a', 0, 1000), ping('b', 5, 1024)], slope());
+
+  assert.equal(points[1].stats.dist, 24);
+  assert.equal(points[1].stats.pace, undefined);
+});
+
+test('a genuinely slow leg still gets its pace — only short ones are refused', () => {
+  // The floor is about the distance, not about the speed. Twenty minutes for a
+  // kilometre up a col is a fact, and the tooltip should say so.
+  const points = deriveStats([ping('a', 0, 1000), ping('b', 20, 2000)], slope());
+
+  assert.equal(points[1].stats.pace, 20 * MINUTE);
+});

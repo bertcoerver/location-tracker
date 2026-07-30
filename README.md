@@ -174,7 +174,8 @@ FINISH
 13:16 – 13:33
 ```
 
-The same question as the clock, asked forwards, and typeset identically to it — the range underneath
+On a race longer than a day both lines pick up a `+1`; see "Times are 24-hour". The same question as
+the clock, asked forwards, and typeset identically to it — the range underneath
 is what says which of the two is a guess, and it is not decoration: it is the part that stops a single
 number being read as a promise. It shows only while the run is live, and never at all for a run that has
 finished: a forecast is a claim about a phone that is still out there. See "Predicting the rest".
@@ -223,6 +224,123 @@ to it by a dashed line — are always drawn too, and instead pushed down the sta
 enough to read as a smudge behind the reading, there the moment you go looking for it. That is a
 straight improvement on a switch that was off by default, which meant almost nobody ever saw what the
 snapper had done. **Your own location** is asked for as the page opens; see "Where *you* are".
+
+### What a tooltip says
+
+A tooltip is **four bands**, and the rules between them are the design:
+
+```
+01:48:00⁺¹ · latest
+🕒  16h 48m    +42m
+📏  23.9 km    +1.1 km
+🏃  6:12 /km
+↑   1,400 m    +141 m
+↓   195 m      +54 m
+──────────────────────────
+🔋 24%  🌡 11°C  📶 3/4  ⛈  ❤️ 141
+──────────────────────────
+FORECAST
+01:47⁺¹ · 48s late
+Likely 01:42 – 01:52 · 9m 57s wide
+▂▂▂▂▂▂▂▂▂▂▂▂▂▂
+──────────────────────────
+Over the Col du Bonhomme, legs are going
+Open in Google Maps
+```
+
+Top band, what the run has done: each reading is a **total** with the leg that got there beside it,
+quieter. These were typeset identically before, which turned three answers into six equal numbers.
+Climb is two rows rather than one, because "focus on the total" cannot be done to a row holding two
+totals and two legs. Second band, what the **phone** was dealing with — five readings that are not
+about the race, grouped so that the rows above can be only about the race. Third band, anything that
+is a **guess**. Fourth, anything a person wrote.
+
+Two rows are gone. **The coordinates**, six decimal places of them, and `snapped 12 m` beside them:
+diagnostics, and they used to be the first two things under the title, above how far in and how long
+in. The raw fix still reaches the one place it is worth anything, which is the Google Maps link.
+
+One row is new. **Pace over the last leg** — the number a runner actually wants, and the only row with
+no total to lead on, because a pace is always about a stretch and the stretch that matters is the one
+just finished. It is timed against the previous *snapped* ping rather than the previous ping: the
+numerator is course distance, so a gap timed from a fix that never landed on the route would divide
+this stretch of ground by less time than it took.
+
+A pace also needs a leg long enough to divide. On the 165 km run in this repo, a five-minute ping that
+advanced 24 m along the course reported `209:47/km` — arithmetically exact, and about nothing at all,
+because a pace divides distance by time and a short enough distance divides *noise* by time. Below
+`paceMinMeters` (100 m, a tenth of the unit being quoted) there is simply no pace row. This is not a
+cap on slow paces: 22:14/km up a col is a fact and it gets printed.
+
+Legs that round away are left off for the same kind of reason. `stats.down` comes back as fractions of
+a metre left over from the elevation threshold, so a flat kilometre used to draw a column of `+0 m` —
+and beside a total, `+0 m` reads as a measured zero rather than as a number too small to have a digit.
+
+**The icons are emoji**, which is a trade taken with open eyes: they arrive in the platform's own
+colour and metrics and no stylesheet here can reach them. What buys that back is the weather, where a
+drawn set would need fifteen glyphs for a vocabulary everybody can already read. Having accepted them
+there, using them for the rest is the only way the tooltip has one voice. Two exceptions survived
+contact with a screenshot: `⬆️` and `⬇️` render as filled blue tiles that outweighed every number on
+the card and fought the one accent colour the page has, so the climb rows use plain `↑` and `↓`, which
+inherit the row's ink. And pace is a **runner**, not the stopwatch it obviously wanted — a stopwatch at
+11 px is a small circle with hands on it, and so is the clock two rows above.
+
+The **weather glyph is matched on keywords**, worst weather first, rather than looked up in a table of
+Apple's condition names. The phone composes its own wording — every ping here says `Sunny`, which is
+not any WeatherKit case description — so a table would be a table of guesses about someone else's
+string formatting, and a label that missed it would draw nothing, which is the one outcome worse than
+drawing something approximate. The order carries real information too: "Rain and thunder" is a
+thunderstorm and not rain, and "Mostly Cloudy" is the cloudy answer while "Partly Cloudy" and "Mostly
+Clear" are both the in-between one. An unrecognised label falls through to `🌡` rather than to nothing,
+so the line keeps its shape. The label itself survives as the glyph's `title` and `aria-label`, which
+is where the difference between "Rain and thunder" and "Isolated Thunderstorms" lives.
+
+Night is deliberately not distinguished. A moon for "Clear" at 02:00 needs a sunrise table to be
+right, and would be wrong for half the year anywhere far enough north — which is where these races
+tend to be.
+
+### Times are 24-hour, and say which day of the race they are on
+
+Every clock time in the app is `HH:MM:SS` in the viewer's own zone, 24-hour, with no AM/PM and no
+date. The date used to lead every tooltip — "Jul 28, 2026, 12:06:01 PM" — repeated across all four
+hundred pings of a run that happened on one afternoon.
+
+But on a race longer than a day the date *is* load-bearing, and what it was carrying is only ever
+which **day of the race** this is. So that is what gets said, in two characters:
+
+```
+16:25:28⁺²  ·  finish
+```
+
+That is the real finish of a 45-hour ultra in `locations/`, and without the `⁺²` it is a lie about
+which afternoon. The predicted finish in the panel carries the same tag for a sharper version of the
+same reason: it is the one reading on the page where getting the day wrong sends somebody to a finish
+line 24 hours early. Days are **calendar** days in local time, not 24-hour blocks — a race from 06:00
+to 22:00 is sixteen hours long and entirely day 0, while one from 23:30 to 00:30 is one hour long and
+crosses into day 1, because the question is "which morning is this" and only a calendar answers it.
+Each timestamp is asked for its own UTC offset, so a race running through a daylight-saving change
+still counts days the way the clock on the wall did. The tag goes negative as readily as positive: a
+warm-up ping sent the evening before a 06:00 gun really is on the day before.
+
+These were three `Intl.DateTimeFormat` instances and are now four lines of `padStart`. The formatter
+can be told its hour cycle but not to stop being localised — with an undefined locale it still picks
+its own separators, its own numerals and its own view on leading zeroes — and there is nothing left
+here for a locale to decide. Removing it also made the whole display layer deterministic in a test,
+which is why the day-tag cases can be written at all. `metres()` went the same way for consistency:
+every word in a tooltip is English, so a number grouped to some other convention beside them is a page
+that cannot decide.
+
+### The uncertainty bar
+
+Under a prediction sits a bar whose **length is the width of the forecast window**. It is the only
+thing in a tooltip readable without reading: two predictions half an hour apart are worth comparing,
+and comparing `14:40 – 15:05` with `16:02 – 16:11` otherwise means arithmetic.
+
+Its scale is fixed — `uncertaintyRefMs`, 30 minutes to the full track — so the same fill always means
+the same span, on every ping of every run. The two alternatives both fail: a track spanning the window
+itself would be full width always and so say nothing about how uncertain anything is, and one scaled
+to the time remaining would change the ruler between one tooltip and the next. Windows wider than the
+reference pin at full width rather than overflowing; a forecast that uncertain is simply "very", and
+the figures are written out beside it.
 
 ### Click to keep a tooltip
 
@@ -622,8 +740,9 @@ any, all, or none of them:
 | field | what it is | where it shows |
 | --- | --- | --- |
 | `btry` | battery percentage | the tooltip, and the poll schedule |
-| `ntwrk` | network strength on the phone, `0`–`4` | the tooltip, as `Signal 2/4` |
+| `ntwrk` | network strength on the phone, `0`–`4` | the tooltip, as `3/4` |
 | `wthr` | temperature and sky as one string, `"28°C and Sunny"` | the tooltip, split in two |
+| `bpm` | heart rate, from whatever the phone is paired with | the tooltip |
 | `msg` | a note from the runner | the tooltip |
 | `img` | an image URL | the tooltip |
 | `is_finish` | the phone's last upload of the run | see "Knowing a run is over" |
@@ -641,21 +760,26 @@ locations/UTMB/UTMB_2026-08-28T09_00_00+02_00.gpx
 The difference is that a ping's whole name *is* the timestamp, while a course's name is a label with
 a timestamp on the end, and the stamp is optional. See "When the race starts".
 
-`ntwrk` is range-checked rather than merely required to be a number: the tooltip renders it as `2/4`,
+`ntwrk` is range-checked rather than merely required to be a number: the tooltip renders it as `3/4`,
 so a `7` there would be a claim about a scale that doesn't exist, and a value outside `0`–`4` is
 dropped. `0` is kept and shown — a phone with no bars is the interesting case, because it explains the
 gap in the trail on either side of that ping.
 
+`bpm` is range-checked for the same reason, and the low end is the point of it: `20`–`260`, so a `0`
+is dropped rather than drawn. A zero is a watch that wasn't being worn or hadn't found a pulse, and a
+resting heart rate of nought is not a reading anyone should be shown.
+
 `wthr` arrives as one string with the temperature and the sky glued together by an " and " the phone
 composed. Those are two readings, not one — a number you compare with the last ping's, and a word you
-don't — so `splitWeather` pulls them apart for display and the tooltip shows `28°C · Sunny`. It splits
-on the *first* " and " only, so a label carrying one of its own ("Rain and thunder") survives intact,
-and a string with none is passed through whole rather than sliced on a guess.
+don't — so `splitWeather` pulls them apart for display: the temperature keeps its digits and the sky
+becomes a glyph. It splits on the *first* " and " only, so a label carrying one of its own ("Rain and
+thunder") survives intact, and a string with none is passed through whole rather than sliced on a
+guess — which is also what covers a phone that one day sends the label alone.
 
-Both fields landed on pings that had already been committed, which is why `V` in `config.js` went to
-`v8`: a browser holding those files from an earlier visit stored them without either, and `hydrate`
-diffs on sha, which never changes. One forced re-hydrate, free — every body comes from the CDN. Same
-situation as `v6` and `is_finish`.
+Both `ntwrk` and `wthr` landed on pings that had already been committed, which is why `V` in
+`config.js` went to `v8`: a browser holding those files from an earlier visit stored them without
+either, and `hydrate` diffs on sha, which never changes. One forced re-hydrate, free — every body
+comes from the CDN. Same situation as `v6` and `is_finish`, and `bpm` made it a fourth time at `v10`.
 
 Scheduled starts took it to `v9`, and for a *different* kind of reason — the first bump about the
 shape of the **index** rather than the shape of a point. The tree listing is fetched with an
@@ -665,6 +789,9 @@ holding the `v8` tree would keep reading records with no start in them, and with
 already pruned out, and nothing would ever prompt it to look again — the whole feature invisible on
 precisely the machines that had visited before it shipped. The per-run snap caches go with it, since
 those hold snaps for pings that must now be left alone.
+
+`v10` is `bpm`, and it is the `v6`/`v8` story for the third time: the heart rate is already sitting in
+files that were committed before the reader learned to look for one.
 
 `is_finish: true` marks the phone's **last upload of a run**. It is deliberately a normal ping rather
 than a separate marker file with no coordinates: every consumer of a point assumes a fix, so a
@@ -895,7 +1022,8 @@ src/
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
   colors.js         reads the CSS colour tokens
-  util.js           time parsing (pings and course filenames), formatting, pool, storage guard
+  util.js           time parsing (pings and course filenames), 24-hour clocks, race days, pace,
+                    formatting, pool, storage guard
 test/
   *.test.js         run with `npm test`
 package.json        scripts only — no dependencies, nothing to install
@@ -914,7 +1042,17 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 
 ### Where to add things
 
-- New data field from the phone → `github.js` (`fetchPoint`) and `layers.js` (`tooltipHtml`).
+- New data field from the phone → `github.js` (`fetchPoint`) and `layers.js` (`tooltipHtml`) — plus a
+  bump of `V` in `config.js`, every time. The field is always already sitting in files that were
+  committed before the reader learned to look for it, and `hydrate` diffs on sha, which never changes,
+  so without the bump it stays invisible forever on exactly the browsers that had visited before. This
+  has now happened four times (`v6`, `v8`, `v10`); assume it applies rather than checking.
+- A new sensor reading — something about the phone or its surroundings rather than about the run →
+  the `.meta` line in `tooltipHtml`, not a row of its own. That grouping is what lets the rows above
+  be only about the race.
+- Another weather label the ladder has not met → a keyword in `WEATHER` in `layers.js`, in the right
+  place in the order. Deliberately not a table of Apple's condition names: the phone composes its own
+  wording, and the ladder's order is what decides that "Rain and thunder" is a storm rather than rain.
 - New visual layer → `layers.js`, then include it in `pointLayers`.
 - New panel or control → `index.html` for markup/CSS, `ui.js` for behaviour.
 - New colour → a token in `index.html`, then read it in `colors.js`. Never a literal in a layer.
@@ -1117,6 +1255,31 @@ a decision in it — six branches, three of which only happen on race morning an
 waited for. `clockReading` is pure and returns the label and the value as data, so the
 countdown, the flip to zero at the gun, the gap before the first ping, and elapsed-from-the-gun
 are all reachable without a DOM or a clock that has to be believed.
+
+The tooltips are tested as markup, since that is what they are: `tooltipHtml` and its two
+siblings are pure functions returning strings, and the tests strip the tags and read what a
+person would see. Row counts are asserted as well as wording — a ping with nothing derived
+gets exactly zero reading rows, a full one gets five — because the failure mode of a tooltip is
+not a wrong number, it is a row that quietly stopped appearing.
+
+The clock functions are the reason those tests can exist at all. Every case is built from
+**local** date components rather than from an absolute instant, so the assertions hold under any
+`TZ` — which is also the point of these having stopped being `Intl.DateTimeFormat`. Both wrong
+answers a hand-rolled formatter can give at midnight are pinned (`00:00:00`, never `24:` and
+never `0:`), and `dayOffset` is checked against the trap it exists for: sixteen hours inside one
+calendar day is `0`, and one hour across midnight is `+1`.
+
+The weather ladder is tested as an *order*, not as a lookup, because the order is what it knows:
+"Rain and thunder" must be a storm and not rain, "Freezing Drizzle" must be ice and not drizzle,
+"Tropical Storm" must be a cyclone and not a thunderstorm, and "Partly Cloudy", "Mostly Cloudy"
+and "Mostly Clear" must be three different answers. An unrecognised label is asserted to reach
+the fallback rather than to draw nothing.
+
+Two tests exist because real data disagreed with the code, and both are recorded as such: a leg
+of 24 m over five minutes must produce **no** pace rather than `209:47/km`, and a leg of 0.4 m
+must produce no `+0 m` beside its total. Neither was reachable from a hand-written fixture —
+they came out of running the 165 km race in `locations/` through the real pipeline, which is
+worth doing to any change in this file.
 
 ## A note on waypoint labels
 

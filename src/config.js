@@ -156,6 +156,32 @@ export const CONFIG = {
   // hits one of them is a fit that has gone wrong.
   predictMinPaceSpm: 0.1,
   predictMaxPaceSpm: 3.0,
+  // The full width of a tooltip's uncertainty bar, as a span of time.
+  //
+  // That bar's LENGTH is the width of the forecast window, so it has to be a length
+  // OF something fixed: at half an hour, a fifteen-minute window fills half the
+  // track on every ping of every run, which is what makes two of them worth
+  // comparing. Scaling each bar to its own window would draw every forecast the
+  // same width and say nothing; scaling it to the time remaining would change the
+  // ruler between one tooltip and the next.
+  //
+  // Windows wider than this pin at full width rather than overflowing. A forecast
+  // that uncertain is simply "very", and the figures are written out beside it.
+  uncertaintyRefMs: 1800000,
+  // The shortest leg that can carry a pace, in metres of course.
+  //
+  // A pace divides a distance by a time, so a short enough distance divides noise by
+  // a time and reports the answer to the nearest second. Measured on the real runs in
+  // this repo: a five-minute ping that advanced 24 m along the course — a runner
+  // standing at an aid station, or a snap that barely moved — produced "209:47/km",
+  // which is arithmetically exact and says nothing about anybody's running.
+  //
+  // A tenth of the unit being quoted, so the per-kilometre figure extrapolates by at
+  // most a factor of ten. Below it there is no pace rather than a wrong one: see
+  // `deriveStats`, which leaves the field off entirely, and the tooltip then has no
+  // pace row at all. This does NOT cap slow paces — 22:14/km up a col is a fact, and
+  // `fmtPace` will print it.
+  paceMinMeters: 100,
 
   // --- the height profile strip --------------------------------------------
   profileHeight: 112,
@@ -211,7 +237,14 @@ export const CONFIG = {
 // snap cache has no such field, so every pre-start ping in it is still snapped to
 // the course, and nothing else in the version tuple can notice — a GPX renamed to
 // move the gun keeps its blob sha. See `snapAll`.
-const V = 'v9';
+//
+// v10: points carry `bpm`, and this is the v6 and v8 situation a third time. The
+// heart rate is already sitting in files that were committed before the reader
+// learned to look for it, `hydrate` diffs on sha, and a sha never changes — so a
+// browser holding those bodies from an earlier visit would go on showing a tooltip
+// with no pulse in it forever. One forced re-hydrate, free against the API budget,
+// every body coming from the CDN.
+const V = 'v10';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

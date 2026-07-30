@@ -307,6 +307,12 @@ export async function fetchPoint(run, name, sha) {
   // 7 there would be a claim about a scale that doesn't exist.
   const ntwrk = Number(body.ntwrk);
   if (Number.isFinite(ntwrk) && ntwrk >= 0 && ntwrk <= 4) point.ntwrk = ntwrk;
+  // Heart rate, from whatever the phone is paired with. Range-checked for the same
+  // reason `ntwrk` is, and the low end is the point of it: a 0 is a watch that
+  // wasn't being worn or hadn't found a pulse, not a resting heart rate, and it
+  // would be drawn as one.
+  const bpm = Number(body.bpm);
+  if (Number.isFinite(bpm) && bpm >= 20 && bpm <= 260) point.bpm = bpm;
   // Temperature and sky, as one string the phone composed — "28°C and Sunny".
   // Kept whole here and split for display by `splitWeather`: this layer's job is
   // to say what the file contained, not to decide how it reads.

@@ -821,3 +821,38 @@ test('a stored dot for the run now on screen is still left out', async () => {
   // one being looked at.
   assert.deepEqual(await refreshBeacons({}, 'other-race'), []);
 });
+
+// --- heart rate --------------------------------------------------------------
+
+test('a heart rate is read off a ping', async () => {
+  gh.files.set(`${RUN}/2026-07-28T12_11_01+02_00.json`,
+    { lat: 46.5, lon: -0.77, btry: 73, bpm: 69 });
+
+  const { cache } = await poll('vendee-10k');
+
+  assert.equal(cache['2026-07-28T12_11_01+02_00.json'].bpm, 69);
+});
+
+test('an implausible heart rate is dropped rather than drawn', async () => {
+  // Range-checked for the reason `ntwrk` is, and the low end is the point of it: a 0
+  // is a watch that was not being worn or had not found a pulse, and it would be
+  // shown as a resting heart rate of zero.
+  for (const [name, bpm] of [['12_11', 0], ['12_16', 400], ['12_21', 'fast'], ['12_26', null]]) {
+    gh.files.set(`${RUN}/2026-07-28T${name}_01+02_00.json`, { lat: 46.5, lon: -0.77, bpm });
+  }
+
+  const { cache } = await poll('vendee-10k');
+
+  for (const name of ['12_11', '12_16', '12_21', '12_26']) {
+    const point = cache[`2026-07-28T${name}_01+02_00.json`];
+    assert.ok(point, name);
+    assert.equal('bpm' in point, false, `${name} kept a bpm of ${JSON.stringify(point.bpm)}`);
+  }
+});
+
+test('a ping with no heart rate at all is untouched by it', async () => {
+  // Every file written before the field existed, which is all of them but one.
+  const { cache } = await poll('vendee-10k');
+
+  for (const point of Object.values(cache)) assert.equal('bpm' in point, false);
+});

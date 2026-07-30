@@ -4,7 +4,8 @@ import { byRecency, isLive } from './github.js';
 import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
 import { predictAt } from './predict.js';
-import { ago, coarse, fmtCountdown, fmtElapsed, fmtHm } from './util.js';
+import { originOf } from './stats.js';
+import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm } from './util.js';
 
 /**
  * What the race clock should say, as data rather than DOM.
@@ -217,10 +218,18 @@ export function createUi({ onRecenter, onRunPick }) {
     finishEl.hidden = !at;
     if (!at) return;
 
+    // The day tag is what makes this readable on a race longer than a day: a 30-hour
+    // ultra predicted to end at "09:12" has said nothing about which morning, and this
+    // is the one reading on the page where getting that wrong sends somebody to a
+    // finish line 24 hours early. The range carries it too — a window can straddle
+    // midnight while the estimate inside it doesn't.
+    const origin = originOf(points);
+    const stamp = t => `${fmtHm(t)}${dayTag(t, origin)}`;
+
     // The tilde is doing real work: it is the difference between "13:24" and
     // "about 13:24", and this box has no room to say the second one in words.
-    finishTimeEl.textContent = `~${fmtHm.format(at.t)}`;
-    finishRangeEl.textContent = `${fmtHm.format(at.lo)} – ${fmtHm.format(at.hi)}`;
+    finishTimeEl.textContent = `~${stamp(at.t)}`;
+    finishRangeEl.textContent = `${stamp(at.lo)} – ${stamp(at.hi)}`;
   }
 
   /**

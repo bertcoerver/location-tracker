@@ -15,7 +15,7 @@ import { hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
 import { latestOf, posOf } from './points.js';
 import { positionAt } from './predict.js';
-import { interpolateAt } from './stats.js';
+import { interpolateAt, originOf } from './stats.js';
 
 // Room above the terrain for the waypoint labels.
 const PAD_TOP = 14;
@@ -765,7 +765,7 @@ export function createProfile(root, {
       const [lon, lat] = posOf(hit);
       return {
         along: hit.snap.along,
-        html: tooltipHtml(hit, !!latest && latest.name === hit.name),
+        html: tooltipHtml(hit, !!latest && latest.name === hit.name, originOf(points)),
         lat,
         lon
       };

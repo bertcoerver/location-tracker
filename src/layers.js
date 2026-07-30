@@ -7,8 +7,10 @@ import {
 } from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
-import { interpolateAt } from './stats.js';
-import { ago, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtTime, mapsUrl } from './util.js';
+import { interpolateAt, originOf } from './stats.js';
+import {
+  ago, dayTag, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtPace, mapsUrl
+} from './util.js';
 import { latestOf, posOf } from './points.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
@@ -483,85 +485,93 @@ export function forecastLayers(course, marker) {
   ];
 }
 
-/** Tooltip markup for one fix. Pure and DOM-free, so it's directly testable. */
-export function tooltipHtml(point, isLatest) {
+/**
+ * Tooltip markup for one fix. Pure and DOM-free, so it's directly testable.
+ *
+ * Four bands, in this order, and the borders between them are the design: the
+ * readings the run produced, then what the phone itself was dealing with, then
+ * anything that is a guess, then anything a person wrote. A reader who wants "how
+ * far, how long, how fast" gets it in the first band without reading past it, which
+ * is what the flat nine-row list this replaces made impossible.
+ *
+ * @param {number|null} [origin] the moment the run's clock counts from, from
+ *   `originOf`. Only used to say which DAY this fix landed on — see `dayTag`.
+ *   Defaulted, so a caller with no points array to derive one from gets a plain
+ *   time rather than a crash.
+ */
+export function tooltipHtml(point, isLatest, origin = null) {
   // A finish beats "latest" — it is almost always both, and it says more. It is
   // also the one tag that stays true: this fix is still the finish tomorrow.
   const tag = point.is_finish ? ' &middot; finish' : isLatest ? ' &middot; latest' : '';
-  const rows = [`<div class="t">${fmtTime.format(point.t)}${tag}</div>`];
+  const day = dayTag(point.t, origin);
+  const rows = [`<div class="t">${fmtClock(point.t)}` +
+    `${day ? `<span class="d">${day}</span>` : ''}${tag}</div>`];
 
-  // The raw coordinates are the truth, and "snapped 12 m" belongs beside them
-  // because that is what it qualifies: how far the drawn dot is from the fix.
-  // A suspicious snap is then visible rather than silently believed.
-  const coords = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
-  rows.push(`<div class="r">${coords}${point.snap
-    ? ` &middot; snapped ${Math.round(point.snap.off)} m` : ''}</div>`);
-
-  // Two "since" pairs, distance then time, each with the total first and the leg
-  // since the previous ping after it. A long gap in either is usually a phone
-  // that lost signal, which is worth seeing next to the fix that ended it.
   const stats = point.stats;
-  if (stats && stats.distTotal !== undefined) {
-    rows.push(`<div class="r">${sincePair(
-      `${fmtDistance(stats.distTotal)} in`, fmtDistance(stats.dist))}</div>`);
-  }
+
+  // --- what the run has done so far ----------------------------------------
+  // Each of these is a total with the leg that got there beside it, quietly. The
+  // totals are the readings; the legs are context for them. They used to be typeset
+  // identically, which made six equal numbers out of three answers.
+  //
   // `sinceStart` and not merely `stats`: a ping from before the scheduled start has
   // no elapsed time — it happened before the race did — and formatting the absence
   // would put "NaN in" on the tooltip. The gap since the previous ping goes with it
   // rather than standing alone, since the pair is one row and one thought.
   if (stats?.sinceStart !== undefined) {
-    rows.push(`<div class="r">${sincePair(
-      `${fmtDuration(stats.sinceStart)} in`,
-      stats.sincePrev === undefined ? null : fmtDuration(stats.sincePrev))}</div>`);
+    rows.push(reading(ICON.time, fmtDuration(stats.sinceStart),
+      stats.sincePrev === undefined ? null : `+${fmtDuration(stats.sincePrev)}`));
   }
-  // Climb, when the course has elevation and this fix landed on it.
+  if (stats && stats.distTotal !== undefined) {
+    rows.push(reading(ICON.dist, fmtDistance(stats.distTotal), leg(stats.dist, fmtDistance)));
+  }
+  // The one row with no total to lead on: a pace is only ever about a stretch, and
+  // the stretch that matters is the one just finished. See `deriveStats` for when
+  // there isn't one.
+  if (stats?.pace !== undefined) {
+    rows.push(reading(ICON.pace, `${fmtPace(stats.pace)}&thinsp;/km`));
+  }
+  // Climb, when the course has elevation and this fix landed on it. Two rows rather
+  // than the single four-figure line this replaces: up and down are two different
+  // readings, and a row holding two totals and two legs cannot put focus on either.
   if (stats && stats.upTotal !== undefined) {
-    rows.push(`<div class="r">${climbHtml(stats.upTotal, stats.downTotal)}</div>`);
-    rows.push(`<div class="r">${climbHtml(stats.up, stats.down)} since last</div>`);
+    rows.push(reading(ICON.up, metres(stats.upTotal), leg(stats.up, metres)));
+    rows.push(reading(ICON.down, metres(stats.downTotal), leg(stats.down, metres)));
   }
 
+  // --- what the phone was dealing with -------------------------------------
+  rows.push(sensorHtml(point));
+
+  // --- and what is only a guess --------------------------------------------
   // How the forecast did here, when this ping is late enough in the run to have
   // had one. Scored against a model that had never seen this ping or any after
   // it — see `deriveForecastErrors` — so it is a test of the prediction rather
   // than a look at its own residuals, and it is the only place on screen where
   // the model can be caught being wrong.
-  if (stats?.forecast) rows.push(`<div class="r">${errorHtml(stats.forecast)}</div>`);
-
-  // What the phone was dealing with when it sent this: how much battery it had
-  // left and how much of a network. One row, because they are two facts about the
-  // same device, and either can be missing — every file written before the field
-  // existed has neither.
-  //
-  // The signal is shown as "2/4" rather than as bars, because the number IS out
-  // of four and a row of glyphs would need the reader to count them. It also
-  // explains gaps in the trail: a stretch with no pings and 0/4 either side of it
-  // is a phone that was working perfectly and had nowhere to send anything.
-  const phone = [
-    point.btry === undefined ? null : `Battery ${point.btry}%`,
-    point.ntwrk === undefined ? null : `Signal ${point.ntwrk}/4`
-  ].filter(Boolean);
-  if (phone.length) rows.push(`<div class="r">${phone.join(' &middot; ')}</div>`);
-
-  const weather = splitWeather(point.wthr);
-  if (weather) rows.push(`<div class="r">${weather.join(' &middot; ')}</div>`);
+  if (stats?.forecast) {
+    rows.push(predictionHtml({ ...stats.forecast, origin, caption: 'Forecast' }));
+  }
 
   if (point.msg) rows.push(`<div class="m">${escapeHtml(point.msg)}</div>`);
   if (point.img) rows.push(`<img src="${encodeURI(point.img)}" alt="">`);
   // Distance and time of day, which is what makes one ping's pin tellable from
-  // the next one's once you're looking at it in Google Maps.
+  // the next one's once you're looking at it in Google Maps. Also the last place
+  // the raw coordinates matter at all, now that the tooltip has stopped printing
+  // them: they are diagnostics, and they were the first thing under the title.
   rows.push(mapsLink(point.lat, point.lon, stats && stats.distTotal !== undefined
-    ? `${fmtDistance(stats.distTotal)} · ${fmtClock.format(point.t)}`
-    : fmtClock.format(point.t)));
-  return rows.join('');
+    ? `${fmtDistance(stats.distTotal)} · ${fmtClock(point.t)}`
+    : fmtClock(point.t)));
+  return rows.filter(Boolean).join('');
 }
 
 /** Tooltip markup for a course waypoint — a place, not a moment. */
 export function waypointTooltipHtml(waypoint) {
   const rows = [`<div class="t">${escapeHtml(waypoint.name || waypoint.sym || 'Waypoint')}</div>`];
   if (waypoint.ele !== null && waypoint.ele !== undefined) {
-    rows.push(`<div class="r">${Math.round(waypoint.ele)} m</div>`);
+    rows.push(reading(ICON.ele, metres(waypoint.ele)));
   }
-  rows.push(`<div class="r">${waypoint.lat.toFixed(6)}, ${waypoint.lon.toFixed(6)}</div>`);
+  // No coordinate row, for the reason the ping tooltip no longer has one. A named
+  // place with no height is then a name and a link, which is all a waypoint is.
   rows.push(mapsLink(waypoint.lat, waypoint.lon, waypoint.name || waypoint.sym || 'Waypoint'));
   return rows.join('');
 }
@@ -581,25 +591,26 @@ export function hoverTooltipHtml(at) {
   if (!at) return '';
 
   const rows = [`<div class="t">${fmtDistance(at.along)} in</div>`];
-  if (at.ele !== null && at.ele !== undefined) {
-    rows.push(`<div class="r">${Math.round(at.ele)} m</div>`);
-  }
+  if (at.ele !== null && at.ele !== undefined) rows.push(reading(ICON.ele, metres(at.ele)));
   if (at.state === 'between') {
-    rows.push(`<div class="r">${fmtDuration(at.sinceStart)} in &middot; estimated</div>`);
-  } else if (at.predicted) {
-    // Two rows, because they answer two different questions. The first is when,
-    // as a single number you can hold in your head; the second is how much that
-    // number is worth. Splitting them keeps the window from reading as an
-    // afterthought tacked onto a time that looks certain.
-    rows.push(`<div class="r">${fmtHm.format(at.predicted.t)} &middot; ` +
-      `${fmtDuration(at.predicted.sinceStart)} in</div>`);
-    rows.push(`<div class="r">Likely ${fmtHm.format(at.predicted.lo)}` +
-      `&thinsp;&ndash;&thinsp;${fmtHm.format(at.predicted.hi)}</div>`);
-  } else {
-    rows.push('<div class="r">Not reached yet</div>');
+    rows.push(reading(ICON.time, fmtDuration(at.sinceStart), 'estimated'));
+  } else if (!at.predicted) {
+    rows.push(reading(ICON.time, 'Not reached yet'));
   }
   if (at.upTotal !== undefined) {
-    rows.push(`<div class="r">${climbHtml(at.upTotal, at.downTotal)}</div>`);
+    rows.push(reading(ICON.up, metres(at.upTotal)));
+    rows.push(reading(ICON.down, metres(at.downTotal)));
+  }
+  // Below the border, because it is the one thing here nobody measured. The height
+  // and the climb are facts about the course and are known everywhere on it; this is
+  // a model's opinion about when a runner will arrive, and it is typeset as one.
+  if (at.predicted) {
+    rows.push(predictionHtml({
+      ...at.predicted,
+      origin: at.origin,
+      caption: 'Predicted',
+      sinceStart: at.predicted.sinceStart
+    }));
   }
   rows.push(mapsLink(at.lat, at.lon, `${fmtDistance(at.along)} in`));
   return rows.join('');
@@ -634,12 +645,161 @@ export function splitWeather(wthr) {
   return (halves ? [halves[1], halves[2]] : [text]).map(escapeHtml);
 }
 
-/** "8.8 km in &middot; 1.2 km since last", or just the total when there's no previous. */
-function sincePair(total, since) {
-  return since === null || since === undefined
-    ? total
-    : `${total} &middot; ${since} since last`;
+/**
+ * The glyphs a tooltip labels its readings with.
+ *
+ * Emoji rather than drawn icons, which is a trade taken with open eyes: they render
+ * in the platform's own colour and metrics, which no stylesheet here can reach. What
+ * buys that back is the weather, where a hand-drawn set would need fifteen glyphs
+ * for a vocabulary everyone can already read at a glance. Having accepted them
+ * there, using them for the other six is the only way the tooltip has one voice.
+ *
+ * `️` on the ones that need it: several of these have a legacy text
+ * presentation that some platforms still default to, and a monochrome outline
+ * beside four colour glyphs looks like a font that failed to load.
+ */
+const ICON = {
+  time: '\u{1F552}',   // 🕒
+  // A ruler, not a map pin. The reading is a LENGTH along the course; a pin says
+  // "a place", which is the one thing this row is not about.
+  dist: '\u{1F4CF}',   // 📏
+  // A runner rather than the stopwatch this obviously wanted, because a stopwatch at
+  // 11 px is a small circle with hands on it and so is the clock two rows above —
+  // two readings that are already easy to confuse arriving under the same glyph.
+  pace: '\u{1F3C3}',   // 🏃
+  // The two exceptions to the emoji set, and the reason is what they looked like:
+  // ⬆️ and ⬇️ render as filled blue tiles that outweighed every number on the card
+  // and fought the one accent colour the page has. Plain arrows inherit the row's
+  // ink, cost nothing at any size, and are what this tooltip drew before it had
+  // icons at all — `.i` bolds them so they hold their own at 11 px.
+  up:   '&uarr;',
+  down: '&darr;',
+  ele:  '⛰️', // ⛰️
+  btry: '\u{1F50B}',   // 🔋
+  temp: '\u{1F321}️', // 🌡️
+  ntwrk: '\u{1F4F6}',  // 📶
+  bpm:  '❤️' // ❤️
+};
+
+/**
+ * One reading: a glyph, the answer, and quietly beside it the context.
+ *
+ * The two values are not typeset alike, which is the whole complaint about the rows
+ * this replaces — a total and the leg that got there were the same size and the same
+ * ink, so three answers read as six equal numbers.
+ *
+ * The glyph is `aria-hidden`. It is a label, the value beside it is the reading, and
+ * a screen reader announcing "three o'clock 1h 23m" per row is worse than no label
+ * at all. The row's own text is left to carry the meaning, which is why the units
+ * stay in it: "1,240 m" says what it is without the arrow.
+ */
+/**
+ * The leg beside a total — "+124 m" — or nothing when it rounds away.
+ *
+ * The guard is not cosmetic. `stats.down` comes back as fractions of a metre left
+ * over from the elevation threshold, and `stats.dist` does the same when a snap
+ * barely moved, so a run through a flat kilometre produced a column of "+0 m". Beside
+ * a total, "+0 m" reads as a measured zero — "this leg was flat" — rather than as a
+ * number too small to have a digit, which is a different claim.
+ */
+function leg(v, fmt) {
+  return Math.round(v) > 0 ? `+${fmt(v)}` : null;
 }
+
+function reading(icon, primary, secondary = null) {
+  return `<div class="row"><span class="i" aria-hidden="true">${icon}</span>` +
+    `<span class="p">${primary}</span>` +
+    `<span class="s">${secondary === null || secondary === undefined ? '' : secondary}</span>` +
+    '</div>';
+}
+
+/**
+ * What the phone was dealing with when it sent this, as one line: battery,
+ * temperature, signal, sky, pulse.
+ *
+ * Five readings that used to be three rows. They belong together because none of
+ * them is about the RUN — they are the state of the device and the air around it —
+ * and grouping them is what lets the rows above be only about the race. Any of them
+ * can be missing: every file written before a field existed has none of it, and the
+ * oldest ping in the repo still has to draw as it did the day it landed.
+ *
+ * The signal is "3/4" rather than a row of bars, because the number IS out of four
+ * and a glyph row would need counting. It also explains gaps in the trail: a stretch
+ * with no pings and 0/4 either side of it is a phone that was working perfectly and
+ * had nowhere to send anything.
+ */
+function sensorHtml(point) {
+  const weather = splitWeather(point.wthr);
+  // Two halves means a temperature and a sky; one means a sky alone, which is what a
+  // phone that stopped gluing them together would send.
+  const temp = weather && weather.length === 2 ? weather[0] : null;
+  const sky = weather ? weather[weather.length - 1] : null;
+
+  const cell = (icon, value) =>
+    `<span class="c"><span class="i" aria-hidden="true">${icon}</span>${value}</span>`;
+
+  const cells = [
+    point.btry === undefined ? null : cell(ICON.btry, `${point.btry}%`),
+    temp === null ? null : cell(ICON.temp, temp),
+    point.ntwrk === undefined ? null : cell(ICON.ntwrk, `${point.ntwrk}/4`),
+    // The only glyph here carrying its reading alone, so the only one that is not
+    // `aria-hidden` — `role="img"` with the label the phone sent, which is also what
+    // a pointer resting on it reveals. "Rain and thunder" and "Isolated
+    // Thunderstorms" draw the same cloud, and this is where the difference survives.
+    sky === null ? null : `<span class="c i" role="img" aria-label="${sky}" ` +
+      `title="${sky}">${weatherIcon(sky)}</span>`,
+    point.bpm === undefined ? null : cell(ICON.bpm, String(point.bpm))
+  ].filter(Boolean);
+
+  return cells.length ? `<div class="meta">${cells.join('')}</div>` : '';
+}
+
+/**
+ * A weather label as one glyph.
+ *
+ * Matched on KEYWORDS in worst-first order rather than looked up in a table of
+ * Apple's condition names, for two reasons.
+ *
+ * The phone composes its own wording. Every ping in this repo says "Sunny", which is
+ * not any WeatherKit case description, so a table would be a table of guesses about
+ * someone else's string formatting — and a label that misses it would draw nothing,
+ * which is the one outcome worse than drawing something approximate.
+ *
+ * And the order is itself information. "Rain and thunder" is a thunderstorm and not
+ * rain; "Partly Cloudy" is the cloud answer while "Mostly Clear" is the clear one.
+ * Whichever pattern is tested first decides, so the ladder runs from the weather you
+ * would most want to know about down to the weather you wouldn't.
+ *
+ * Night is deliberately not distinguished. A moon for "Clear" at 02:00 needs a
+ * sunrise table to be right, and would be wrong for half the year anywhere far
+ * enough north — which is where these races tend to be.
+ */
+function weatherIcon(label) {
+  const s = String(label).toLowerCase();
+  const hit = WEATHER.find(([pattern]) => pattern.test(s));
+  return hit ? hit[1] : ICON.temp;
+}
+
+const WEATHER = [
+  [/tornado/,                          '\u{1F32A}️'], // 🌪️
+  [/hurricane|tropical|cyclone/,       '\u{1F300}'],       // 🌀
+  // Before rain, so "Rain and thunder" is never merely rain.
+  [/thunder|storm/,                    '⛈️'],    // ⛈️
+  [/hail|sleet|wintry|freezing/,       '\u{1F9CA}'],       // 🧊
+  [/blizzard|snow|flurr/,              '❄️'],    // ❄️
+  [/drizzle|rain|shower/,              '\u{1F327}️'], // 🌧️
+  [/fog|haze|hazy|smok|dust|mist/,     '\u{1F32B}️'], // 🌫️
+  [/wind|breez|blustery/,              '\u{1F4A8}'],       // 💨
+  // The three-way that the two rules below cannot make on their own. "Mostly Cloudy"
+  // is the cloudy answer, while "Partly Cloudy" and "Mostly Clear" are both the
+  // in-between one — so the qualifier has to be read together with what it qualifies,
+  // and reading it first is what stops "Mostly Clear" arriving at a bare sun.
+  [/mostly cloud/,                     '☁️'],    // ☁️
+  [/partly|mostly|intermittent/,       '⛅'],          // ⛅
+  [/cloud|overcast|dreary/,            '☁️'],    // ☁️
+  [/clear|sun|fair/,                   '☀️'],    // ☀️
+  [/hot|frigid|cold/,                  ICON.temp]
+];
 
 /**
  * The one thing in a tooltip you can click.
@@ -658,27 +818,79 @@ function mapsLink(lat, lon, label) {
 }
 
 /**
- * "Predicted 12:36 &middot; 47s late" — how the forecast made before this ping
- * compared with the ping itself.
+ * A prediction, fenced off from everything that was measured.
  *
- * "Late" and "early" describe the RUNNER against the prediction, not the
- * prediction against the runner: arriving after the predicted time is late. The
- * other convention would be a residual, which is a word for a different audience.
+ * One builder for both tooltips, because the ping's retrospective forecast and the
+ * hover's forward one carry the same four numbers — a time, a window around it, and
+ * optionally how the runner did against it — and typesetting them two ways would
+ * make them look like two different kinds of claim. They are the same claim, made
+ * about the past in one place and the future in the other.
  *
- * Under a second, both words are silly and neither is informative, so it just
- * says the forecast was right.
+ * Three lines, answering three questions in descending order of what a reader wants:
+ * WHEN, as one number big enough to hold in your head; how much that number is worth,
+ * as the window it sits in; and how wide that window is, as a length you can compare
+ * with the last one at a glance. Splitting them is what stops the window reading as an
+ * afterthought tacked onto a time that looks certain.
+ *
+ * @param {number}      t     the predicted moment
+ * @param {number}      lo    near edge of the window
+ * @param {number}      hi    far edge
+ * @param {number}      [error] ms the runner was off by, when this is being scored
+ *   against a ping that has already landed. "Late" and "early" describe the RUNNER
+ *   against the prediction: arriving after the predicted time is late. The other
+ *   convention would be a residual, which is a word for a different audience. Under
+ *   a second both words are silly and neither is informative, so it says the forecast
+ *   was right and leaves it there.
+ * @param {number}      [sinceStart] elapsed time at that moment, when it is known
+ * @param {number|null} [origin] for the day tag — a 30-hour race predicted to finish
+ *   at "09:12" needs to say which morning.
  */
-function errorHtml(forecast) {
-  const off = Math.abs(forecast.error);
-  const at = `Predicted ${fmtHm.format(forecast.t)}`;
-  if (off < 1000) return `${at} &middot; spot on`;
-  return `${at} &middot; ${fmtDuration(off)} ${forecast.error > 0 ? 'late' : 'early'}`;
+function predictionHtml({ t, lo, hi, error, sinceStart, origin = null, caption }) {
+  const at = `${fmtHm(t)}${dayTag(t, origin) && `<span class="d">${dayTag(t, origin)}</span>`}`;
+  const aside = error === undefined
+    ? sinceStart === undefined ? '' : ` &middot; <span class="s">${fmtDuration(sinceStart)} in</span>`
+    : Math.abs(error) < 1000
+      ? ' &middot; <span class="s">spot on</span>'
+      : ` &middot; <span class="s">${fmtDuration(Math.abs(error))} ` +
+        `${error > 0 ? 'late' : 'early'}</span>`;
+
+  return `<div class="pred"><div class="k">${caption}</div>` +
+    `<div class="pv">${at}${aside}</div>` +
+    `<div class="s">Likely ${fmtHm(lo)}&thinsp;&ndash;&thinsp;${fmtHm(hi)} ` +
+    `&middot; ${fmtDuration(hi - lo)} wide</div>` +
+    uncertaintyBar(hi - lo) +
+    '</div>';
 }
 
-/** "&uarr; 1,240 m &darr; 980 m" — arrows rather than +/-, which reads as arithmetic. */
-function climbHtml(up, down) {
-  const m = v => Math.round(v).toLocaleString();
-  return `&uarr;&#8202;${m(up)} m &nbsp;&darr;&#8202;${m(down)} m`;
+/**
+ * How wide a forecast window is, drawn as a length.
+ *
+ * The bar is the only thing in a tooltip that can be read without reading: two
+ * predictions half an hour apart are worth comparing, and comparing "14:40 – 15:05"
+ * with "16:02 – 16:11" means arithmetic. Its scale is `uncertaintyRefMs`, fixed, so
+ * the same fill always means the same span — see config.js for why it cannot be
+ * scaled to the window itself.
+ *
+ * The width is an inline style because it is a datum rather than a styling choice:
+ * there is no rule a stylesheet could hold that would know this number.
+ */
+function uncertaintyBar(ms) {
+  const filled = Math.min(1, Math.max(0, ms / CONFIG.uncertaintyRefMs));
+  return `<div class="bar"><i style="width:${(filled * 100).toFixed(1)}%"></i></div>`;
+}
+
+/**
+ * "1,240 m" — a height or a climb, grouped, because four digits of metres is common
+ * on the courses this is for.
+ *
+ * Pinned to `en-US` rather than left to the visitor's locale, which is what it used
+ * to be. Every word in a tooltip is English — "Likely", "since last", "Open in
+ * Google Maps" — so a number formatted to some other convention beside them is a
+ * page that can't decide, and the same reasoning that took `Intl` out of the clock
+ * applies: one wording, chosen here, testable anywhere.
+ */
+function metres(v) {
+  return `${Math.round(v).toLocaleString('en-US')} m`;
 }
 
 /** "850 m" / "12.4 km" — one wording for distance, wherever it is shown. */
@@ -726,7 +938,8 @@ export function makeTooltip(
     if (object.kind === 'waypoint') return tip(waypointTooltipHtml(object));
     if (object.kind === 'beacon') return tip(beaconTooltipHtml(object));
 
-    const latest = latestOf(getPoints());
-    return tip(tooltipHtml(object, !!latest && latest.name === object.name));
+    const points = getPoints();
+    const latest = latestOf(points);
+    return tip(tooltipHtml(object, !!latest && latest.name === object.name, originOf(points)));
   };
 }

@@ -53,20 +53,105 @@ export function parseStamp(name) {
   return Number.isNaN(t) ? null : t;
 }
 
-export const fmtTime = new Intl.DateTimeFormat(undefined, {
-  dateStyle: 'medium', timeStyle: 'medium'
-});
+const DAY_MS = 86400000;
 
-export const fmtClock = new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' });
+const pad2 = n => String(n).padStart(2, '0');
 
 /**
- * A clock time without the seconds, for times nobody measured.
+ * A wall-clock time in the viewer's own zone: "14:06:01". 24-hour, always.
+ *
+ * Built by hand rather than by `Intl.DateTimeFormat`, which is what this used to
+ * be. The formatter can be told the hour cycle, but not to stop being localised:
+ * with an undefined locale it still picks its own separator, its own numerals and
+ * its own idea of whether a leading zero belongs there. This app shows one wording
+ * everywhere and there is nothing left for a locale to decide — the DATE is gone
+ * from every reading (see `dayTag` for what replaced it), and what remains is
+ * three numbers and two colons.
+ *
+ * The zone is still the viewer's, which is the one thing a local `Date` is for: a
+ * race is watched from wherever it is watched from, and the times of day worth
+ * seeing are the ones on the watch of whoever is looking.
+ */
+export function fmtClock(t) {
+  const d = new Date(t);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/**
+ * The same clock without the seconds, for times nobody measured.
  *
  * Everything a ping reports is exact to the second and shown with `fmtClock`. A
  * forecast is exact to about ten minutes, and quoting "13:24:40" for it would be
  * claiming a precision the band printed beside it explicitly denies.
  */
-export const fmtHm = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+export function fmtHm(t) {
+  const d = new Date(t);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/**
+ * Which day of the run a moment falls on, counted in LOCAL CALENDAR days from
+ * `origin`: 0 on the day of the start, 1 on the morning after, -1 the evening
+ * before.
+ *
+ * Calendar days and not 24-hour blocks, which is the whole reason this isn't a
+ * division. A race starting at 06:00 and finishing at 22:00 the same evening is
+ * sixteen hours long and is entirely day 0; one starting at 23:30 and finishing at
+ * 00:30 is one hour long and crosses into day 1. The question being answered is
+ * "which morning is this", and only a calendar answers it.
+ *
+ * Each timestamp is asked for its OWN UTC offset rather than sharing one, so a
+ * race that runs through a daylight-saving change still counts days the way the
+ * clock on the wall did.
+ */
+export function dayOffset(t, origin) {
+  const localDay = ms => {
+    // `getTimezoneOffset` is minutes to ADD to local to reach UTC, so subtracting
+    // it shifts the instant to a UTC value whose date parts are the local ones.
+    const d = new Date(ms);
+    return Math.floor((ms - d.getTimezoneOffset() * 60000) / DAY_MS);
+  };
+  return localDay(t) - localDay(origin);
+}
+
+/**
+ * "+1" for a moment on a later calendar day than the run's start, "-1" for an
+ * earlier one, and "" — nothing at all — for the ordinary case.
+ *
+ * What a full date used to do, in two characters. A tooltip on a one-day run has
+ * no business repeating the date four hundred times, and a tooltip on a two-day
+ * ultra cannot leave it out: "09:12" on its own is a lie about which morning. The
+ * one fact the date was carrying is which day of the RACE it is, and that is a
+ * single digit.
+ *
+ * The negative is offered as readily as the positive. A warm-up ping sent the
+ * evening before a 06:00 start really is on the day before, and a run whose
+ * pre-gun fixes silently read as day 0 would be hiding the thing that makes them
+ * pre-gun.
+ *
+ * @param {number|null} origin the run's start, from `originOf`. Null — a run with
+ *   nothing raced yet — means there is no race day to number from, so no tag.
+ */
+export function dayTag(t, origin) {
+  if (origin === null || origin === undefined || !Number.isFinite(origin)) return '';
+  const days = dayOffset(t, origin);
+  return days === 0 ? '' : days > 0 ? `+${days}` : String(days);
+}
+
+/**
+ * A pace, as minutes and seconds per kilometre: "5:32".
+ *
+ * Deliberately not capped at an hour the way `fmtElapsed` isn't: a runner walking
+ * a steep col really does take 22 minutes over a kilometre, and "22:14" is the
+ * fact. The unit is left to the caller to write, since a bare "5:32" beside a
+ * stopwatch icon would read as a duration.
+ *
+ * @param {number} msPerKm
+ */
+export function fmtPace(msPerKm) {
+  const s = Math.max(0, Math.round(msPerKm / 1000));
+  return `${Math.floor(s / 60)}:${pad2(s % 60)}`;
+}
 
 /**
  * A duration in one unit: "45s", "3m", "2h", "4d".
