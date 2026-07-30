@@ -112,32 +112,8 @@ const ui = createUi({
   // the runner" — following is switched OFF by panning the map, which is the
   // gesture that actually means "leave the camera alone".
   onRecenter: () => map.recenter(),
-  onRunPick: name => openRun(name),
-  // One switch, two views: hiding the waypoints has to hide them on the height
-  // strip too, or the toggle would be lying about half the screen.
-  onLayers: applyLayers
+  onRunPick: name => openRun(name)
 });
-
-/**
- * The panel's checkboxes, sent where each of them belongs.
- *
- * Two of the three are layer flags and go to both views. `viewer` looks like one
- * and isn't: there is no layer to switch, because the dot exists only while the
- * browser is actually reporting a position — so what the tick controls is the
- * WATCH, and the dot follows from whether that watch has answered. Splitting it
- * off here keeps a flag neither view could act on out of both of them.
- *
- * One function rather than an inline callback, because startup has to do exactly
- * this too: a preference restored from the last visit has to take effect the same
- * way as one just changed.
- */
-function applyLayers({ viewer, ...flags }) {
-  map.setLayers(flags);
-  profile.setLayers(flags);
-  if (viewer) ui.setViewerState('locating');
-  else map.setViewer(null);
-  geo.enable(viewer);
-}
 
 // Asking the device where it is — the one thing here that isn't the network. The
 // dot it produces is not part of the run: no cache, nothing persisted about the
@@ -154,24 +130,32 @@ const geo = createGeo({
     map.setViewer(null);
     if (!isDenied(error)) return ui.setViewerState('error', geoMessage(error));
     // A refusal is final until the browser's own settings change, so let the watch
-    // go rather than leaving one running that can never report anything. The panel
-    // unticks and disables its box to match — otherwise the switch would be off
-    // while the thing it switches was still on, and nothing could turn it back.
+    // go rather than leaving one running that can never report anything. Nothing
+    // in this page will ask again: the prompt is raised once, on load, and a "no"
+    // ends it for good — only the browser's own site settings can undo it.
     ui.setViewerState('denied');
     geo.enable(false);
   }
 });
 
-// Whether the control is offered at all. Settled once, because it is a fact about
-// the browser: no geolocation API, or a page served over plain http from anything
-// but localhost, and there is nothing a tick could achieve. See `supported`.
-ui.setAvailable({ viewer: geo.supported() });
-
-// The panel restores its toggles from the last visit, so both views need to be
-// told once at startup — a checkbox that comes back unticked has to arrive with
-// its layer already gone. This is also what re-acquires a position the visitor
-// asked for on an earlier visit, silently, the permission already being granted.
-applyLayers(ui.layers());
+// Ask where the visitor is, now, on load.
+//
+// This used to be behind a checkbox, off by default, on the argument that a page
+// which demands your location before you have asked it for anything is a page
+// nobody trusts. The argument lost to what actually happened: the tick was the
+// one control on the panel nobody found, and the dot it draws is half of what the
+// page is for — the pings say where the runner is, and this says where you are
+// relative to them. The browser's own prompt is the consent, it is asked once per
+// site, and a refusal is honoured permanently by `onError` below.
+//
+// Nothing happens at all where asking is pointless: no geolocation API, or a page
+// served over plain http from anything but localhost. `enable` guards that itself,
+// so the only reason to test it here is to keep the panel from saying it is
+// locating someone it will never locate. See `supported`.
+if (geo.supported()) {
+  ui.setViewerState('locating');
+  geo.enable(true);
+}
 
 /**
  * Paint one run's points, snapped to its course if it has one.
@@ -246,11 +230,6 @@ async function loadCourse() {
 
   map.setCourse(course);
   profile.setCourse(course);
-  // A toggle for something this run hasn't got isn't a choice, it's furniture.
-  ui.setAvailable({
-    waypoints: Boolean(course?.waypoints?.length),
-    raw: Boolean(course)
-  });
   return true;
 }
 
@@ -295,7 +274,6 @@ async function reconcile() {
     courseSha = null;
     map.setCourse(null);
     profile.setCourse(null);
-    ui.setAvailable({ waypoints: false, raw: false });
     ui.setRun(run);
     // Before painting, because painting an empty cache is what makes the panel
     // speak. "No locations yet" is a claim about the RUN; with nothing fetched

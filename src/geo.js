@@ -45,11 +45,11 @@ export function viewerFrom(position) {
 /**
  * Why the location isn't showing, in two or three words.
  *
- * Short because of where it goes: appended to the "My location" checkbox's own
- * label, which is the control the message is about. The alternative was the
- * panel's `#error` line, and that belongs to the poll loop — which overwrites it
- * on every pass, so a permission message put there would vanish within the
- * minute and look like a flicker rather than an explanation.
+ * Short because of where it goes: after "Your location: " on one muted line at
+ * the foot of the status panel. The alternative was the panel's `#error` line, and
+ * that belongs to the poll loop — which overwrites it on every pass, so a
+ * permission message put there would vanish within the minute and look like a
+ * flicker rather than an explanation.
  *
  * Pure, and dispatching on the numeric `code` rather than the message the browser
  * supplies: those differ by browser and by locale, and one of them is the string
@@ -75,8 +75,9 @@ export const isDenied = error => error?.code === 1;
  * Both halves matter. `isSecureContext` is the one that catches people out: over
  * plain `http://` from a LAN address — which is how you open a page on your phone
  * to test it — `navigator.geolocation` exists in full and every call to it fails.
- * A control offered there could only ever disappoint, so it isn't offered.
- * `localhost` counts as secure; `192.168.x.x` does not.
+ * Asking there could only ever disappoint, so the page doesn't ask — and doesn't
+ * claim to be locating you either. `localhost` counts as secure; `192.168.x.x`
+ * does not.
  */
 export const supported = () =>
   Boolean(globalThis.navigator?.geolocation) && globalThis.isSecureContext === true;
@@ -98,19 +99,20 @@ export function createGeo({ onPosition = () => {}, onError = () => {} } = {}) {
     supported,
 
     /**
-     * Start or stop watching. Idempotent in both directions, because it is
-     * called from a checkbox and from the restore of that checkbox at startup.
+     * Start or stop watching. Idempotent in both directions: it is called once on
+     * load to start, and again to stop if the visitor says no.
      *
-     * Starting is what triggers the browser's permission prompt — which is the
-     * whole reason this is behind a control rather than run on load. A visitor
-     * who never ticks it is never asked.
+     * Starting is what triggers the browser's permission prompt, and that now
+     * happens as the page opens. The prompt is the consent — it is the browser's
+     * own, asked once per site, and a refusal is final: `main.js` stops the watch
+     * and nothing here asks a second time.
      */
     enable(on) {
       // Nothing to start and nothing to stop. Worth a guard rather than a caller's
-      // promise to check first: a preference restored from a previous visit can
-      // arrive switched on in a context where the API isn't there at all — the
-      // same page opened over http from a phone on the LAN — and reaching
-      // `watchPosition` on a missing `geolocation` would throw at startup.
+      // promise to check first: this is called unconditionally at startup, and in
+      // a context where the API isn't there at all — the same page opened over
+      // http from a phone on the LAN — reaching `watchPosition` on a missing
+      // `geolocation` would throw before the map ever drew.
       if (!supported()) return;
       if (on === Boolean(watch)) return;
 

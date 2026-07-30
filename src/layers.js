@@ -3,7 +3,7 @@
 
 import { CONFIG } from './config.js';
 import {
-  accent, course as courseColor, point as pointColor, surface, viewer as viewerColor, prefersDark
+  accent, course as courseColor, surface, viewer as viewerColor, prefersDark
 } from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
@@ -41,9 +41,11 @@ export function basemapLayer() {
  * course doesn't grow a line between the end of one leg and the start of the
  * next. Returns nothing when the run has no course, which is the common case.
  *
- * @param {boolean} showWaypoints from the panel's toggle.
+ * The waypoints are not optional. They were behind a toggle, and a toggle is a
+ * question — this one had the same answer every time, which makes it furniture
+ * rather than a choice. A course with waypoints shows them.
  */
-export function courseLayers(course, showWaypoints = true) {
+export function courseLayers(course) {
   if (!course) return [];
 
   const line = courseColor();
@@ -83,7 +85,7 @@ export function courseLayers(course, showWaypoints = true) {
     })
   ];
 
-  if (showWaypoints && course.waypoints.length) {
+  if (course.waypoints.length) {
     layers.push(new deck.ScatterplotLayer({
       id: 'waypoints',
       // `kind` is what the tooltip dispatches on — a waypoint is not a fix and
@@ -149,22 +151,24 @@ function waypointName(w) {
  * things, and which real fix each snapped dot came from — but the snapped one is
  * what the eye should land on, so it carries all the weight and the tooltip.
  *
+ * The audit trail used to be behind a toggle, off by default, which meant almost
+ * nobody ever saw what the snapper had done. It is always drawn now and instead
+ * pushed further down the stack by alpha alone: faint enough to read as a smudge
+ * behind the reading, there the moment you look for it.
+ *
  * @param {Array} points sorted oldest-first, each maybe carrying `snap`
  * @param {number} pulse 0..1, drives the halo on the newest fix
- * @param {boolean} showRaw from the panel's toggle. The SNAPPED dots are never
- *   optional — they are the reading; this only governs the audit trail behind
- *   them, which is worth having and not worth looking at all the time.
  */
-export function pointLayers(points, pulse, showRaw = true) {
+export function pointLayers(points, pulse) {
   const latest = latestOf(points);
   const latestData = latest ? [latest] : [];
   const ring = surface();
-  const fill = pointColor();
+  const fill = accent();
 
   // Only the ones that actually moved. For an unsnapped ping the two positions
   // are the same, so there is nothing to draw faintly and nothing to join up.
   const moved = points.filter(p => p.snap);
-  const audit = showRaw && moved.length ? [
+  const audit = moved.length ? [
     // Which faint dot belongs to which snapped one. Dashed rather than solid so
     // it reads as an annotation and can't be mistaken for a leg of the route.
     // `PathStyleExtension` ships inside the deck.gl UMD bundle index.html
@@ -176,7 +180,7 @@ export function pointLayers(points, pulse, showRaw = true) {
       widthUnits: 'pixels',
       getWidth: 1,
       widthMinPixels: 1,
-      getColor: [...fill, 90],
+      getColor: [...fill, 55],
       extensions: [new deck.PathStyleExtension({ dash: true })],
       getDashArray: [4, 3],
       dashJustified: true
@@ -189,7 +193,7 @@ export function pointLayers(points, pulse, showRaw = true) {
       radiusUnits: 'pixels',
       getPosition: p => [p.lon, p.lat],
       getRadius: 3,
-      getFillColor: [...fill, 70]
+      getFillColor: [...fill, 45]
     })
   ] : [];
 
@@ -202,13 +206,12 @@ export function pointLayers(points, pulse, showRaw = true) {
       pickable: true,
       radiusUnits: 'pixels',
       getPosition: posOf,
-      getRadius: 5,
-      radiusMinPixels: 5,
-      // A surface-coloured ring keeps overlapping fixes readable as separate marks.
-      stroked: true,
-      lineWidthUnits: 'pixels',
-      getLineWidth: 1.5,
-      getLineColor: [...ring, 235],
+      getRadius: 4,
+      radiusMinPixels: 4,
+      // No ring. It was there to keep overlapping fixes readable as separate
+      // marks, and on a course pinged every few minutes it instead turned a
+      // stretch of trail into a chain of little targets. A plain dot reads as a
+      // trace, which is what a line of pings is.
       getFillColor: [...fill, 232]
     }),
 
@@ -319,11 +322,11 @@ export function beaconLayers(beacons) {
  * nothing said where *you* are, so anyone planning to intercept a runner had to
  * hold one of those two facts in their head or go and look at a different map.
  *
- * Blue because a blue dot has meant "you" on every map anyone has used. That
- * creates the one real hazard here, since the pings are blue too, so the
- * distinction is made three times over: its own deeper token rather than
- * `point()`, a 3 px ring where a ping has 1.5, and a blue halo where the only
- * other pulsing thing on screen — the newest ping — pulses orange.
+ * Blue because a blue dot has meant "you" on every map anyone has used — and it
+ * is now the only thing on this map that isn't orange, the pings having given up
+ * their blue. The ring and the halo are what finish the job: a ping carries no
+ * ring at all, and the only other pulsing mark on screen is the newest fix, which
+ * pulses orange.
  *
  * The accuracy circle is drawn in METRES, at whatever radius the browser admits
  * to. A wifi-derived fix can be a kilometre wide and a GPS one ten metres, and
@@ -383,8 +386,8 @@ export function viewerLayers(viewer, pulse) {
       getRadius: 7,
       stroked: true,
       lineWidthUnits: 'pixels',
-      // Twice the ring a ping gets. On a phone-map dot this width is most of what
-      // makes it read as "you" rather than as another measurement.
+      // A ring at all, where a ping has none. On a phone-map dot this is most of
+      // what makes it read as "you" rather than as another measurement.
       getLineWidth: 3,
       getLineColor: [...surface(), 255],
       getFillColor: [...ink, 255],
@@ -520,7 +523,24 @@ export function tooltipHtml(point, isLatest) {
   // the model can be caught being wrong.
   if (stats?.forecast) rows.push(`<div class="r">${errorHtml(stats.forecast)}</div>`);
 
-  if (point.btry !== undefined) rows.push(`<div class="r">Battery ${point.btry}%</div>`);
+  // What the phone was dealing with when it sent this: how much battery it had
+  // left and how much of a network. One row, because they are two facts about the
+  // same device, and either can be missing — every file written before the field
+  // existed has neither.
+  //
+  // The signal is shown as "2/4" rather than as bars, because the number IS out
+  // of four and a row of glyphs would need the reader to count them. It also
+  // explains gaps in the trail: a stretch with no pings and 0/4 either side of it
+  // is a phone that was working perfectly and had nowhere to send anything.
+  const phone = [
+    point.btry === undefined ? null : `Battery ${point.btry}%`,
+    point.ntwrk === undefined ? null : `Signal ${point.ntwrk}/4`
+  ].filter(Boolean);
+  if (phone.length) rows.push(`<div class="r">${phone.join(' &middot; ')}</div>`);
+
+  const weather = splitWeather(point.wthr);
+  if (weather) rows.push(`<div class="r">${weather.join(' &middot; ')}</div>`);
+
   if (point.msg) rows.push(`<div class="m">${escapeHtml(point.msg)}</div>`);
   if (point.img) rows.push(`<img src="${encodeURI(point.img)}" alt="">`);
   // Distance and time of day, which is what makes one ping's pin tellable from
@@ -579,6 +599,35 @@ export function hoverTooltipHtml(at) {
   }
   rows.push(mapsLink(at.lat, at.lon, `${fmtDistance(at.along)} in`));
   return rows.join('');
+}
+
+/**
+ * The weather a ping carries, as its two halves: `["28°C", "Sunny"]`.
+ *
+ * The phone sends one string with the temperature and the sky glued together by
+ * an " and " it composed itself. Those are two readings and not one — a number
+ * you compare with the last ping's, and a word you don't — so they are pulled
+ * apart here and shown as two, in the same `·` idiom as everything else in a
+ * tooltip.
+ *
+ * Split on the FIRST " and " only, so a label that contains one of its own
+ * ("Rain and thunder") survives intact. A string that has none is passed through
+ * whole rather than sliced on a guess, which also covers a phone that one day
+ * sends the label alone.
+ *
+ * Escaped here rather than by the caller, because this is what hands back the
+ * pieces — a temperature is a plausible enough number that nothing else in this
+ * file would think to.
+ *
+ * @param {string|undefined} wthr
+ * @returns {string[]|null} one or two escaped parts, or null when there's nothing.
+ */
+export function splitWeather(wthr) {
+  const text = String(wthr ?? '').trim();
+  if (!text) return null;
+
+  const halves = /^(.*?)\s+and\s+(.+)$/i.exec(text);
+  return (halves ? [halves[1], halves[2]] : [text]).map(escapeHtml);
 }
 
 /** "8.8 km in &middot; 1.2 km since last", or just the total when there's no previous. */

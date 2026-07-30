@@ -9,7 +9,7 @@
 // arithmetic is tested without a canvas anywhere near it.
 
 import { CONFIG } from './config.js';
-import { accent, course as courseColor, point as pointColor, surface } from './colors.js';
+import { accent, course as courseColor, surface } from './colors.js';
 import { pointAt } from './course.js';
 import { hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
@@ -363,11 +363,6 @@ export function createProfile(root, {
   // Until when a `click` is to be read as the tail of a tap `endDrag` has already
   // answered, rather than as a new one. See `GHOST_CLICK_MS`.
   let ghostUntil = 0;
-  // Which optional layers the panel's toggles have switched on. The waypoint
-  // one governs both views, so a feed station is either shown in both or in
-  // neither rather than only on the map.
-  let layers = { waypoints: true, raw: true };
-
   // The axis ink, read from the page's own palette once. `draw` runs on every
   // pointermove, and a getComputedStyle in there is a style recalculation per
   // frame for a colour that doesn't change. Same bargain colors.js makes.
@@ -459,7 +454,7 @@ export function createProfile(root, {
     ctx.stroke();
 
     drawAxis(scale);
-    if (layers.waypoints) drawWaypoints(scale);
+    drawWaypoints(scale);
     drawHover(scale, scale.floor, ridge);
     drawForecast(scale, ridge);
     drawPoints(scale);
@@ -677,13 +672,16 @@ export function createProfile(root, {
 
   /**
    * The pings, at their distance along the course and the course's height there
-   * — the same colours as the map, so the two views read as one dataset.
-   * Unsnapped pings have no distance, so they simply aren't here.
+   * — the same colour as the map, so the two views read as one dataset. That is
+   * one colour for all of them now, the newest included; here as there, it is the
+   * size and the ring that say which one is newest. Unsnapped pings have no
+   * distance, so they simply aren't here.
    */
   function drawPoints(scale) {
     const latest = latestOf(points);
     const ring = surface();
-    const fill = `rgb(${pointColor().join(',')})`;
+
+    ctx.fillStyle = `rgb(${accent().join(',')})`;
 
     for (const p of points) {
       if (!p.snap) continue;
@@ -693,7 +691,6 @@ export function createProfile(root, {
 
       ctx.beginPath();
       ctx.arc(x, y, isLatest ? 5 : 3.2, 0, Math.PI * 2);
-      ctx.fillStyle = isLatest ? `rgb(${accent().join(',')})` : fill;
       ctx.fill();
 
       if (isLatest) {
@@ -1018,16 +1015,6 @@ export function createProfile(root, {
      */
     tickForecast() {
       if (refreshMarker()) draw();
-    },
-
-    /**
-     * Which optional layers are on, from the panel's toggles. Only `waypoints`
-     * means anything here — the raw fixes have no place on a height profile,
-     * which plots distance along the course rather than position.
-     */
-    setLayers(next) {
-      layers = { ...layers, ...next };
-      draw();
     },
 
     /**

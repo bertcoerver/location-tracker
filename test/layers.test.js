@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import {
   beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
-  tooltipHtml, viewerLayers, waypointTooltipHtml
+  splitWeather, tooltipHtml, viewerLayers, waypointTooltipHtml
 } from '../src/layers.js';
 import { interpolateAt } from '../src/stats.js';
 
@@ -105,6 +105,51 @@ test('the newest fix is marked, and a message and battery still come through', (
   assert.ok(out.includes('· latest'));
   assert.ok(out.includes('Battery 78%'));
   assert.ok(out.includes('over the top'));
+});
+
+// --- what the phone was dealing with ------------------------------------------
+
+test('battery and signal share one row, and either half can be missing', () => {
+  const both = text(tooltipHtml({ ...point, btry: 76, ntwrk: 2 }, false));
+  assert.ok(both.includes('Battery 76% · Signal 2/4'), both);
+
+  // Every file written before `ntwrk` existed, which is most of them.
+  assert.ok(text(tooltipHtml({ ...point, btry: 76 }, false)).includes('Battery 76%'));
+  // And the other way round, without a stray separator hanging off it.
+  const signal = text(tooltipHtml({ ...point, ntwrk: 0 }, false));
+  assert.ok(signal.includes('Signal 0/4'), signal);
+  assert.ok(!signal.includes('·'), signal);
+});
+
+test('no signal is 0/4 rather than nothing at all', () => {
+  // A phone with no bars is exactly the interesting case: it explains the gap in
+  // the trail on either side of this ping. `0` must not be read as absent.
+  assert.ok(text(tooltipHtml({ ...point, ntwrk: 0 }, false)).includes('Signal 0/4'));
+});
+
+test('the weather is reported as two readings, not as the one string it arrives as', () => {
+  const out = text(tooltipHtml({ ...point, wthr: '28°C and Sunny' }, false));
+  assert.ok(out.includes('28°C · Sunny'), out);
+});
+
+test('splitWeather cuts at the first "and", so a label keeping one survives', () => {
+  assert.deepEqual(splitWeather('28°C and Sunny'), ['28°C', 'Sunny']);
+  assert.deepEqual(splitWeather('9°C and Rain and thunder'), ['9°C', 'Rain and thunder']);
+  // Nothing to cut on: passed through whole rather than sliced on a guess.
+  assert.deepEqual(splitWeather('Sunny'), ['Sunny']);
+  assert.deepEqual(splitWeather('  28°C and Sunny  '), ['28°C', 'Sunny']);
+});
+
+test('splitWeather has nothing to say about a missing or empty field', () => {
+  assert.equal(splitWeather(undefined), null);
+  assert.equal(splitWeather(''), null);
+  assert.equal(splitWeather('   '), null);
+});
+
+test('the weather is escaped — it is a string a phone composed', () => {
+  const out = splitWeather('28°C and <b>Sunny</b>');
+  assert.deepEqual(out, ['28°C', '&lt;b&gt;Sunny&lt;/b&gt;']);
+  assert.ok(!tooltipHtml({ ...point, wthr: '<img src=x>' }, false).includes('<img src=x>'));
 });
 
 test('the finish says so, and says it instead of "latest"', () => {
@@ -352,8 +397,9 @@ test('a run name is escaped, since it comes from a folder in the repo', () => {
 
 // --- the visitor's own position -----------------------------------------------
 
-test('viewerLayers draws nothing until the visitor asks to be located', () => {
-  // Which is the default and the common case: three layers per frame for a
-  // permission nobody granted. The layers themselves need deck.gl's global.
+test('viewerLayers draws nothing until a position has actually arrived', () => {
+  // The page asks on load, but the answer may be a refusal, an error, or simply
+  // not back yet — and none of those is a place to draw a dot. The layers
+  // themselves need deck.gl's global.
   assert.deepEqual(viewerLayers(null, 0), []);
 });

@@ -72,9 +72,18 @@ Two traps worth recording, because in both cases the symptom is nothing like the
 Two numbers, both in the panel top left. **How long since the last ping**, on the top line, and
 **how long the run has been going**, below the run name. Not how many pings there are, and not
 what second the browser last checked GitHub — that second is the page's business, and the dot
-already says whether polling is healthy. The run's name is set in the same type as the clock: they
-are the two things worth reading at a glance, so neither is a caption for the other. Each sits under
-a small caption of its own — `COURSE` and `ELAPSED` — in the same 11 px uppercase.
+already says whether polling is healthy.
+
+The panel says three things and says them all the same way: a small 11 px uppercase caption —
+`COURSE`, `ELAPSED`, `FINISH` — with its value under it in 20 px, all six lines starting on one pixel
+column and every block the same distance from the one above. They had drifted into three sizes, two
+inks and two indents, which made a panel of equal facts look like a hierarchy nobody had meant. The
+run name takes two corrections to join in: it is a `<select>` stretched over a sizer, and the border
+and padding that control needs are subtracted back out of the heading's own margins, or the name
+would sit two pixels low and one pixel right of the clock underneath it. The heading is also `display:
+block` rather than `inline-block` for the same reason — an inline-block rides a text baseline and
+drags the line box's descender space along under it, which put four extra pixels between the name and
+`ELAPSED`.
 
 **The run name is also the run picker.** There used to be a name and, stacked underneath it, a
 dropdown listing that same name; now there is one control. At rest it is typeset exactly as the
@@ -127,10 +136,9 @@ FINISH
 13:16 – 13:33
 ```
 
-The same question as the clock, asked forwards. It is set a size down and in the secondary ink
-because the two sit one above the other and only one of them is a measurement — the hierarchy has to
-say which — and the range underneath is not decoration, it is the part that stops a single number
-being read as a promise. It shows only while the run is live, and never at all for a run that has
+The same question as the clock, asked forwards, and typeset identically to it — the range underneath
+is what says which of the two is a guess, and it is not decoration: it is the part that stops a single
+number being read as a promise. It shows only while the run is live, and never at all for a run that has
 finished: a forecast is a claim about a phone that is still out there. See "Predicting the rest".
 
 ### Knowing a run is over
@@ -162,21 +170,17 @@ That ticker is also the main control. **Click it to fly back to the newest fix**
 turns following off, and the ticker dims to say so. There is no separate Follow button because
 "where is the runner" and "take me there" were never two questions.
 
-Below it, when a run has a course, two checkboxes decide what else is drawn: its **points of
-interest** (on the map and on the height strip both — one switch, or it would be lying about half
-the screen) and the **raw points**, the audit trail showing where each fix really was before it
-snapped, joined to it by a dashed line. The snapped dots themselves have no switch: they are the
-reading, not a decoration.
+**There are no layer switches.** There were three — points of interest, raw points, your own
+location — and each of them turned out to have the same answer every time it was asked, which makes a
+control furniture rather than a choice. All three are simply on now, and the panel is three lines
+shorter.
 
-The two defaults are deliberately opposite ways round. Waypoints are part of the course and belong
-on it, so they are **on** unless switched off. The raw fixes are an audit of the *snapping* — the
-thing to look at when a dot seems wrong, and clutter the rest of the time — so they are **off**
-unless asked for. Either choice is remembered across visits.
-
-A checkbox for something the current run hasn't got stays hidden, and the whole block disappears
-when neither applies. The points-of-interest switch appears only when the GPX actually carries
-`<wpt>` elements, which costs nothing to know: the waypoints are already parsed out of the course
-file, so it is a length check on an array that is in hand either way.
+The **points of interest** are drawn wherever the GPX carries them, on the map and on the height strip
+both. The **raw points** — the audit trail showing where each fix really was before it snapped, joined
+to it by a dashed line — are always drawn too, and instead pushed down the stack by alpha alone: faint
+enough to read as a smudge behind the reading, there the moment you go looking for it. That is a
+straight improvement on a switch that was off by default, which meant almost nobody ever saw what the
+snapper had done. **Your own location** is asked for as the page opens; see "Where *you* are".
 
 ### Click to keep a tooltip
 
@@ -223,24 +227,35 @@ which is worse than a blank card. The older `?q=lat,lon(Label)` is the only form
 coordinate *and* names it. Links without a label stay on the documented one. See `mapsUrl` in
 [`util.js`](src/util.js).
 
-Every ping is one colour, with the newest in the accent colour and a pulsing halo. There used to
-be a time ramp and a legend to decode it, but the only thing anyone read off it was how fresh the
-newest fix was, and the ticker now says that in words. All the colours are CSS custom properties in
-[`index.html`](index.html) — `--point`, `--accent`, `--course`, `--viewer`, `--surface-*` — and
-[`colors.js`](src/colors.js) reads whichever of light or dark is active.
+Every ping is one colour — the accent orange, the newest one included. There were two before this,
+a blue for the trail and the accent for the newest, which said "two kinds of thing" about one kind of
+thing; what actually marks the newest fix is its size, its ring and its pulsing halo, and those were
+doing the work already. Before that there was a time ramp and a legend to decode it, and the only
+thing anyone read off it was how fresh the newest fix was, which the ticker now says in words. The
+trail dots carry no ring at all: a ring keeps overlapping fixes legible as separate marks, and on a
+course pinged every few minutes it turned a stretch of trail into a chain of little targets instead of
+a trace. All the colours are CSS custom properties in [`index.html`](index.html) — `--accent`,
+`--course`, `--viewer`, `--surface-*` — and [`colors.js`](src/colors.js) reads whichever of light or
+dark is active.
 
 ### Where *you* are
 
-Tick **My location** in the panel and the page asks the browser where you are, then marks it with a
-blue pulsing dot. It is the only thing on the map that isn't about the race, and it is the other half
-of a spectator's question: the pings say where the runner is, and without this anyone planning to
-intercept them had to hold their own position in their head or go and look at a different map.
+**The page asks the browser where you are as it opens**, and marks it with a blue pulsing dot. It is
+the only thing on the map that isn't about the race, and it is the other half of a spectator's
+question: the pings say where the runner is, and without this anyone planning to intercept them had to
+hold their own position in their head or go and look at a different map.
 
-Blue, because a blue dot has meant "you" on every map anyone has used — which is awkward here, since
-the pings are blue too. So the distinction is made three times over: its own deeper token rather than
-`--point`, a 3 px ring where a ping has 1.5, and a blue halo where the only other pulsing thing on
-screen pulses orange. It sits **under** the course and the pings, like the other runs' dots, for one
-extra reason: the accuracy circle can be a kilometre across and would wash the route out.
+This used to be a checkbox, off by default, on the argument that a page which demands your location
+before you have asked it for anything is a page nobody trusts. The argument lost to what actually
+happened: it was the one control on the panel nobody found. The browser's own prompt is the consent —
+it is asked once per site, it is the mechanism designed for exactly this question, and a refusal is
+honoured permanently, below.
+
+Blue, because a blue dot has meant "you" on every map anyone has used, and it is now the only thing on
+this map that isn't orange — the pings having given up their blue. The ring and the halo finish the
+job: a ping carries no ring at all, and the only other pulsing mark on screen is the newest fix, which
+pulses orange. It sits **under** the course and the pings, like the other runs' dots, for one extra
+reason: the accuracy circle can be a kilometre across and would wash the route out.
 
 That circle is drawn at whatever radius the browser admits to, in **metres**, so it shrinks as you
 zoom out — it is an area of ground, not a mark on a screen. A wifi-derived fix can be a kilometre
@@ -251,30 +266,28 @@ one drawn from a number that means nothing.
 
 Three things it deliberately does **not** do:
 
-- **It never moves the camera.** Ticking the box while watching a race on another continent draws a
-  dot you cannot see, and that is the honest outcome — the alternative is taking the race off screen
-  to show you a fact about yourself you already knew.
-- **It never asks unprompted.** The checkbox is off by default and switching it on is what raises the
-  permission prompt, so a visitor who doesn't want it is never asked. The choice is remembered, so a
-  second visit re-acquires silently — the permission having already been granted — and one that was
-  left off stays off.
+- **It never moves the camera.** Watching a race on another continent draws a dot you cannot see, and
+  that is the honest outcome — the alternative is taking the race off screen to show you a fact about
+  yourself you already knew.
+- **It never asks twice.** The prompt is raised once, as the page loads, and a refusal ends it: the
+  watch is stopped rather than left running where it can never report anything, and nothing in the
+  page re-asks. Only the browser's own site settings can give the permission back.
 - **It stores nothing about the position.** Where you were last time is a fact about a person, not
   about a race, and this page has no reason to keep it.
 
 Nothing appears on the height strip. The visitor has no place on an axis of distance-along-the-course,
 and inventing one would mean claiming they are on it.
 
-If the browser refuses, the reason is appended to the checkbox's own label — `blocked`,
-`unavailable`, `no signal` — rather than going to the panel's error line, which belongs to the poll
-loop and is rewritten every pass. A refusal is the one case that changes the control instead of
-merely annotating it: the tick comes off, the box is disabled and the preference is forgotten, since
-only the browser's own site settings can give the permission back and a page that re-asks on every
-load is a page that has stopped listening. See [`geo.js`](src/geo.js).
+While the prompt is up the panel's last line reads `Locating you…`, which is the only thing on screen
+explaining what that prompt is for. If the browser refuses or fails, that line says why —
+`Your location: blocked`, `unavailable`, `no signal` — rather than going to the panel's error line,
+which belongs to the poll loop and is rewritten every pass. See [`geo.js`](src/geo.js).
 
 > ⚠️ Geolocation needs a **secure context**. `https://` and `localhost` count; `http://192.168.x.x`
 > does not — and over that the API is fully present and every call to it fails, which looks exactly
-> like a bug in this code. The checkbox is hidden entirely when it can't work, so if it isn't there,
-> check the URL first. See "Running it".
+> like a bug in this code. The page doesn't ask at all where asking cannot work, and says nothing
+> about locating you either, so a panel with no location line on it is the symptom. Check the URL
+> first. See "Running it".
 
 ## The course
 
@@ -528,8 +541,35 @@ The timestamp lives *only* in the filename — there is no time field in the bod
 {"lat":46.57352593732256,"lon":-0.7721662634749413,"btry":49}
 ```
 
-Only `lat` and `lon` are required. `btry` (battery %), `msg`, `img` and `is_finish` are optional and
-the map handles files that carry any, all, or none of them. Files are never edited once written.
+Only `lat` and `lon` are required. Everything else is optional and the map handles files that carry
+any, all, or none of them:
+
+| field | what it is | where it shows |
+| --- | --- | --- |
+| `btry` | battery percentage | the tooltip, and the poll schedule |
+| `ntwrk` | network strength on the phone, `0`–`4` | the tooltip, as `Signal 2/4` |
+| `wthr` | temperature and sky as one string, `"28°C and Sunny"` | the tooltip, split in two |
+| `msg` | a note from the runner | the tooltip |
+| `img` | an image URL | the tooltip |
+| `is_finish` | the phone's last upload of the run | see "Knowing a run is over" |
+
+Files are never edited once written.
+
+`ntwrk` is range-checked rather than merely required to be a number: the tooltip renders it as `2/4`,
+so a `7` there would be a claim about a scale that doesn't exist, and a value outside `0`–`4` is
+dropped. `0` is kept and shown — a phone with no bars is the interesting case, because it explains the
+gap in the trail on either side of that ping.
+
+`wthr` arrives as one string with the temperature and the sky glued together by an " and " the phone
+composed. Those are two readings, not one — a number you compare with the last ping's, and a word you
+don't — so `splitWeather` pulls them apart for display and the tooltip shows `28°C · Sunny`. It splits
+on the *first* " and " only, so a label carrying one of its own ("Rain and thunder") survives intact,
+and a string with none is passed through whole rather than sliced on a guess.
+
+Both fields landed on pings that had already been committed, which is why `V` in `config.js` went to
+`v8`: a browser holding those files from an earlier visit stored them without either, and `hydrate`
+diffs on sha, which never changes. One forced re-hydrate, free — every body comes from the CDN. Same
+situation as `v6` and `is_finish`.
 
 `is_finish: true` marks the phone's **last upload of a run**. It is deliberately a normal ping rather
 than a separate marker file with no coordinates: every consumer of a point assumes a fix, so a
@@ -795,12 +835,13 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - Something else clickable → `describe()` in `map.js` (the map's side) or `readAt()` in
   `profile.js` (the strip's). Both return the same small `Selection`, so neither view needs to
   know how the other one found it.
-- Another optional layer → a checkbox in `index.html`, a flag through `ui.js`'s `onLayers`, and
-  `setLayers` on `map.js` and/or `profile.js`. Nothing that carries a reading should get one.
-- Anything else asked of the DEVICE rather than of GitHub → `geo.js`, and route it through
-  `applyLayers` in `main.js`, which is where a checkbox that controls a permission rather than a layer
-  gets separated from the ones that don't. Keep the pure half exported and tested: a device API can't
-  be exercised in `node --test`, but the shape of what it hands back can.
+- Another layer → `allLayers` in `map.js`, which is the whole stack in draw order in one place.
+  Resist making it optional: the three switches this page used to have all had the same answer every
+  time they were asked, and a control like that is furniture. Alpha and draw order are usually the
+  real answer to "this is secondary".
+- Anything else asked of the DEVICE rather than of GitHub → `geo.js`, wired up in `main.js` beside the
+  geolocation watch. Keep the pure half exported and tested: a device API can't be exercised in
+  `node --test`, but the shape of what it hands back can.
 
 ## Running it
 
@@ -812,11 +853,11 @@ npm run dev          # or: python3 -m http.server 8000
 
 Then open http://localhost:8000/.
 
-**Use `localhost`, not your machine's LAN address**, if you want to test "My location". Geolocation
-is only available in a secure context: `https://` and `localhost` qualify, `http://192.168.x.x` does
-not. Over that address `navigator.geolocation` is fully present and every call to it fails, so the
-symptom looks like broken code rather than a blocked API — the checkbox hides itself there for
-exactly that reason. To try it on a phone, use the deployed HTTPS URL.
+**Use `localhost`, not your machine's LAN address**, if you want to test the "you are here" dot.
+Geolocation is only available in a secure context: `https://` and `localhost` qualify,
+`http://192.168.x.x` does not. Over that address `navigator.geolocation` is fully present and every
+call to it fails, so the symptom looks like broken code rather than a blocked API — the page doesn't
+ask there at all, for exactly that reason. To try it on a phone, use the deployed HTTPS URL.
 
 ## Tests
 

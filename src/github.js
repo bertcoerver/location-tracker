@@ -222,13 +222,26 @@ export async function fetchPoint(run, name, sha) {
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
   const body = await res.json();
 
-  // Only lat/lon are guaranteed. Older files carry msg/img, newer ones btry.
+  // Only lat/lon are guaranteed. Older files carry msg/img, newer ones btry, and
+  // newer ones still ntwrk/wthr. Every optional field is read the same way: taken
+  // if it is the shape it should be, dropped without comment if it isn't. A ping
+  // is written once and never edited, so the oldest file in the repo has to keep
+  // drawing exactly as it did the day it landed.
   const lat = Number(body.lat);
   const lon = Number(body.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
   const point = { name, sha, t: parseTime(name), lat, lon };
   if (Number.isFinite(body.btry)) point.btry = Number(body.btry);
+  // Network strength on the reporting phone, 0 to 4 bars as the phone counts
+  // them. Range-checked rather than merely finite: the tooltip says "2/4", so a
+  // 7 there would be a claim about a scale that doesn't exist.
+  const ntwrk = Number(body.ntwrk);
+  if (Number.isFinite(ntwrk) && ntwrk >= 0 && ntwrk <= 4) point.ntwrk = ntwrk;
+  // Temperature and sky, as one string the phone composed — "28°C and Sunny".
+  // Kept whole here and split for display by `splitWeather`: this layer's job is
+  // to say what the file contained, not to decide how it reads.
+  if (body.wthr) point.wthr = String(body.wthr);
   // The phone's last upload of a run. An ordinary ping in every other respect,
   // which is the whole trick: a file with no coordinates would have to be kept
   // out of the points array by hand, and every consumer of it assumes a fix.

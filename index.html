@@ -32,17 +32,18 @@
     --profile-h: 0px;
     --profile-min-w: 640px;
 
-    /* Every ping, one colour. Age used to be encoded in a ramp; it isn't any
-       more, because the panel now says how old the newest fix is and that is
-       the only part of the answer anyone was reading off the colours. */
-    --point: #2a78d6;
+    /* Every ping is `--accent`. There used to be a `--point` blue for the older
+       ones and the accent for the newest, which said "these are two kinds of
+       thing" about one kind of thing — the pings are one reading, and which of
+       them is newest is said by the halo and the size instead. Age used to be a
+       ramp with a legend, and the panel says how old the newest fix is in words,
+       which is all anyone was decoding the colours for. */
 
     /* Where the PERSON LOOKING at the page is, which is the one mark here that
        isn't about the race at all. Blue because a blue dot means "you" on every
-       map anyone has ever used — and its own token rather than `--point`, deeper
-       than it, because the pings are blue too and these two must never be
-       confused. The colour alone doesn't carry that: see `viewerLayers` for the
-       heavier ring and the halo that finish the job. */
+       map anyone has ever used — and the one thing on screen that isn't orange,
+       which is now the whole distinction from a ping. The colour doesn't carry
+       it alone: see `viewerLayers` for the ring and the halo. */
     --viewer: #1a73e8;
   }
   @media (prefers-color-scheme: dark) {
@@ -58,7 +59,6 @@
       --shadow:         0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
       /* Same hue, lifted for the dark surface. */
-      --point:          #5598e7;
       --viewer:         #4a9eff;
     }
   }
@@ -82,9 +82,9 @@
     /* Nothing in either panel is prose. Every press on one is aimed at a control
        or at the chart, and on iOS an unclaimed press instead starts a text
        selection: the magnifying lens comes up and Safari highlights whatever
-       word it can reach — reliably "points", from the toggle in the status box,
-       while the finger was on the height strip entirely. The tooltips opt back
-       in below, since the numbers in those are worth copying. */
+       word it can reach — reliably one from the status box, while the finger was
+       on the height strip entirely. The tooltips opt back in below, since the
+       numbers in those are worth copying. */
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -110,10 +110,15 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    /* No gap: the course block carries the same margin-top as the clock and the
+       finish, and a gap here would add to it for that one block only. */
+    gap: 0;
   }
-  /* Same type as the clock below — they are the two things worth reading at a
-     glance, so they carry the same weight. */
+  /* The course name is one of the three `.v` values — see that rule. It cannot
+     simply wear the class: it is a <select> stretched over a sizer, and the two
+     pixels of border and padding that gives it have to be taken back off here
+     or the name would sit two pixels lower and one pixel further right than the
+     clock underneath it. */
   #status h1 {
     margin: 0;
     font-size: 20px;
@@ -122,15 +127,26 @@
     color: var(--text-primary);
     /* It holds the run picker, its sizer, and the chevron over them both. */
     position: relative;
-    display: inline-block;
-    /* Cancels the sizer's left padding, so the name stays flush with the rest
-       of the panel while the control still has somewhere to draw its border.
+    /* Block, not inline-block, and that is an alignment fix rather than a layout
+       one: an inline-block sits on a text baseline and drags the line box's
+       descender space along under it, which put four more pixels between the run
+       name and "ELAPSED" than there are between the clock and "FINISH". It still
+       shrinks to the sizer's width — its parent is a flex item in a column that
+       aligns to flex-start, so the block fills a box already measured by the
+       widest thing in it. */
+    display: block;
+    /* Cancels the sizer's left padding AND its border, so the name starts on the
+       same pixel column as the two values below it while the control still has
+       somewhere to draw that border.
        Deliberately NO `max-width: 100%` here: this margin makes the heading
-       measure 6 px narrower than it wants, the panel shrinks to that, and a
+       measure 7 px narrower than it wants, the panel shrinks to that, and a
        percentage cap would then resolve against the smaller answer and clip the
-       name by exactly those 6 px. The sizer below is capped instead, in units
+       name by exactly those 7 px. The sizer below is capped instead, in units
        that don't depend on the box being measured. */
-    margin-left: -6px;
+    margin-left: -7px;
+    /* `.v` sits 1 px under its caption; the select's own border and padding
+       already account for 2 px of that. */
+    margin-top: -1px;
   }
   /* The sizer, and the reason the heading is built this way at all.
      A <select> is laid out from the browser's own metrics rather than from the
@@ -196,23 +212,23 @@
      the race is still on. Inside the status panel: it is one more fact about
      the run on screen, and a whole second panel for two lines was a lot of
      window to spend on it. */
-  #clock { margin-top: 6px; }
-  #clock[hidden] { display: none; }
-  /* The two small captions in this panel — "COURSE" over the run name and
-     "ELAPSED" over the clock. One rule rather than two identical ones, so the
-     pair can't drift apart. */
-  /* A little air under the ping line, which is a different kind of statement. */
-  #course-label { margin-top: 4px; }
-  #clock-label, #course-label, #finish-label {
+  /* The three readings in this panel — the course, the elapsed clock and the
+     predicted finish — are one shape said three times: a caption, then a value.
+     Three rules, not nine: they used to be typeset separately and had drifted
+     into three different sizes, two inks and two indents, which made a panel of
+     equal facts look like a hierarchy nobody meant.
+     `.v` also gets tabular figures throughout — the clock needs them or every
+     second shuffles the digits sideways, and a run name is unaffected by them. */
+  #course-block, #clock, #finish { margin-top: 6px; }
+  #clock[hidden], #finish[hidden] { display: none; }
+  .k {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: .07em;
     text-transform: uppercase;
     color: var(--text-muted);
   }
-  #clock-time {
-    /* Tabular figures, or every second of a ticking clock shuffles the digits
-       sideways as the glyph widths change. */
+  .v {
     font-variant-numeric: tabular-nums;
     font-size: 20px;
     font-weight: 500;
@@ -220,20 +236,8 @@
     margin-top: 1px;
     color: var(--text-primary);
   }
-
-  /* The predicted finish. Typeset a size down from the elapsed clock and in the
-     secondary ink, because the two sit one above the other and only one of them
-     is a measurement — the hierarchy has to say which. */
-  #finish { margin-top: 6px; }
-  #finish[hidden] { display: none; }
-  #finish-time {
-    font-variant-numeric: tabular-nums;
-    font-size: 16px;
-    font-weight: 500;
-    line-height: 1.2;
-    margin-top: 1px;
-    color: var(--text-secondary);
-  }
+  /* The one thing under a value that isn't one: the finish's range, which is what
+     stops the number above it being read as a promise. */
   #finish-range {
     font-variant-numeric: tabular-nums;
     font-size: 11px;
@@ -308,50 +312,17 @@
   #title[data-single="true"]::after { content: none; }
   #title[data-single="true"] #run:hover { border-color: transparent; background: transparent; }
 
-  /* Which of the optional layers are drawn. Not the snapped pings — those are
-     the reading, and there is no view of this map without them. */
-  #toggles {
-    margin-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-  #toggles[hidden] { display: none; }
-  #toggles label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-  #toggles label:hover { color: var(--text-primary); }
-  /* A toggle for something this run hasn't got. This rule is not optional: the
-     `display: flex` above outranks the UA's `[hidden] { display: none }`, so
-     without it `hidden` sets an attribute and changes nothing on screen. */
-  #toggles label[hidden] { display: none; }
-  #toggles input {
-    margin: 0;
-    accent-color: var(--accent);
-    cursor: pointer;
-  }
-  /* Why the location isn't showing, appended to the label of the control it is
-     about — see `geoMessage`. Empty most of the time, and `:empty` is what keeps
-     it from reserving the gap the flex row would otherwise give it. */
-  #t-viewer-note {
-    color: var(--text-muted);
+  /* How the request for the visitor's own position is getting on — see
+     `geoMessage`. There is no control it can hang off any more: the page asks on
+     load, so the only thing left to say is why there is no blue dot when there
+     isn't one. Empty in the ordinary case, and `:empty` is what stops it
+     reserving a line for nothing. */
+  #viewer-note {
+    margin-top: 6px;
     font-size: 11px;
-  }
-  #t-viewer-note:empty { display: none; }
-  /* Permission refused: the control stays visible, because its label is now the
-     only thing on screen explaining why there is no dot, but it stops pretending
-     to be usable. Only the browser's own site settings can undo this. */
-  #toggles label:has(input:disabled) {
     color: var(--text-muted);
-    cursor: default;
   }
-  #toggles label:has(input:disabled):hover { color: var(--text-muted); }
-  #toggles input:disabled { cursor: default; }
+  #viewer-note:empty { display: none; }
 
   #error {
     margin-top: 7px;
@@ -492,36 +463,30 @@
     <button id="ticker" type="button" aria-pressed="true" title="Fly to the latest ping">
       <span id="dot"></span><span id="ticker-text">Loading&hellip;</span>
     </button>
-    <div id="course-label">Course</div>
-    <!-- The heading and the run picker are one control; ui.js fills both in.
-         The span is a hidden sizer — see the CSS — not a second copy of the name. -->
-    <h1 id="title" data-single="true">
-      <span id="title-text" aria-hidden="true"></span>
-      <select id="run" aria-label="Course"></select>
-    </h1>
+    <div id="course-block">
+      <div class="k">Course</div>
+      <!-- The heading and the run picker are one control; ui.js fills both in.
+           The span is a hidden sizer — see the CSS — not a second copy of the name. -->
+      <h1 id="title" data-single="true">
+        <span id="title-text" aria-hidden="true"></span>
+        <select id="run" aria-label="Course"></select>
+      </h1>
+    </div>
   </div>
+  <!-- Then the same shape twice more: a caption and a value. The clock counts
+       what has happened and the finish guesses what is left, which is one
+       question asked forwards and backwards, so the two are typeset alike and
+       only the range under the second says it is a guess. -->
   <div id="clock" hidden>
-    <div id="clock-label">Elapsed</div>
-    <div id="clock-time">0:00:00</div>
+    <div id="clock-label" class="k">Elapsed</div>
+    <div id="clock-time" class="v">0:00:00</div>
   </div>
-  <!-- The forecast finish. Deliberately the same shape as the clock above it —
-       one caption, one number — because they are the same question asked
-       forwards and backwards. The range underneath is what says the second one
-       is a guess. -->
   <div id="finish" hidden>
-    <div id="finish-label">Finish</div>
-    <div id="finish-time"></div>
+    <div class="k">Finish</div>
+    <div id="finish-time" class="v"></div>
     <div id="finish-range"></div>
   </div>
-  <div id="toggles" hidden>
-    <label><input type="checkbox" id="t-waypoints" checked> Points of interest</label>
-    <label><input type="checkbox" id="t-raw"> Raw points</label>
-    <!-- Unlike the two above, this one isn't a fact about the course — it is what
-         asks the browser for the visitor's own position, so ticking it is what
-         raises the permission prompt. Off by default: a page that demands your
-         location before you've asked it for anything is a page nobody trusts. -->
-    <label><input type="checkbox" id="t-viewer"> My location <span id="t-viewer-note"></span></label>
-  </div>
+  <div id="viewer-note"></div>
   <div id="error"></div>
 </div>
 

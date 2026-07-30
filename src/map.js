@@ -51,7 +51,6 @@ export function createMap(container, {
   // hover tooltip is suspended and the crosshair stops chasing the cursor.
   let selection = null;
   const pin = createPin();
-  let layerFlags = { waypoints: true, raw: true };
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
   let fitted = false;
@@ -96,8 +95,8 @@ export function createMap(container, {
       // course can be partly covered by a ping — but the halo still reads around
       // the edge of one, and the race is what the page is for.
       ...viewerLayers(viewer, pulse),
-      ...courseLayers(course, layerFlags.waypoints),
-      ...pointLayers(points, pulse, layerFlags.raw),
+      ...courseLayers(course),
+      ...pointLayers(points, pulse),
       ...forecastLayers(course, marker),
       ...hoverLayers(hover)
     ];
@@ -646,16 +645,6 @@ export function createMap(container, {
       // changed the ring shouldn't rebuild the layer stack on its own account.
       if (String(next) === String(hover)) return;
       hover = next;
-      render();
-    },
-
-    /**
-     * Which optional layers are on, from the panel's toggles: the waypoints,
-     * and the raw-fix cloud with its snap links. The snapped dots are not on
-     * this list — they are the reading itself.
-     */
-    setLayers(next) {
-      layerFlags = { ...layerFlags, ...next };
       render();
     },
 

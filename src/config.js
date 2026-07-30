@@ -189,7 +189,13 @@ export const CONFIG = {
 // then stored with the NEW sha and the OLD content. Those records look current
 // to the diff, so they would never be refetched, and the content-addressed URL
 // would never even be tried. Discarding them is the only way out.
-const V = 'v7';
+// v8: points carry `ntwrk` and `wthr`, and this is the v6 situation exactly. Both
+// fields are on pings that were already committed when the reader learned to look
+// for them, so a browser holding those files from an earlier visit stored them
+// without either — and `hydrate` diffs on sha, which never changes, so the
+// weather would stay invisible on that browser forever. One forced re-hydrate,
+// free against the API budget, every body coming from the CDN.
+const V = 'v8';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the
@@ -217,6 +223,7 @@ export const LS_BEACONS   = `lt.beacons.${V}`;
 // page reload — in memory it resets, and refresh-mashing spends the budget.
 export const LS_REFRESH   = `lt.refresh.${V}`;
 
-// Which optional layers are switched on. Not per-run: turning the raw fixes off
-// is a preference about how you like to read the map, not a fact about a race.
-export const LS_LAYERS    = `lt.layers.${V}`;
+// There is no layer preference to store any more. The waypoints, the raw fixes
+// and the visitor's own dot were three checkboxes and each of them had the same
+// answer every time it was asked, so all three are simply on — see `pointLayers`
+// and `createUi`.
