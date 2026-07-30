@@ -7,8 +7,14 @@ import { parseGpx } from '../src/gpx.js';
 
 // The parser is hand-rolled, so the case that matters most is a file nobody
 // wrote for it: a real export, from a real app, with namespaces and extensions.
+//
+// It lives here rather than under `locations/`, where it started. Anything in
+// there is a RUN — the tree listing turns a folder with a GPX in it into an entry
+// in the picker — so a fixture kept there is a fake race on the map, and clearing
+// those out took this file with it and broke this suite for a fortnight. A test's
+// fixture belongs to the test.
 const REAL = readFileSync(
-  fileURLToPath(new URL('../locations/test/test.gpx', import.meta.url)), 'utf8');
+  fileURLToPath(new URL('./fixtures/test.gpx', import.meta.url)), 'utf8');
 
 test('reads a real MapOut export', () => {
   const gpx = parseGpx(REAL);

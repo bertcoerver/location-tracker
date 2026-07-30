@@ -872,9 +872,12 @@ an unchanged poll downloads nothing, one new point upstream downloads exactly on
 file, opening a run for the first time costs no API request at all, and loose files
 never surface as a run.
 
-The course work is covered the same way. The GPX parser is tested against the real
-[`locations/test/test.gpx`](locations/test/test.gpx) rather than a fixture written to
-suit it; the grid index is checked against brute force over a few hundred probes,
+The course work is covered the same way. The GPX parser is tested against a real MapOut
+export, [`test/fixtures/test.gpx`](test/fixtures/test.gpx), rather than a string written to
+suit the parser — namespaces, `<extensions>` and all. It lives under `test/` for a reason
+learned the hard way: it started out in `locations/test/`, where a folder with a GPX in it
+*is* a run in the picker, so clearing out the fake runs deleted it and the suite failed at
+import until it was moved here. the grid index is checked against brute force over a few hundred probes,
 since it is an optimisation and must never change an answer; and the snapper is
 pinned down on the two things that are easy to get quietly wrong — that on a closed
 loop the same coordinate resolves to the start when it arrives first and the finish
