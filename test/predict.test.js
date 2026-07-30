@@ -337,3 +337,40 @@ test('a ping that snapped backwards costs time and claims no pace', () => {
   assert.equal(legs[2].dist, 0, 'a backwards leg claimed distance');
   assert.equal(legs[2].dt, 300, 'a backwards leg lost its elapsed time');
 });
+
+// --- pings from before the gun --------------------------------------------------
+
+test('unsnapped warm-up pings are invisible to the model', () => {
+  // The load-bearing claim of the whole scheduled-start design: `snapAll` declines
+  // to place a pre-start ping on the course, and that alone removes it from the
+  // pace fit, because everything here filters on `snap`. Asserted rather than
+  // argued — if the filter at the top of `buildForecast` ever moves, this goes red.
+  const course = flat();
+  const race = steady(8, 1000, course);
+
+  // The same run with three warm-up pings in front of it, unsnapped, wandering
+  // around at a pace that would wreck any fit that saw them.
+  const warmed = [
+    ping('w0', -40, null), ping('w1', -25, null), ping('w2', -8, null), ...race
+  ];
+  deriveStats(warmed, course, race[0].t);
+
+  const clean = buildForecast(race, course);
+  const withWarmup = buildForecast(warmed, course);
+
+  assert.equal(withWarmup.flat, clean.flat);
+  assert.equal(
+    predictAt(withWarmup, course.length).t,
+    predictAt(clean, course.length).t
+  );
+});
+
+test('a run with nothing but warm-up pings gets no forecast', () => {
+  // Four unsnapped pings are not four legs. `predictMinLegs` counts ground covered
+  // on the course, and none of this was.
+  const course = flat();
+  const points = [0, 1, 2, 3].map(i => ping(`w${i}`, i * 5, null));
+  deriveStats(points, course, 100 * MINUTE);
+
+  assert.equal(buildForecast(points, course), null);
+});

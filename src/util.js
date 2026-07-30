@@ -13,6 +13,46 @@ export function parseTime(name) {
   return Date.parse(name.replace(/\.json$/, '').replace(/_/g, ':'));
 }
 
+// An ISO 8601 timestamp somewhere INSIDE a filename, with `_` standing in for the
+// colons a filename can't hold. Anchored to nothing, because the stamp is a suffix
+// in `UTMB_2026-08-28T09_00_00+02_00.gpx` and could be a prefix in the next thing
+// someone names by hand.
+const STAMP = /(\d{4}-\d{2}-\d{2})T(\d{2})[_:](\d{2})(?:[_:](\d{2}))?(Z|[+-]\d{2}[_:]?\d{2})?/;
+
+/**
+ * A scheduled time embedded in a filename, or null if there isn't one.
+ *
+ * This is how a course announces when its race starts — the GPX filename, which
+ * is the only place to put a fact about a run that no ping can carry, since the
+ * whole point is that it is known before any ping exists.
+ *
+ * Deliberately NOT [`parseTime`](#parseTime), which reads the whole basename and
+ * so chokes on a name with anything in front of the timestamp. The contracts
+ * differ too: a ping with no parsable time is a broken ping and gets NaN, while a
+ * course with no time in its name is the ordinary case and gets null.
+ *
+ * A date needs a time beside it to count. `2026-08-28` alone would have to be read
+ * as midnight in some zone, and a gun time invented out of nothing is worse than
+ * no gun time at all. Seconds are optional because nobody writes `:00` for a race
+ * that starts on the hour. With no offset the browser's own zone is used, which is
+ * what someone typing a local start time meant — and every real filename this repo
+ * produces carries one anyway.
+ *
+ * `+0200` with no separator is accepted and normalised rather than handed to
+ * `Date.parse` as-is. That form is unambiguous to a reader, but only `±HH:MM` is
+ * actually specified and engines differ on the rest — and of the three available
+ * outcomes, a gun time silently landing two hours out on one browser is the worst.
+ */
+export function parseStamp(name) {
+  const m = STAMP.exec(String(name ?? ''));
+  if (!m) return null;
+  const [, date, h, min, s = '00', zone = ''] = m;
+  // `+02_00`, `+02:00` and `+0200` all become `+02:00`. `Z` and absent pass through.
+  const tz = zone && zone !== 'Z' ? `${zone.slice(0, 3)}:${zone.slice(-2)}` : zone;
+  const t = Date.parse(`${date}T${h}:${min}:${s}${tz}`);
+  return Number.isNaN(t) ? null : t;
+}
+
 export const fmtTime = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium', timeStyle: 'medium'
 });
@@ -86,6 +126,29 @@ export function fmtElapsed(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const pad = n => String(n).padStart(2, '0');
   return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`;
+}
+
+/**
+ * Time until something: "29d 18h" while it is far off, "4:31:07" inside the last
+ * day.
+ *
+ * Two shapes on purpose. [`fmtElapsed`](#fmtElapsed) alone would render a race
+ * four weeks out as "700:18:42", which is arithmetically correct and completely
+ * unreadable — hours stop being a unit anyone can hold somewhere around fifty of
+ * them. And seconds ticking on a four-week countdown is precision nobody asked
+ * for, while the last day before a race is exactly where they start to matter.
+ *
+ * Under a day it IS `fmtElapsed`, so the countdown and the elapsed clock it turns
+ * into at the gun are typeset identically and the digits don't jump when it flips.
+ */
+export function fmtCountdown(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 86400) return fmtElapsed(s * 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  // No minutes at this range: "29d 18h 42m" is three units of a number that is
+  // going to be read once and remembered as "about a month".
+  return h ? `${d}d ${h}h` : `${d}d`;
 }
 
 /**

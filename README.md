@@ -13,11 +13,12 @@ Every ping belongs to a run — one subfolder of [`locations/`](locations/) per 
 locations/
   test/                 an existing run — /?run=test
   vendee-10k/           add a folder, get a map
+  UTMB/                 a course and no pings yet — an upcoming run
 ```
 
 | URL | Shows |
 |---|---|
-| `/` | whichever run pinged most recently, and it **keeps following** — a new race takes over the plain link as soon as it starts |
+| `/` | whichever run **pinged** most recently, and it keeps following — a new race takes over the plain link as soon as it starts |
 | `/?run=test` | `locations/test/`, pinned; never overridden |
 | `/?run=locations/test` | the same thing, so you can paste a path straight from GitHub |
 
@@ -25,6 +26,21 @@ locations/
 whatever subfolders exist, newest first, and hides itself when there's only one.
 A run that has pinged within the last hour is marked live, with a `●` in the picker
 and a pulsing dot beside the title.
+
+A folder holding only a `.gpx` is a run too — an upcoming one. It sorts by its
+scheduled start rather than by a last ping it hasn't got, so it sits at the *top*
+of the picker where it can be found; see "The course". Being top of the picker is
+not being the landing view, though: the plain `/` link follows the run that pinged
+last, because opening on a race that hasn't started means opening on an empty map,
+possibly while a real one is underway two options down the list. An upcoming run
+only becomes the default when no run in the repo has ever pinged.
+
+An upcoming race is also **never marked live**, and that had to be made explicit
+rather than left to the arithmetic. A start time is a time in the *future*, so it
+is larger than every real ping; "has it pinged within the last hour" asked of a
+race three weeks out comes back as *yes* if you let a start time anywhere near it.
+Liveness is a claim about a phone being out there, and only a ping is evidence of
+one.
 
 A file sitting loose in `locations/` belongs to no run and is never shown. An unknown
 or malformed `run` falls back to the newest run rather than erroring.
@@ -123,10 +139,32 @@ Once the phone says it is done, the line says that instead:
 ● Finished 12m ago
 ```
 
-The clock counts from the first ping and ticks each second while the run is live. It **stops** when
-the run finishes — either because the phone said so, or because nothing has arrived for an hour —
-and its label changes from "Elapsed" to "Total". A clock still counting hours after the finish would
-be claiming the race is still on.
+The clock ticks each second while the run is live. It **stops** when the run finishes — either
+because the phone said so, or because nothing has arrived for an hour — and its label changes from
+"Elapsed" to "Total". A clock still counting hours after the finish would be claiming the race is
+still on.
+
+What it counts *from* has two answers, in order of authority. If the course filename named a start,
+that is the gun, and it wins: a ping written on the drive to the start line is not the beginning of
+the race. Otherwise it is the first ping, which is what this box counted from before filenames could
+say anything, and still the only answer available for a run whose course is silent.
+
+Before the gun the same box counts down instead:
+
+```
+STARTS IN
+28d 17h
+```
+
+It needs no pings at all to say that, which is what lets a course-only folder be worth opening.
+Inside the last day it switches to the same `h:mm:ss` the race clock uses, so the digits don't jump
+when it flips over; above a day it reads in days and hours, because `700:18:42` is a number nobody
+reads as a date, and seconds on a four-week countdown are precision nobody asked for.
+
+At the gun it flips to `ELAPSED 0:00:00` and starts running — before any ping has arrived. That is a
+claim from the timetable rather than from the phone, and it is the honest one to make in the gap
+between the start and the first fix, when the alternative is an empty panel. The ticker beside it
+says which silence you're looking at: `Not started yet` before the gun, `No locations yet` after it.
 
 Under it, once the run has enough legs to fit one, sits the **predicted finish** and its range:
 
@@ -156,6 +194,10 @@ one extra field, `"is_finish": true`. Three things change the moment it lands:
 Only the newest ping counts. A finish with pings after it is a phone that was restarted, and the run
 is plainly going again, so the page treats it as live once more. That rule is why the panel and the
 poll schedule can never disagree: both read the same last point.
+
+It also means a `is_finish` sent *before* a scheduled start — a phone test-fired the day before —
+freezes the clock to "Total" for a race that hasn't happened. Self-inflicted, and self-correcting the
+moment a real ping lands after it, so it is left alone rather than guarded against.
 
 One limit worth knowing: a finished run that is *not* the one on screen keeps its `●` in the run
 picker for the usual hour. The index comes from GitHub's tree API, which lists paths and never file
@@ -299,11 +341,44 @@ locations/test/
   2026-07-28T12_06_01+02_00.json    the pings
 ```
 
-No config, no naming convention — any `.gpx` directly inside the folder is found. It is never
-treated as a ping, so adding one can't make a finished race look live, and a folder holding only a
-course isn't a run until the first ping lands. Track segments (`<trk>`) are preferred; a file with
-only a route (`<rte>`) works too. If a run somehow has several `.gpx` files the first alphabetically
-wins — arbitrary, but stable, which is what matters for the cache.
+Any `.gpx` directly inside the folder is found. It is never treated as a ping, so adding one can't
+make a finished race look live — but a folder holding **only** a course is still a run, an upcoming
+one, and that is most of the point: a race is worth putting on the map before it starts, so you can
+see the route, the height profile and how long there is to wait. Track segments (`<trk>`) are
+preferred; a file with only a route (`<rte>`) works too. If a run somehow has several `.gpx` files the
+first alphabetically wins — arbitrary, but stable, which is what matters for the cache.
+
+### When the race starts
+
+The GPX **filename** may carry the start time, and if it does, that is the gun:
+
+```
+locations/UTMB/
+  UTMB_2026-08-28T09_00_00+02_00.gpx      the course, and the start: 28 Aug, 09:00 CEST
+```
+
+Anything before the timestamp is a label and is ignored, so name the file whatever reads well. The
+format is the same as a ping's — ISO 8601 with **every colon replaced by `_`** — with a little more
+give, because this one is typed by a person rather than written by a phone: seconds are optional, the
+zone may be `Z`, `+02_00`, `+02:00` or `+0200`, and leaving the zone off means *your* zone. A date
+with no time is refused rather than read as midnight; a gun time invented out of nothing is worse
+than no gun time at all. A plain `course.gpx` names no start, and everything below simply doesn't
+apply to it.
+
+Two things follow from a start being known:
+
+- **The clock counts the race, not the folder.** Elapsed time runs from the gun, and before the gun
+  it runs backwards as a countdown — see "On screen".
+- **Pings from before the gun are drawn, but they don't race.** A fix from the drive to the start, or
+  from a warm-up jog, is a real position of a real phone, so it stays on the map where the GPS put
+  it. It is simply never placed on the course — and because everything downstream keys on *having*
+  been placed there, that one refusal is the whole exclusion: no distance along the route, no climb,
+  no elapsed time in its tooltip, and no vote in the pace model. A warm-up lap of the start field
+  would otherwise read as the first 400 m of the race, at a pace nobody is going to hold for 170 km.
+
+  This is why the snap cache records the start it was computed against, alongside the course's sha
+  and the snap radius. A GPX renamed to move the gun keeps its blob sha — the sha is a hash of the
+  content — so nothing else in that tuple could ever notice.
 
 With a course present, three things change:
 
@@ -555,6 +630,17 @@ any, all, or none of them:
 
 Files are never edited once written.
 
+A run's `.gpx` follows the same filename convention, for the same reason and with the same syntax —
+it is the only place to put a fact about a race that no ping can carry, because the whole use of it
+is to be known before any ping exists:
+
+```
+locations/UTMB/UTMB_2026-08-28T09_00_00+02_00.gpx
+```
+
+The difference is that a ping's whole name *is* the timestamp, while a course's name is a label with
+a timestamp on the end, and the stamp is optional. See "When the race starts".
+
 `ntwrk` is range-checked rather than merely required to be a number: the tooltip renders it as `2/4`,
 so a `7` there would be a claim about a scale that doesn't exist, and a value outside `0`–`4` is
 dropped. `0` is kept and shown — a phone with no bars is the interesting case, because it explains the
@@ -570,6 +656,15 @@ Both fields landed on pings that had already been committed, which is why `V` in
 `v8`: a browser holding those files from an earlier visit stored them without either, and `hydrate`
 diffs on sha, which never changes. One forced re-hydrate, free — every body comes from the CDN. Same
 situation as `v6` and `is_finish`.
+
+Scheduled starts took it to `v9`, and for a *different* kind of reason — the first bump about the
+shape of the **index** rather than the shape of a point. The tree listing is fetched with an
+`If-None-Match`, and the tree of a repo nobody has pushed to answers `304`, on which the cached index
+is handed straight back: the shape only ever changes when a body actually arrives. So a browser
+holding the `v8` tree would keep reading records with no start in them, and with course-only folders
+already pruned out, and nothing would ever prompt it to look again — the whole feature invisible on
+precisely the machines that had visited before it shipped. The per-run snap caches go with it, since
+those hold snaps for pings that must now be left alone.
 
 `is_finish: true` marks the phone's **last upload of a run**. It is deliberately a normal ping rather
 than a separate marker file with no coordinates: every consumer of a point assumes a fix, so a
@@ -667,6 +762,12 @@ Two things stop this being fragile:
   encodes how many slots have gone by — and caps at `maxPollMs` (15 min), which doubles as a floor
   poll so a *new* run starting is never invisible for longer than that.
 
+  An upcoming run has no ping to predict from, so it sits at that floor. Nothing wakes the page *at*
+  the gun, either — the countdown ticks locally once a second and flips to a running clock on time
+  regardless, and the first actual ping is picked up within a quarter of an hour of landing. Teaching
+  the schedule about start times would mean giving a module that currently knows only about batteries
+  a second thing to know, for a quarter of an hour.
+
   End to end, a phone that goes quiet costs about nine requests to establish the silence and four
   an hour after that, against fifteen an hour forever.
 
@@ -701,6 +802,11 @@ Steady state is therefore one ~200-byte fetch per *live* other run per ping it s
 or one. A cold first load fetches one per run, pooled at `CONFIG.concurrency` and capped at
 `CONFIG.beaconLimit` (40, newest first) so a repo that grows to hundreds of runs doesn't fan out to
 all of them. That cap is about the cold fan-out, not the budget; there is no budget to spend here.
+
+An upcoming run gets no dot at all, because a dot marks where a run was last *seen* and this one has
+never been anywhere; its GPX is never downloaded either. It is dropped **before** the cap rather than
+after, so a race that sorts to the very top by its start time can't quietly spend a slot that a run
+with an actual position to draw could have used.
 
 Only the raw fix is used, deliberately: snapping a ping to its course would mean downloading that
 course, and the whole point is to mark a run without opening it. At the zoom these are read at, the
@@ -789,7 +895,7 @@ src/
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
   colors.js         reads the CSS colour tokens
-  util.js           time parsing, formatting, concurrency pool, storage guard
+  util.js           time parsing (pings and course filenames), formatting, pool, storage guard
 test/
   *.test.js         run with `npm test`
 package.json        scripts only — no dependencies, nothing to install
@@ -819,7 +925,13 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
 - A different rule for when to poll → `nextPollMs` in `schedule.js`. Keep it pure: `main.js`
   recomputes it after every refresh, and that is only safe while it holds no state.
 - Something else read out of the GPX → `gpx.js`, then `course.js` if it needs measuring.
-- Changing how a ping picks its place on the course → the cost function in `snap.js`.
+- Something else read out of a **filename** → `util.js`, then `buildIndex` in `github.js`, which is
+  the only place the layout of the repo is interpreted. A fact about a run that no ping can carry
+  belongs on the index record, not on the parsed course: the index arrives a poll earlier, survives
+  in `localStorage`, and is what a run with no course at all still has.
+- Changing how a ping picks its place on the course → the cost function in `snap.js`. Anything that
+  changes *which* pings belong on it goes in the cache's version tuple beside `courseSha`, or a warm
+  cache will keep answers computed under the old rule.
 - Another figure derived per ping → `stats.js`, then a row in `tooltipHtml`.
 - Changing how the forecast is fitted → `fitPace` in `predict.js`, or the `predict*` constants in
   `config.js`. Keep it pure: `main.js` refits it on every paint, and that is only cheap and correct
@@ -922,11 +1034,14 @@ And every degenerate input has to come back `null` rather than `NaN` — no cour
 stationary phone, pings that never snapped, a course with no descent to pin its coefficient
 down, a run that has already finished.
 
-Against real data the check is stronger than any fixture: `locations/test_3` is a strict
-13-ping prefix of `locations/test_2`, so the longer run is ground truth for everything the
-shorter one cannot see. That comparison is not in the suite — it is a measurement, not an
-invariant, and freezing today's numbers into an assertion would be testing the sample data
-rather than the model. The figures it gives today are in "Predicting the rest".
+The model was also checked against real data, by a route worth recording even though the
+data has since gone: two runs where the shorter was a strict 13-ping prefix of the longer,
+which makes the longer one ground truth for everything the shorter cannot see. Those folders
+were throwaway test runs and were deleted — anything under `locations/` shows up in the
+picker, so they could not stay — and the comparison was never in the suite anyway: it is a
+measurement, not an invariant, and freezing its numbers into an assertion would have been
+testing the sample data rather than the model. The figures it gave are in "Predicting the
+rest". Reproducing it needs two runs in that prefix relation, from anywhere.
 
 The axis ladder is tested at course lengths from 500 m to 250 km — that the ticks never
 pack closer than the minimum spacing, always land on 1, 2 or 5 × 10ⁿ rather than
@@ -974,6 +1089,34 @@ The snapping tests state the two claims worth stating out loud — that a finish
 the course end even from **beyond** the 500 m threshold, where the identical fix without the
 flag snaps nowhere at all, and that on a closed loop it resolves to the end rather than the
 start, which is the ambiguity the whole cost function exists to fight.
+
+Scheduled starts are tested at the seam each one could fail at. The filename parser is checked
+on the real UTMB name and on every form the timestamp is allowed to take, and pinned against
+the *ping* parser it deliberately isn't: `parseTime` returns NaN for a course filename, and
+that assertion is there so nobody merges the two functions back together. Everything it must
+refuse rather than guess at gets a case — a bare year, a date with no time — because a gun
+time invented from nothing is the one failure that would look right on screen.
+
+The ordering has a test for each way a future timestamp could leak somewhere built for past
+ones: that an upcoming run is never live however close its gun is, that it sorts to the top of
+the picker but not into the landing view, that the picker's order is stable when several runs
+have nothing to compare, and that a record with no pings survives the round trip through
+`localStorage` — which is the exact trip that made the old code drop these folders instead of
+showing them.
+
+The pre-start cut is tested where it lives, in the snapper: that a ping before the gun is
+recorded as an explicit *nothing* rather than skipped — skipping it costs a re-snap of the
+whole run on every paint — that it leaves progress along the course where it was, so the
+sequence reads as though the warm-up never happened, and that moving the gun invalidates the
+cache even though the course file's SHA is unchanged. The forecast tests then assert the claim
+the whole design leans on rather than merely arguing it: adding unsnapped warm-up pings to a
+run changes the fitted pace by *nothing at all*.
+
+The clock is the one piece of the panel with its own tests, because it is the one piece with
+a decision in it — six branches, three of which only happen on race morning and so cannot be
+waited for. `clockReading` is pure and returns the label and the value as data, so the
+countdown, the flip to zero at the gun, the gap before the first ping, and elapsed-from-the-gun
+are all reachable without a DOM or a clock that has to be believed.
 
 ## A note on waypoint labels
 

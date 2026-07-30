@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 
 import { CONFIG, LS_BEACONS, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
 import {
-  buildIndex, cachedBeacons, defaultRun, fetchCourse, hydrate, isLive, newestFile, RateLimitError,
-  refreshBeacons, refreshIndex
+  buildIndex, byRecency, cachedBeacons, defaultRun, fetchCourse, hydrate, isLive, newestFile,
+  RateLimitError, refreshBeacons, refreshIndex
 } from '../src/github.js';
 
 // --- fakes -------------------------------------------------------------------
@@ -288,6 +288,74 @@ test('a run is live only if it pinged within the hour', () => {
   assert.equal(isLive(undefined, now), false, 'no run selected');
 });
 
+// --- a race that hasn't happened yet -----------------------------------------
+//
+// One trap runs through all of this: a scheduled start is a time in the FUTURE, and
+// every ordering and freshness test in the app was written for times in the past.
+// Let a start reach any of them and it wins, because it is larger than every real
+// ping — so a race three weeks out would pulse as live, top the picker, and take
+// the landing view. These are the tests that go red if it ever leaks.
+
+/** `TREE` plus a race a month out, with a stamped course and no pings. */
+const UPCOMING = [
+  ...TREE,
+  { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' }
+];
+const GUN = Date.parse('2026-08-28T09:00:00+02:00');
+
+test('an upcoming run is never live, however close its gun is', () => {
+  const index = buildIndex(UPCOMING);
+
+  assert.equal(isLive(index.utmb, GUN - 60000), false, 'a minute before the start');
+  assert.equal(isLive(index.utmb, GUN), false, 'on the gun, with nothing reported');
+  assert.equal(isLive(index.utmb, GUN + 60000), false, 'a minute after, still silent');
+  // Liveness is a claim about a phone being out there. Only a ping is evidence of
+  // one, and this run has none — no arithmetic on `start` may say otherwise.
+  assert.equal(index.utmb.latest, null);
+});
+
+test('an upcoming run sorts by its gun, so it is findable in the picker', () => {
+  const index = buildIndex(UPCOMING);
+  const order = Object.keys(index).sort(byRecency(index));
+
+  // Top of the list: it is the next thing that will happen. Being top of the picker
+  // is not being the default view — see the test below.
+  assert.deepEqual(order, ['utmb', 'new-race', 'old-race']);
+});
+
+test('byRecency is stable when nothing can be compared', () => {
+  // Two runs with an unstamped course and no pings both score -Infinity, and
+  // `-Infinity - -Infinity` is NaN. A comparator returning NaN hands the order to
+  // the engine, which is how a list that looked stable starts shuffling.
+  const index = buildIndex([
+    { path: 'zeta/course.gpx', type: 'blob', sha: 'z' },
+    { path: 'alpha/course.gpx', type: 'blob', sha: 'a' },
+    { path: 'mid/course.gpx', type: 'blob', sha: 'm' }
+  ]);
+
+  const once = Object.keys(index).sort(byRecency(index));
+  assert.deepEqual(once, ['alpha', 'mid', 'zeta'], 'names break the tie');
+  assert.deepEqual(once.slice().sort(byRecency(index)), once, 'and sorting again is idempotent');
+});
+
+test('defaultRun will not open on a race that has not started', () => {
+  // The plain link still follows whichever run PINGED last. Opening on an upcoming
+  // race means opening on an empty map, possibly while a real one is underway two
+  // options down the picker.
+  assert.equal(defaultRun(buildIndex(UPCOMING)), 'new-race');
+});
+
+test('defaultRun falls back to an upcoming run when nothing has ever pinged', () => {
+  // Then the empty map is the honest answer, and a countdown is better than nothing.
+  const index = buildIndex([
+    { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' },
+    { path: 'later/X_2026-09-30T06_00_00+02_00.gpx', type: 'blob', sha: 'h' }
+  ]);
+
+  assert.equal(defaultRun(index), 'later', 'the furthest-out gun is still the newest key');
+  assert.equal(defaultRun({}), null, 'and an empty index is still nothing at all');
+});
+
 // --- the other runs, as dots -------------------------------------------------
 //
 // The contract these defend is the whole reason this feature is affordable:
@@ -313,6 +381,23 @@ const OTHER = 'locations/other-race';
 function withOther() {
   gh.files.set(`${OTHER}/2026-07-29T09_00_00+02_00.json`, { lat: 1.5, lon: 2.5, btry: 90 });
 }
+
+test('an upcoming run gets no dot, and costs no other run its own', async () => {
+  withOther();
+  // A course-only folder. It sorts to the top of the picker by its gun, but a
+  // beacon marks where a run was last SEEN, and this one has never been anywhere.
+  gh.files.set('locations/utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', '<gpx/>');
+  const { index } = await poll('vendee-10k');
+  gh.reset();
+
+  const beacons = await refreshBeacons(index, 'vendee-10k');
+
+  assert.deepEqual(beacons.map(b => b.run), ['other-race']);
+  // Dropped BEFORE the limit, not after — otherwise an upcoming race that sorts
+  // first would silently spend a slot a run with a dot to draw could have used.
+  assert.ok(beacons.length <= CONFIG.beaconLimit);
+  assert.deepEqual(gh.counts(), { api: 0, raw: 1 }, 'and its GPX was never fetched');
+});
 
 test('the other runs are marked without a single API request', async () => {
   withOther();
@@ -481,11 +566,56 @@ test('several courses in one run resolve the same way on every poll', () => {
   assert.equal(buildIndex([...TREE, ...entries.reverse()])['new-race'].course.name, 'a-route.gpx');
 });
 
-test('a folder holding only a course is not yet a run', () => {
-  // It has no latest ping, so it can't be sorted, marked live or defaulted to.
+test('a folder holding only a course is a run — an upcoming one', () => {
+  // It used to be dropped, on the grounds that a run with no `latest` can't be
+  // sorted, marked live or defaulted to. Each of those is now answered rather than
+  // avoided, and the four assertions below are the answers.
   const index = buildIndex([...TREE, { path: 'future-race/course.gpx', type: 'blob', sha: 'g' }]);
 
-  assert.deepEqual(Object.keys(index).sort(), ['new-race', 'old-race']);
+  assert.deepEqual(Object.keys(index).sort(), ['future-race', 'new-race', 'old-race']);
+  assert.equal(index['future-race'].latest, null);
+  assert.deepEqual(index['future-race'].files, {});
+  assert.deepEqual(index['future-race'].course, { name: 'course.gpx', sha: 'g' });
+  // No stamp in the filename, so no gun — which is the case that has to keep
+  // behaving exactly as an unscheduled run always did.
+  assert.equal(index['future-race'].start, null);
+});
+
+test('a stamped course filename is the run\'s scheduled start', () => {
+  const index = buildIndex([
+    { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' }
+  ]);
+
+  assert.equal(index.utmb.start, Date.parse('2026-08-28T09:00:00+02:00'));
+  // Still not a ping: a course must never make a run look like it has moved.
+  assert.equal(index.utmb.latest, null);
+  assert.deepEqual(index.utmb.files, {});
+});
+
+test('the start comes from the same course that won the tie-break', () => {
+  // Two courses, two stamps. Whichever file wins `course` must be the one `start`
+  // was read from, or the map draws one route and counts down to another.
+  const entries = [
+    { path: 'twice/b_2026-09-09T09_00_00Z.gpx', type: 'blob', sha: 'b' },
+    { path: 'twice/a_2026-08-28T07_00_00Z.gpx', type: 'blob', sha: 'a' }
+  ];
+
+  for (const order of [entries, [...entries].reverse()]) {
+    const found = buildIndex(order).twice;
+    assert.equal(found.course.name, 'a_2026-08-28T07_00_00Z.gpx');
+    assert.equal(found.start, Date.parse('2026-08-28T07:00:00Z'));
+  }
+});
+
+test('an upcoming run survives the round trip through JSON', () => {
+  // This is the exact trip that made the old code drop these runs: `latest` was
+  // -Infinity, which comes back out of JSON as null, so every comparison against it
+  // went quietly wrong. It is null on the way in now, so there is nothing to lose.
+  const index = buildIndex([
+    { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' }
+  ]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(index)), index);
 });
 
 test('the course downloads from the CDN, so it costs no API request', async () => {

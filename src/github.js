@@ -11,7 +11,7 @@
 // runs exist, which are live, which is newest, and what's in the one on screen.
 
 import { CONFIG, keysFor, LS_BEACONS, LS_TREE, LS_TREE_ETAG } from './config.js';
-import { parseTime, pool, storage } from './util.js';
+import { parseStamp, parseTime, pool, storage } from './util.js';
 
 /** Thrown when GitHub says we've spent our hourly budget. Carries when to retry. */
 export class RateLimitError extends Error {
@@ -80,8 +80,9 @@ export async function fetchTree(etag) {
  * Folds a flat tree listing into the shape the rest of the app reads:
  *
  *   { 'vendee-10k': { files: { '<name>.json': '<sha>', … },
- *                     latest: <ms>,
- *                     course: { name: 'course.gpx', sha } | null } }
+ *                     latest: <ms> | null,
+ *                     course: { name: 'course.gpx', sha } | null,
+ *                     start: <ms> | null } }
  *
  * Pure, and the only place the layout of the repo is interpreted.
  *
@@ -92,10 +93,16 @@ export async function fetchTree(etag) {
  * `files` and out of `latest`: a course is not a ping, and dropping one into a
  * folder must not make a finished race look live. If a run somehow has several,
  * the alphabetically first wins — arbitrary, but stable across polls.
+ *
+ * `start` is the scheduled gun, read out of that course's FILENAME — see
+ * [`parseStamp`](./util.js#parseStamp). It is the one fact about a run that no
+ * ping could ever carry, because the whole use of it is to be known before any
+ * ping exists.
  */
 export function buildIndex(entries) {
   const index = {};
-  const record = run => (index[run] ??= { files: {}, latest: -Infinity, course: null });
+  const record = run =>
+    (index[run] ??= { files: {}, latest: null, course: null, start: null });
 
   for (const entry of entries) {
     if (entry.type !== 'blob') continue;
@@ -109,7 +116,12 @@ export function buildIndex(entries) {
 
     if (/\.gpx$/i.test(name)) {
       const found = record(run);
-      if (!found.course || name < found.course.name) found.course = { name, sha: entry.sha };
+      if (!found.course || name < found.course.name) {
+        found.course = { name, sha: entry.sha };
+        // Set together with the course it was read from, so the two can never
+        // disagree about which file the run's start came from.
+        found.start = parseStamp(name);
+      }
       continue;
     }
 
@@ -122,17 +134,20 @@ export function buildIndex(entries) {
 
     const found = record(run);
     found.files[name] = entry.sha;
-    if (t > found.latest) found.latest = t;
+    if (found.latest === null || t > found.latest) found.latest = t;
   }
 
-  // A folder holding only a course isn't a run yet — it has no `latest`, so it
-  // can't be sorted, marked live, or chosen as the default. Drop it until the
-  // first ping lands. (It also keeps `latest` finite, which matters: -Infinity
-  // does not survive a round trip through JSON.)
-  for (const [run, found] of Object.entries(index)) {
-    if (!Object.keys(found.files).length) delete index[run];
-  }
-
+  // A folder holding only a course IS a run — an upcoming one. It used to be
+  // dropped here, on the grounds that with no `latest` it couldn't be sorted,
+  // marked live or defaulted to; the answer to all three turned out to be `start`
+  // and [`sortKey`](#sortKey) rather than deletion, and a race you are about to run
+  // is precisely the thing worth having on screen beforehand.
+  //
+  // `latest: null` is what marks "hasn't moved yet", and it is null rather than
+  // -Infinity because this record goes through JSON on its way to localStorage and
+  // comes back as the string "null" either way — one of those two is a number, and
+  // it isn't -Infinity. Nothing is left to drop: a record only exists because a
+  // ping or a course created it.
   return index;
 }
 
@@ -162,16 +177,70 @@ export async function refreshIndex() {
   return { changed: true, index, truncated: tree.truncated };
 }
 
+/**
+ * What "newest" means for a run: when it last pinged, or when it is due to start
+ * if it hasn't pinged at all.
+ *
+ * One expression, in one place, behind the one comparator everything sorts with.
+ * The picker and `defaultRun` ordering runs differently is how you get a list with
+ * one run at the top and a different one open behind it.
+ */
+function sortKey(record) {
+  return record?.latest ?? record?.start ?? -Infinity;
+}
+
+/**
+ * The descending order the picker and the run default both use.
+ *
+ * A comparator rather than a bare key, because subtracting two keys is only safe
+ * while both are finite — and they aren't. A folder with an unstamped `course.gpx`
+ * and no pings scores -Infinity, `-Infinity - -Infinity` is NaN, and a comparator
+ * that returns NaN leaves the order to the engine. That is how a list that looked
+ * stable starts shuffling between polls.
+ *
+ * Names break the tie, so several such runs sit in a fixed, readable order.
+ */
+export function byRecency(index) {
+  return (a, b) => {
+    const ka = sortKey(index[a]);
+    const kb = sortKey(index[b]);
+    return ka === kb ? a.localeCompare(b) : kb - ka;
+  };
+}
+
 /** The run to show when the URL doesn't ask for one: whichever moved last. */
 export function defaultRun(index) {
   const names = Object.keys(index);
   if (!names.length) return null;
-  return names.reduce((a, b) => (index[b].latest > index[a].latest ? b : a));
+
+  // A run that has pinged beats one that has only a schedule, however far in the
+  // future that schedule is — landing on a race that hasn't started means landing
+  // on an empty map while a real one may be underway two options down the picker.
+  // An upcoming run is still the default when it is all there is, because then the
+  // empty map is the honest answer. Drop this filter to let an upcoming race take
+  // over the plain link as soon as it is the newest thing in the repo.
+  const pinged = names.filter(name => Number.isFinite(index[name].latest));
+
+  // The fallback is not the rule above being ignored: it is what to do when every
+  // run is upcoming, where an empty map is the only honest answer there is.
+  //
+  // Sorted rather than reduced, so this and the picker agree by construction about
+  // which run is first — and so that a repo of nothing but upcoming races picks the
+  // same one every poll instead of whichever the reduce happened to start on.
+  return (pinged.length ? pinged : names).slice().sort(byRecency(index))[0];
 }
 
-/** Has this run had a ping recently enough to still be underway? */
+/**
+ * Has this run had a ping recently enough to still be underway?
+ *
+ * `latest` only, never `start`. A race four weeks out has `now - start` around
+ * minus a month, which is comfortably under `liveMs`, so consulting the schedule
+ * here would light the pulsing dot for a run nobody has begun. Liveness is a claim
+ * about a phone being out there, and only a ping is evidence of one — which is also
+ * why a run with `latest: null` is not live no matter what its schedule says.
+ */
 export function isLive(record, now = Date.now()) {
-  return Boolean(record) && now - record.latest < CONFIG.liveMs;
+  return Number.isFinite(record?.latest) && now - record.latest < CONFIG.liveMs;
 }
 
 /** Reads one run's last known points from the cache, for an instant first paint. */
@@ -366,10 +435,16 @@ export async function refreshBeacons(index, current) {
 
   const wanted = Object.keys(index)
     .filter(run => run !== current)
-    .sort((a, b) => index[b].latest - index[a].latest)
-    .slice(0, CONFIG.beaconLimit)
     .map(run => ({ run, file: newestFile(index[run]) }))
-    .filter(({ file }) => file);
+    // A run with no pings has no last-seen position, so there is nothing to mark.
+    // Dropped BEFORE the limit, not after: an upcoming race sorts to the very top
+    // by schedule, and cutting it afterwards would have it silently spend one of
+    // the slots a run with an actual dot to draw could have used.
+    .filter(({ file }) => file)
+    // The ping time off the file rather than `byRecency`, since by here every record
+    // left has one, it is the same number `latest` holds, and both are finite.
+    .sort((a, b) => b.file.t - a.file.t)
+    .slice(0, CONFIG.beaconLimit);
 
   const beacons = await pool(wanted, CONFIG.concurrency, async ({ run, file }) => {
     const at = known.get(run) ?? loadCache(run)[file.name];

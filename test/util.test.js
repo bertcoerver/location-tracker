@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ago, coarse, escapeHtml, fmtDuration, fmtElapsed, mapsUrl, parseTime, persistedAt, pool, throttle
+  ago, coarse, escapeHtml, fmtCountdown, fmtDuration, fmtElapsed, mapsUrl, parseStamp, parseTime,
+  persistedAt, pool, throttle
 } from '../src/util.js';
 
 test('parseTime recovers the ISO timestamp from a filename', () => {
@@ -28,6 +29,96 @@ test('parseTime honours the offset rather than assuming UTC', () => {
 
 test('parseTime returns NaN for a name it cannot read', () => {
   assert.ok(Number.isNaN(parseTime('README.json')));
+});
+
+// --- a start time out of a course filename -------------------------------------
+
+test('parseStamp reads the scheduled start off a course filename', () => {
+  assert.equal(
+    parseStamp('UTMB_2026-08-28T09_00_00+02_00.gpx'),
+    Date.parse('2026-08-28T09:00:00+02:00')
+  );
+});
+
+test('parseTime cannot read a course filename — which is why parseStamp exists', () => {
+  // The label in front of the stamp is what breaks it: `parseTime` replaces every
+  // underscore with a colon, so `UTMB_2026…` becomes `UTMB:2026…`. Pinned here so
+  // that nobody "simplifies" the two functions into one.
+  assert.ok(Number.isNaN(parseTime('UTMB_2026-08-28T09_00_00+02_00.gpx')));
+});
+
+test('parseStamp honours the offset rather than assuming UTC', () => {
+  const plus2 = parseStamp('race_2026-08-28T09_00_00+02_00.gpx');
+  const utc   = parseStamp('race_2026-08-28T09_00_00+00_00.gpx');
+  assert.equal(utc - plus2, 2 * 3600 * 1000);
+});
+
+test('parseStamp accepts Z, a colon offset, and no offset at all', () => {
+  assert.equal(parseStamp('r_2026-08-28T09_00_00Z.gpx'), Date.parse('2026-08-28T09:00:00Z'));
+  assert.equal(parseStamp('r_2026-08-28T09:00:00Z.gpx'), Date.parse('2026-08-28T09:00:00Z'));
+  // No zone means the viewer's own, which is what `Date.parse` does with a bare
+  // date-time and the least surprising reading of a name that declined to say.
+  assert.equal(parseStamp('r_2026-08-28T09_00_00.gpx'), Date.parse('2026-08-28T09:00:00'));
+});
+
+test('parseStamp does not need the seconds', () => {
+  // Nobody writes `:00` for a race that starts on the hour.
+  assert.equal(parseStamp('r_2026-08-28T09_00.gpx'), Date.parse('2026-08-28T09:00:00'));
+});
+
+test('parseStamp returns null rather than guessing at a gun time', () => {
+  for (const name of [
+    'course.gpx',                    // the ordinary case: no schedule at all
+    'utmb-2026.gpx',                 // a year is not a start
+    'r_2026-08-28.gpx',              // a date with no time would have to mean midnight
+    'r_2026-08-28T09.gpx',           // an hour with no minute, likewise
+    '',
+    null,
+    undefined
+  ]) {
+    assert.equal(parseStamp(name), null, JSON.stringify(name));
+  }
+});
+
+test('parseStamp normalises an offset written without a separator', () => {
+  // `+0200` is unambiguous to a reader, but only `±HH:MM` is specified and engines
+  // differ on the rest — so it is normalised here rather than left to `Date.parse`,
+  // where the failure mode is a gun time silently two hours out.
+  assert.equal(
+    parseStamp('r_2026-08-28T09_00_00+0200.gpx'),
+    Date.parse('2026-08-28T09:00:00+02:00')
+  );
+  assert.equal(
+    parseStamp('r_2026-08-28T09_00_00-0530.gpx'),
+    Date.parse('2026-08-28T09:00:00-05:30')
+  );
+});
+
+// --- counting down to it -------------------------------------------------------
+
+test('fmtCountdown is the elapsed clock inside the last day', () => {
+  // So the countdown and the clock it becomes at the gun are typeset identically
+  // and the digits do not jump when it flips.
+  for (const ms of [0, 1000, 4 * 3600000 + 31 * 60000 + 7000, 86399 * 1000]) {
+    assert.equal(fmtCountdown(ms), fmtElapsed(ms));
+  }
+});
+
+test('fmtCountdown switches to days beyond one, so a month is readable', () => {
+  // `fmtElapsed` would render four weeks out as "700:18:42", which reads as a run
+  // that has been going for 700 hours rather than as a date.
+  assert.equal(fmtCountdown(29 * 86400000 + 4 * 3600000), '29d 4h');
+  assert.equal(fmtCountdown(86400000), '1d');
+  assert.equal(fmtCountdown(2 * 86400000 + 59 * 60000), '2d');
+});
+
+test('fmtCountdown truncates hours, so it never overstates the time left', () => {
+  // 3d 23h 59m is still 3d 23h. Rounding would read "3d 24h", which is not a thing.
+  assert.equal(fmtCountdown(3 * 86400000 + 23 * 3600000 + 59 * 60000), '3d 23h');
+});
+
+test('a countdown that has run out reads zero rather than going negative', () => {
+  assert.equal(fmtCountdown(-5000), '0:00:00');
 });
 
 // --- one rounding rule, used in both directions -------------------------------

@@ -14,9 +14,15 @@ import { predictAt } from './predict.js';
  *
  * @param {Array}       points sorted oldest-first
  * @param {object|null} course the run's course, if it has one
+ * @param {number|null} [start] the scheduled gun, when the run has one. Elapsed
+ *   time is measured from it rather than from the first ping, which is the whole
+ *   difference between a race clock and the age of the oldest file in a folder —
+ *   pings written on the way to the start line used to become the start.
  *
  * Each `stats` carries, when it can:
- *   sinceStart  ms since the first ping
+ *   sinceStart  ms since the gun, or since the first ping when there wasn't one.
+ *               ABSENT on a ping from before the gun: that ping has no elapsed
+ *               time, and "-0:12:00" is not a thing a race clock says.
  *   sincePrev   ms since the previous ping — absent on the first
  *   distTotal   metres along the course
  *   dist        metres of course covered since the previous SNAPPED ping
@@ -28,11 +34,12 @@ import { predictAt } from './predict.js';
  * it, so they are absent rather than zero when there is nothing to measure —
  * a zero would read as "flat", which is a different claim from "unknown".
  */
-export function deriveStats(points, course) {
+export function deriveStats(points, course, start = null) {
   if (!points.length) return points;
 
   const climbable = Boolean(course?.hasElevation);
-  const first = points[0];
+  // With no gun the first ping is the start, which is what this always did.
+  const origin = start ?? points[0].t;
 
   // The previous ping that actually landed on the course. Not simply the
   // previous ping: a fix that missed the course has no distance along it, and
@@ -42,8 +49,13 @@ export function deriveStats(points, course) {
 
   for (let i = 0; i < points.length; i++) {
     const point = points[i];
-    const stats = { sinceStart: point.t - first.t };
-    // Wall-clock questions use the previous ping whether or not it snapped.
+    const stats = {};
+    // Left out entirely before the gun rather than reported as a negative. See the
+    // note on `sinceStart` above.
+    if (point.t >= origin) stats.sinceStart = point.t - origin;
+    // Wall-clock questions use the previous ping whether or not it snapped — and
+    // whether or not either of them raced. The gap between two fixes is a fact
+    // about two fixes, and it reads the same either side of the start.
     if (i > 0) stats.sincePrev = point.t - points[i - 1].t;
 
     if (point.snap) {
@@ -74,6 +86,24 @@ export function deriveStats(points, course) {
   }
 
   return points;
+}
+
+/**
+ * The moment elapsed times are measured from — the gun if the run had one, else
+ * its first ping.
+ *
+ * Recovered from what `deriveStats` already wrote rather than taken as an
+ * argument, so that exactly one function decides where a run starts and everything
+ * else asks it what it decided. The alternative was threading `start` through
+ * `interpolateAt` and so through every hover path in map.js and profile.js, to
+ * arrive at the same number by a longer route.
+ *
+ * @returns {number|null} null when no point has an elapsed time yet, which means
+ *   either no points or nothing but pre-start ones.
+ */
+export function originOf(points) {
+  const first = points.find(p => p.stats?.sinceStart !== undefined);
+  return first ? first.t - first.stats.sinceStart : null;
 }
 
 /**
@@ -123,6 +153,12 @@ export function interpolateAt(points, course, along, forecast = null) {
   const snapped = points.filter(p => p.snap);
   if (!snapped.length) return { ...base, state: 'unknown' };
 
+  // Every elapsed figure below is measured from here, so a course hovered on a run
+  // with a scheduled start reads the same as the pings on it do. The fallback is
+  // for a caller that skipped `deriveStats`; snapped pings always have stats in the
+  // app itself, since `show()` derives them one line after it snaps.
+  const origin = originOf(points) ?? points[0].t;
+
   const alongs = snapped.map(p => p.snap.along);
   if (along > Math.max(...alongs)) {
     // `predictAt` anchors at the newest ping rather than the furthest one, and
@@ -131,7 +167,7 @@ export function interpolateAt(points, course, along, forecast = null) {
     // that there is nothing to forecast.
     const predicted = predictAt(forecast, along);
     return predicted
-      ? { ...base, state: 'beyond', predicted: { ...predicted, sinceStart: predicted.t - points[0].t } }
+      ? { ...base, state: 'beyond', predicted: { ...predicted, sinceStart: predicted.t - origin } }
       : { ...base, state: 'beyond' };
   }
   if (along < Math.min(...alongs)) return { ...base, state: 'before' };
@@ -156,7 +192,7 @@ export function interpolateAt(points, course, along, forecast = null) {
   const f = span === 0 ? 0 : (along - a.snap.along) / span;
   const t = a.t + (b.t - a.t) * f;
 
-  return { ...base, state: 'between', sinceStart: t - points[0].t };
+  return { ...base, state: 'between', sinceStart: t - origin };
 }
 
 /**

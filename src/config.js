@@ -195,7 +195,23 @@ export const CONFIG = {
 // without either — and `hydrate` diffs on sha, which never changes, so the
 // weather would stay invisible on that browser forever. One forced re-hydrate,
 // free against the API budget, every body coming from the CDN.
-const V = 'v8';
+//
+// v9: the index record grew `start`, its `latest` sentinel became null, and folders
+// holding only a course are runs. Two independent reasons, either enough on its own.
+//
+// The listing is fetched with `If-None-Match`, and the tree of a repo nobody has
+// pushed to answers 304 — on which `refreshIndex` hands back the CACHED index,
+// because the shape only ever changes when a body actually arrives. A browser
+// holding the v8 tree would go on reading records with no `start` in them and with
+// course-only folders already pruned out, and nothing would ever prompt it to look
+// again: no countdown, no upcoming race in the picker, the whole feature invisible
+// on exactly the machines that had visited before it shipped.
+//
+// And `lt.snap` now records the start its `along` values were computed against. A v8
+// snap cache has no such field, so every pre-start ping in it is still snapped to
+// the course, and nothing else in the version tuple can notice — a GPX renamed to
+// move the gun keeps its blob sha. See `snapAll`.
+const V = 'v9';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

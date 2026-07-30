@@ -105,7 +105,7 @@ test('a finish goes through the cache like any other snap', () => {
   assert.equal(warm.last.along, STRAIGHT.length, 'and it moves progress to the end');
 
   const nearest = counting();
-  const again = snapAll(STRAIGHT, points, JSON.parse(JSON.stringify(warm)), nearest);
+  const again = snapAll(STRAIGHT, points, JSON.parse(JSON.stringify(warm)), { nearest });
   assert.equal(nearest.calls, 0);
   assert.deepEqual(again.cache.byName['p1.json'], warm.byName['p1.json']);
 });
@@ -176,7 +176,7 @@ test('a warm cache does no work at all', () => {
   assert.equal(first.snapped, 3);
 
   const nearest = counting();
-  const again = snapAll(STRAIGHT, points, first.cache, nearest);
+  const again = snapAll(STRAIGHT, points, first.cache, { nearest });
 
   assert.equal(nearest.calls, 0, 'a repaint must not reproject anything');
   assert.equal(again.snapped, 0);
@@ -188,7 +188,7 @@ test('one new ping costs exactly one projection', () => {
 
   const grown = [...points, { name: 'p3.json', t: points[2].t + 60000, ...toLatLon([1800, 20]) }];
   const nearest = counting();
-  const { snapped } = snapAll(STRAIGHT, grown, warm, nearest);
+  const { snapped } = snapAll(STRAIGHT, grown, warm, { nearest });
 
   assert.equal(nearest.calls, 1);
   assert.equal(snapped, 1);
@@ -218,6 +218,81 @@ test('an unsnappable ping does not disturb the pings around it', () => {
   assert.ok(Math.abs(cache.last.along - 1400) < 2, 'progress should be the last GOOD fix');
 });
 
+// --- before the gun ----------------------------------------------------------
+//
+// A scheduled start means pings can exist that are not part of the race: the drive
+// to the start, the warm-up, a phone left on overnight. They are real fixes and
+// stay on the map, but placing them on the course would count a warm-up as race
+// progress — and because so much downstream keys on `snap`, refusing to snap them
+// is the whole of the exclusion.
+
+/** The gun, landing between the first and second ping of a `pings()` sequence. */
+const GUN = Date.parse('2026-07-28T12:00:30Z');
+
+test('a ping from before the gun is not placed on the course', () => {
+  const points = pings([[100, 20], [600, 30], [1200, 25]]);
+  const { cache } = snapAll(STRAIGHT, points, null, { start: GUN });
+
+  assert.equal(cache.byName['p0.json'], null, 'before the gun, so nowhere on the course');
+  assert.ok(cache.byName['p1.json'], 'after it, so snapped as usual');
+  assert.ok(cache.byName['p2.json']);
+});
+
+test('a pre-start ping is recorded, not merely skipped', () => {
+  // A name missing from `byName` means "never seen", and this one has been seen and
+  // decided about. Skipping it instead leaves `snapped` at zero on the second pass,
+  // `show()` never persists the cache, the new `start` never reaches the version
+  // tuple — and every paint finds the cache stale and re-snaps the entire run.
+  const points = pings([[100, 20], [600, 30]]);
+  const first = snapAll(STRAIGHT, points, null, { start: GUN });
+
+  assert.equal(first.snapped, 2, 'both were decided about');
+  assert.ok('p0.json' in first.cache.byName);
+
+  const nearest = counting();
+  const again = snapAll(STRAIGHT, points, first.cache, { start: GUN, nearest });
+  assert.equal(again.snapped, 0, 'and nothing is reconsidered on the next pass');
+  assert.equal(nearest.calls, 0);
+});
+
+test('a pre-start ping does not move the runner along the course', () => {
+  // The sequence has to read as though the warm-up never happened: an unsnapped
+  // ping leaves `prevAlong` where it was, so this must match a run where the
+  // pre-start pings were simply absent.
+  const all = pings([[1500, 20], [100, 30], [600, 25]]);
+  const withGun = snapAll(STRAIGHT, all, null, { start: GUN }).cache;
+  // ... and the same run with the warm-up ping deleted outright.
+  const without = snapAll(STRAIGHT, all.slice(1), null).cache;
+
+  for (const name of ['p1.json', 'p2.json']) {
+    assert.deepEqual(withGun.byName[name], without.byName[name], name);
+  }
+});
+
+test('no scheduled start means every ping races, exactly as before', () => {
+  const points = pings([[100, 20], [600, 30]]);
+
+  assert.deepEqual(
+    snapAll(STRAIGHT, points, null, { start: null }).cache,
+    snapAll(STRAIGHT, points, null).cache
+  );
+});
+
+test('a moved gun invalidates everything, even though the course file did not change', () => {
+  // The trap this guards: a tree entry's sha is a hash of the CONTENT, so renaming a
+  // GPX from 09:00 to 08:00 leaves `courseSha` identical. Without `start` in the
+  // version tuple, every stored `along` would keep the answer from the old gun.
+  const points = pings([[100, 20], [600, 30]]);
+  const warm = snapAll(STRAIGHT, points, null, { start: GUN }).cache;
+
+  const nearest = counting();
+  const moved = snapAll(STRAIGHT, points, warm, { start: GUN - 3600000, nearest });
+
+  assert.equal(moved.snapped, 2, 'both pings reconsidered under the new start');
+  assert.ok(nearest.calls > 0);
+  assert.ok(moved.cache.byName['p0.json'], 'the warm-up ping is in the race now');
+});
+
 // --- when the cache must be thrown away -------------------------------------
 
 test('a different course file invalidates everything', () => {
@@ -226,7 +301,7 @@ test('a different course file invalidates everything', () => {
 
   const other = courseFrom([[0, 0], [2000, 0]], 'course-2');
   const nearest = counting();
-  snapAll(other, points, warm, nearest);
+  snapAll(other, points, warm, { nearest });
 
   assert.equal(nearest.calls, 2, 'stored distances mean nothing against a new course');
 });
@@ -239,7 +314,7 @@ test('a changed threshold invalidates everything', () => {
   CONFIG.snapMeters = 250;
   try {
     const nearest = counting();
-    snapAll(STRAIGHT, points, warm, nearest);
+    snapAll(STRAIGHT, points, warm, { nearest });
     assert.equal(nearest.calls, 2);
   } finally {
     CONFIG.snapMeters = original;
@@ -257,7 +332,7 @@ test('a backfilled older ping forces the sequence to run again', () => {
     ...points
   ];
   const nearest = counting();
-  const { snapped } = snapAll(STRAIGHT, backfilled, warm, nearest);
+  const { snapped } = snapAll(STRAIGHT, backfilled, warm, { nearest });
 
   assert.equal(nearest.calls, 4);
   assert.equal(snapped, 4);
@@ -287,7 +362,7 @@ test('the cache survives a round trip through JSON', () => {
   const revived = JSON.parse(JSON.stringify(warm));
 
   const nearest = counting();
-  snapAll(STRAIGHT, points, revived, nearest);
+  snapAll(STRAIGHT, points, revived, { nearest });
   assert.equal(nearest.calls, 0);
 });
 

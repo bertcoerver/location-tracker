@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCourse, gainAt } from '../src/course.js';
-import { deriveStats, interpolateAt } from '../src/stats.js';
+import { deriveStats, interpolateAt, originOf } from '../src/stats.js';
 
 const LAT0 = 46.5;
 const M_LON = 111320 * Math.cos((LAT0 * Math.PI) / 180);
@@ -244,4 +244,88 @@ test('interpolateAt declines the questions it cannot answer', () => {
   assert.equal(interpolateAt([], null, 100), null, 'no course');
   assert.equal(interpolateAt([], slope(), null), null);
   assert.equal(interpolateAt([], slope(), NaN), null);
+});
+
+// --- a race with a scheduled start -------------------------------------------
+//
+// Elapsed time counts from the gun, not from the oldest file in the folder. The
+// difference is a race clock versus the age of a directory: pings written on the
+// drive to the start used to become the start.
+
+test('elapsed time counts from the gun rather than the first ping', () => {
+  // The gun at 10 minutes, a warm-up ping at 4 and the first real one at 12.
+  const points = deriveStats(
+    [ping('warm', 4, null), ping('a', 12, 500), ping('b', 30, 2000)],
+    slope(), 10 * MINUTE);
+
+  assert.equal(points[1].stats.sinceStart, 2 * MINUTE, 'two minutes into the race');
+  assert.equal(points[2].stats.sinceStart, 20 * MINUTE);
+});
+
+test('a ping from before the gun has no elapsed time at all', () => {
+  const points = deriveStats(
+    [ping('warm', 4, null), ping('a', 12, 500)], slope(), 10 * MINUTE);
+
+  // Absent rather than negative: "-6 minutes into the race" is arithmetic, not a
+  // fact, and the tooltip drops the row rather than printing it.
+  assert.equal(points[0].stats.sinceStart, undefined);
+});
+
+test('the gap since the previous ping survives across the gun', () => {
+  const points = deriveStats(
+    [ping('warm', 4, null), ping('a', 12, 500)], slope(), 10 * MINUTE);
+
+  // How long the phone was quiet is a fact about two fixes, and it reads the same
+  // either side of the start — so the first racing ping legitimately reports a gap
+  // that spans the gun.
+  assert.equal(points[1].stats.sincePrev, 8 * MINUTE);
+  assert.equal(points[0].stats.sincePrev, undefined, 'still nothing before the first');
+});
+
+test('no gun reproduces the old behaviour exactly', () => {
+  const points = [ping('a', 5, 0), ping('b', 15, 1000)];
+  const withNull = deriveStats(points.map(p => ({ ...p })), slope(), null);
+  const without = deriveStats(points.map(p => ({ ...p })), slope());
+
+  assert.deepEqual(withNull.map(p => p.stats), without.map(p => p.stats));
+  assert.equal(without[0].stats.sinceStart, 0, 'the first ping is still zero');
+});
+
+test('originOf recovers the moment the clock counts from', () => {
+  const gun = 10 * MINUTE;
+  const points = deriveStats(
+    [ping('warm', 4, null), ping('a', 12, 500)], slope(), gun);
+
+  assert.equal(originOf(points), gun);
+  // Without a gun it is the first ping, which is what it has always been.
+  assert.equal(originOf(deriveStats([ping('a', 5, 0)], slope())), 5 * MINUTE);
+});
+
+test('originOf has no answer before any ping has raced', () => {
+  assert.equal(originOf([]), null);
+  // Nothing but warm-up pings: the race has a start, but no ping is measured from
+  // it yet, so there is nothing to recover.
+  assert.equal(originOf(deriveStats([ping('warm', 4, null)], slope(), 10 * MINUTE)), null);
+});
+
+test('a hovered point on the course reads off the race clock too', () => {
+  const gun = 10 * MINUTE;
+  const course = slope();
+  const points = deriveStats(
+    [ping('warm', 4, null), ping('a', 20, 1000), ping('b', 40, 3000)], course, gun);
+
+  // Half way between the two racing pings by distance, so half way by time: 30
+  // minutes on the wall, 20 into the race.
+  const at = interpolateAt(points, course, 2000);
+  assert.equal(at.state, 'between');
+  assert.equal(at.sinceStart, 20 * MINUTE);
+});
+
+test('interpolateAt still answers for points that never saw deriveStats', () => {
+  // Its origin is read back off the pings rather than passed in, so a caller that
+  // skipped `deriveStats` gets the first-ping clock instead of NaN.
+  const course = slope();
+  const at = interpolateAt([ping('a', 10, 1000), ping('b', 30, 3000)], course, 2000);
+
+  assert.equal(at.sinceStart, 10 * MINUTE);
 });

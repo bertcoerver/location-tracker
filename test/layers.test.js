@@ -43,6 +43,33 @@ test('elapsed times appear once stats are attached', () => {
   assert.ok(out.includes('4m 12s since last'), out);
 });
 
+test('a ping from before the gun reports no elapsed time', () => {
+  // It has a `stats` object — the gap since the previous ping is still a fact — but
+  // no `sinceStart`, because the race had not begun. Formatting the absence would
+  // put "NaN in" on the tooltip, which is the failure this guards.
+  const html = tooltipHtml({ ...point, stats: { sincePrev: 252000 } }, false);
+  const out = text(html);
+
+  // Time and position, and no elapsed row between them — the same two rows a ping
+  // with no stats at all produces.
+  assert.equal(html.match(/<div/g).length, 2, html);
+  assert.ok(!out.includes('since last'), out);
+  assert.ok(!out.includes('NaN'), out);
+  assert.ok(!out.includes('undefined'), out);
+  // Still a ping, so everything that does not depend on the race still shows.
+  assert.ok(out.includes('46.500000, 8.100000'), out);
+});
+
+test('a pre-start ping still shows what the phone was dealing with', () => {
+  const out = text(tooltipHtml(
+    { ...point, btry: 96, ntwrk: 3, wthr: '19°C and Cloudy', stats: { sincePrev: 60000 } },
+    false));
+
+  assert.ok(out.includes('Battery 96% · Signal 3/4'), out);
+  assert.ok(out.includes('19°C · Cloudy'), out);
+  assert.ok(!out.includes('NaN'), out);
+});
+
 test('the first ping has no "since last" — there is nothing before it', () => {
   const out = text(tooltipHtml({ ...point, stats: { sinceStart: 0 } }, false));
 

@@ -505,7 +505,11 @@ export function tooltipHtml(point, isLatest) {
     rows.push(`<div class="r">${sincePair(
       `${fmtDistance(stats.distTotal)} in`, fmtDistance(stats.dist))}</div>`);
   }
-  if (stats) {
+  // `sinceStart` and not merely `stats`: a ping from before the scheduled start has
+  // no elapsed time — it happened before the race did — and formatting the absence
+  // would put "NaN in" on the tooltip. The gap since the previous ping goes with it
+  // rather than standing alone, since the pair is one row and one thought.
+  if (stats?.sinceStart !== undefined) {
     rows.push(`<div class="r">${sincePair(
       `${fmtDuration(stats.sinceStart)} in`,
       stats.sincePrev === undefined ? null : fmtDuration(stats.sincePrev))}</div>`);

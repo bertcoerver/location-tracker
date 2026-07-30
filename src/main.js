@@ -168,16 +168,23 @@ if (geo.supported()) {
 function show(cache) {
   const points = buildPoints(cache);
 
+  // The gun, when the course filename declared one. Read off the INDEX rather than
+  // off the parsed course, because the index is what arrives first and what
+  // survives in localStorage: the cached points paint before the GPX has even been
+  // asked for, and they have to paint against the right start. A renamed GPX also
+  // keeps its blob sha, so `course` could never notice a moved gun anyway.
+  const start = index[run]?.start ?? null;
+
   if (course) {
     const key = keysFor(run).snap;
-    const { cache: snaps, snapped } = snapAll(course, points, storage.get(key));
+    const { cache: snaps, snapped } = snapAll(course, points, storage.get(key), { start });
     if (snapped) storage.set(key, snaps);
     applySnaps(points, snaps);
   }
 
   // Elapsed time and climb, hung off each point for the tooltip. Cheap, and it
   // depends on the snaps above, so it goes here rather than being cached.
-  deriveStats(points, course);
+  deriveStats(points, course, start);
 
   // Then the pace model, fitted to THIS run and nothing else, and each ping's
   // score against the forecast that was made before it arrived. Both derived on

@@ -1,10 +1,65 @@
 // The status panel and the run picker — all DOM, no map, no network.
 
-import { isLive } from './github.js';
+import { byRecency, isLive } from './github.js';
 import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
 import { predictAt } from './predict.js';
-import { ago, coarse, fmtElapsed, fmtHm } from './util.js';
+import { ago, coarse, fmtCountdown, fmtElapsed, fmtHm } from './util.js';
+
+/**
+ * What the race clock should say, as data rather than DOM.
+ *
+ * Pure and exported so the one genuinely branchy thing in this file can be tested
+ * without a document — everything else here is a text node assignment, and this
+ * has six cases.
+ *
+ * Two sources for "when did this start", in order of authority:
+ *
+ *   1. the SCHEDULED start, which the course filename declared. It is a stated fact
+ *      about the race and is known before anybody has moved — which is what lets
+ *      this box speak for a run with no pings at all, and that is most of the point
+ *      of a course-only folder being a run: the route is on the map, the height
+ *      profile is drawn, and this says when it begins.
+ *   2. the first ping, the only thing available for a run whose course said nothing,
+ *      and exactly what this box has always counted from.
+ *
+ * Neither, and there is nothing to count.
+ *
+ * Warm-up pings arriving before the gun do not start the clock — the gun does,
+ * which is why the countdown never looks at `points`.
+ *
+ * @param {number|null} start the scheduled gun, or null
+ * @param {Array}       points sorted oldest-first
+ * @param {object|null} finish the ping the phone marked as its last, if any
+ * @param {boolean}     live whether the run counts as still underway
+ * @param {number}      now
+ * @returns {{label: string, value: string}|null} null to hide the box entirely.
+ */
+export function clockReading({ start, points, finish, live, now }) {
+  const scheduled = Number.isFinite(start);
+  if (!scheduled && !points.length) return null;
+
+  if (scheduled && now < start) {
+    return { label: 'Starts in', value: fmtCountdown(start - now) };
+  }
+
+  const from = scheduled ? start : points[0].t;
+
+  // The gun has gone and nothing has reported. The clock RUNS anyway: the timetable
+  // says the race is on, and with no ping to show it is the only thing on screen
+  // saying so — freezing at 0:00:00 would be claiming it hadn't started. That is a
+  // claim from the schedule rather than from the phone, and the honest one to make
+  // while waiting for a first fix, at the cost that a race whose phone never reports
+  // at all counts up for ever. `live` cannot help here: it is ping-based by design,
+  // so a started run with no pings is never live.
+  if (!points.length) return { label: 'Elapsed', value: fmtElapsed(now - from) };
+
+  // The finish rather than the newest point, which is the same thing unless a ping
+  // that failed to upload turns up after it — then the race still ended when the
+  // phone said it did.
+  const to = live ? now : (finish || latestOf(points)).t;
+  return { label: live ? 'Elapsed' : 'Total', value: fmtElapsed(to - from) };
+}
 
 export function createUi({ onRecenter, onRunPick }) {
   const el = id => document.getElementById(id);
@@ -84,8 +139,17 @@ export function createUi({ onRecenter, onRunPick }) {
         : `Last ping ${ago(last.t)}${expectation(last)}`;
     } else if (state === 'loading') {
       tickerTextEl.textContent = 'Loading…';
+    } else if (!run) {
+      tickerTextEl.textContent = 'No runs yet';
     } else {
-      tickerTextEl.textContent = run ? 'No locations yet' : 'No runs yet';
+      // "No locations yet" is true of a race that hasn't started, but it reads as a
+      // fault — and for an upcoming race, having not pinged is the expected state
+      // rather than a problem. So this says which of the two silences it is and
+      // leaves the number to the clock beside it, which already has the countdown.
+      const start = index[run]?.start ?? null;
+      tickerTextEl.textContent = Number.isFinite(start) && Date.now() < start
+        ? 'Not started yet'
+        : 'No locations yet';
     }
   }
 
@@ -111,30 +175,27 @@ export function createUi({ onRecenter, onRunPick }) {
   }
 
   /**
-   * Time since the first ping of the run.
+   * The race clock: a countdown before the gun, elapsed time after it, a total once
+   * the run has gone quiet.
    *
-   * Running while the run is live, frozen at first-to-last once it goes quiet.
-   * A clock that keeps counting after the finish is claiming the race is still
-   * on, which is the one thing this box must never say — so the label changes
-   * with it, and a stopped clock reads "Total" rather than "Elapsed".
+   * A clock that keeps counting after the finish is claiming the race is still on,
+   * which is the one thing this box must never say — so the label changes with it,
+   * and a stopped clock reads "Total" rather than "Elapsed".
    *
-   * Recomputed from the timestamps every tick rather than counted up, so it
+   * Every decision is in [`clockReading`](#clockReading); this puts the answer on
+   * screen. Recomputed from the timestamps every tick rather than counted up, so it
    * can't drift and a backgrounded tab comes back with the right number.
    */
-  function renderClock() {
-    const on = points.length > 0;
-    clockEl.hidden = !on;
-    if (!on) return;
+  function renderClock(now = Date.now()) {
+    const reading = clockReading({
+      start: index[run]?.start ?? null, points, finish, live: live(now), now
+    });
 
-    const running = live();
-    const from = points[0].t;
-    // The finish rather than the newest point, which is the same thing unless a
-    // ping that failed to upload turns up after it — then the race still ended
-    // when the phone said it did.
-    const to = running ? Date.now() : (finish || latestOf(points)).t;
+    clockEl.hidden = !reading;
+    if (!reading) return;
 
-    clockLabelEl.textContent = running ? 'Elapsed' : 'Total';
-    clockTimeEl.textContent = fmtElapsed(to - from);
+    clockLabelEl.textContent = reading.label;
+    clockTimeEl.textContent = reading.value;
   }
 
   /**
@@ -179,7 +240,10 @@ export function createUi({ onRecenter, onRunPick }) {
    */
   function renderRuns() {
     const now = Date.now();
-    const names = Object.keys(index).sort((a, b) => index[b].latest - index[a].latest);
+    // An upcoming race sorts by its scheduled start, so it sits at the top of the
+    // list where it can be found rather than at the bottom among the finished ones.
+    // Being top of the PICKER is not being the default view — see `defaultRun`.
+    const names = Object.keys(index).sort(byRecency(index));
 
     // The status dot doubles as the live indicator: its COLOUR is whether the
     // last poll worked, and it PULSES while the run is still going. Two dots
@@ -187,7 +251,7 @@ export function createUi({ onRecenter, onRunPick }) {
     dotEl.dataset.live = String(live(now));
     // Liveness is also what decides whether the clock runs or shows a total, and
     // whether there is still a finish worth predicting.
-    renderClock();
+    renderClock(now);
     renderFinish();
 
     // One run is not a choice — but it is still the heading, so the control

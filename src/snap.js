@@ -84,10 +84,11 @@ export function snapOne(course, point, prevAlong, nearest = nearestOnCourse) {
 }
 
 /** A cache that will match nothing — the shape `snapAll` expects when starting over. */
-function emptyCache(course) {
+function emptyCache(course, start) {
   return {
     courseSha: course.sha,
     snapMeters: CONFIG.snapMeters,
+    start,
     last: null,
     byName: {}
   };
@@ -102,32 +103,42 @@ function emptyCache(course) {
  * resuming from the last cached ping gives bit-identical results to recomputing
  * the lot — which the tests assert rather than assume.
  *
- * Three things invalidate the whole cache, because each makes the stored
+ * Four things invalidate the whole cache, because each makes the stored
  * `along` values meaningless:
  *   - a different course file (`courseSha`),
  *   - a different threshold (`snapMeters`),
+ *   - a different scheduled `start`, which changes which pings belong on the
+ *     course at all. This one cannot be folded into `courseSha`: a tree entry's
+ *     sha is a hash of the CONTENT, so renaming a GPX to move the gun from 09:00
+ *     to 08:00 leaves the sha untouched, and every stored `along` would keep the
+ *     answer computed under the old start.
  *   - a ping appearing that is OLDER than the last one we snapped. That's a
  *     backfill, and the sequence it should have been scored against never ran.
  *
- * @param {object} course
- * @param {Array}  points  sorted oldest-first, as `buildPoints()` returns them
- * @param {object} cache   the previous result; pass a stale or empty one freely
+ * @param {object}  course
+ * @param {Array}   points  sorted oldest-first, as `buildPoints()` returns them
+ * @param {object}  cache   the previous result; pass a stale or empty one freely
+ * @param {object}  [opts]
+ * @param {number|null} [opts.start] the gun, when the course filename named one.
+ *   Pings before it are left off the course entirely — see the loop below.
+ * @param {Function} [opts.nearest] injectable, for the tests.
  * @returns {{cache: object, snapped: number}}
  */
-export function snapAll(course, points, cache, nearest = nearestOnCourse) {
+export function snapAll(course, points, cache, { start = null, nearest = nearestOnCourse } = {}) {
   let next = cache;
 
   const stale = !next
     || next.courseSha !== course.sha
     || next.snapMeters !== CONFIG.snapMeters
+    || (next.start ?? null) !== start
     || !next.byName;
 
-  if (stale) next = emptyCache(course);
+  if (stale) next = emptyCache(course, start);
 
   // A backfilled ping can't be scored against a sequence that already moved past
   // it, so the only correct answer is to run the sequence again.
   if (next.last && points.some(p => !(p.name in next.byName) && p.t < next.last.t)) {
-    next = emptyCache(course);
+    next = emptyCache(course, start);
   }
 
   const byName = { ...next.byName };
@@ -137,7 +148,25 @@ export function snapAll(course, points, cache, nearest = nearestOnCourse) {
   for (const point of points) {
     if (point.name in byName) continue;
 
-    const result = snapOne(course, point, last ? last.along : 0, nearest);
+    // Before the gun: drawn where the GPS put it, placed nowhere on the course. A
+    // fix taken in the start pen an hour early is metres from the route and would
+    // snap to it perfectly — and then every distance, pace, climb and forecast
+    // built on it would be counting a warm-up as race progress.
+    //
+    // This is the whole of the exclusion. `deriveStats`' distance and climb,
+    // `buildForecast`, `deriveForecastErrors`, `interpolateAt` and both of the
+    // height strip's loops all key on `snap`, so a ping without one is already
+    // invisible to every one of them; nothing downstream has to learn what a gun is.
+    //
+    // Recorded as an explicit null rather than skipped, for the same reason an
+    // off-course ping is: a name missing from `byName` means "never seen", and this
+    // one has been seen and decided about. It also has to count towards `snapped`,
+    // or `show()` never persists the cache, the new `start` never reaches the
+    // version tuple above, and every paint finds it stale and re-snaps the run.
+    const result = start !== null && point.t < start
+      ? null
+      : snapOne(course, point, last ? last.along : 0, nearest);
+
     byName[point.name] = result;
     snapped++;
 
@@ -152,7 +181,7 @@ export function snapAll(course, points, cache, nearest = nearestOnCourse) {
   for (const name of Object.keys(byName)) if (!live.has(name)) delete byName[name];
 
   return {
-    cache: { courseSha: course.sha, snapMeters: CONFIG.snapMeters, last, byName },
+    cache: { courseSha: course.sha, snapMeters: CONFIG.snapMeters, start, last, byName },
     snapped
   };
 }

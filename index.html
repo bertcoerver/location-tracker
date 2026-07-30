@@ -207,11 +207,12 @@
   #dot[data-live="true"]     { animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
 
-  /* Time since the first ping. Ticks while the run is live and freezes at the
-     total once it goes quiet — a clock still counting after the finish claims
-     the race is still on. Inside the status panel: it is one more fact about
-     the run on screen, and a whole second panel for two lines was a lot of
-     window to spend on it. */
+  /* The race clock: time since the gun, or since the first ping when the course
+     filename named no gun, or a countdown while the gun is still ahead. Ticks
+     while the run is live and freezes at the total once it goes quiet — a clock
+     still counting after the finish claims the race is still on. Inside the
+     status panel: it is one more fact about the run on screen, and a whole
+     second panel for two lines was a lot of window to spend on it. */
   /* The three readings in this panel — the course, the elapsed clock and the
      predicted finish — are one shape said three times: a caption, then a value.
      Three rules, not nine: they used to be typeset separately and had drifted
