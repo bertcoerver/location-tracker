@@ -1233,7 +1233,7 @@ function uncertaintyBar(ms) {
  * page that can't decide, and the same reasoning that took `Intl` out of the clock
  * applies: one wording, chosen here, testable anywhere.
  */
-function metres(v) {
+export function metres(v) {
   return `${Math.round(v).toLocaleString('en-US')} m`;
 }
 

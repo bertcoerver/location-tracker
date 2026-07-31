@@ -27,7 +27,13 @@ whatever subfolders exist, newest first, and hides itself when there's only one.
 A run that has pinged within the last hour is marked live, with a `●` in the picker
 and a pulsing dot beside the title.
 
-A folder holding only a `.gpx` is a run too — an upcoming one. It sorts by its
+The folder name is the run's **identity**: the `?run=` key, the cache namespace, the
+label on its dot when you're looking at another race. It is also its *name* on screen
+unless the run says otherwise — drop a [`course_settings.json`](#course_settingsjson)
+in and it can be called "Ultra Trail de Mont Blanc" while staying `UTMB` in the URL.
+
+A folder holding only a `.gpx`, or only a `course_settings.json`, is a run too — an
+upcoming one. It sorts by its
 scheduled start rather than by a last ping it hasn't got, so it sits at the *top*
 of the picker where it can be found; see "The course". Being top of the picker is
 not being the landing view, though: the plain `/` link follows the run that pinged
@@ -109,6 +115,17 @@ it, as the old separate picker did, would now take the run's name off the screen
 the open list a `●` marks the runs that are still live; the one already on screen never gets one,
 because its own liveness is the pulsing dot one line above.
 
+**The name shown is the run's `label` if it has one**, from its
+[`course_settings.json`](#course_settingsjson) — in the heading, in every option of the picker, and
+in the tab title. The folder name stays the identity underneath: it is the option's `value`, the
+`?run=` key and the cache namespace, so a race can be `UTMB` in the URL and "Ultra Trail de Mont
+Blanc" on screen. A run with no label is called by its folder, as everything was before.
+
+**Under the name, what the course *is*:** `165.0 km · 9,900 m climb`, small and quiet, in the same
+type as the finish's range. The stated figures from the settings file win here — an official distance
+is what the entrants signed up for, whatever a hand-traced GPX adds up to — and the measured course
+is the fallback, so a run that states nothing still gets a line. Nothing known, no line.
+
 **It hands focus back after a mouse pick.** A `<select>` keeps focus once it has been used, and on
 this page that cost two things: the browser drew its own focus ring around what is also the page's
 heading, and the next press on the map went on moving focus off the control instead of starting a pan
@@ -165,10 +182,10 @@ keeps the clock going for as long as the last measured pace says the rest would 
 reading reverts at once. A run with no course has no forecast and so keeps the plain one-hour rule,
 which is the honest answer there: with no route there is no finish line to predict crossing.
 
-What it counts *from* has two answers, in order of authority. If the course filename named a start,
-that is the gun, and it wins: a ping written on the drive to the start line is not the beginning of
-the race. Otherwise it is the first ping, which is what this box counted from before filenames could
-say anything, and still the only answer available for a run whose course is silent.
+What it counts *from* has two answers, in order of authority. If the run's settings named a
+`start_datetime`, that is the gun, and it wins: a ping written on the drive to the start line is not
+the beginning of the race. Otherwise it is the first ping, which is what this box counted from before
+a run could schedule itself, and still the only answer available for a run that says nothing.
 
 Before the gun the same box counts down instead:
 
@@ -207,6 +224,34 @@ the clock, asked forwards, and typeset identically to it — the range underneat
 is what says which of the two is a guess, and it is not decoration: it is the part that stops a single
 number being read as a promise. It shows only while the run is live, and never at all for a run that has
 finished: a forecast is a claim about a phone that is still out there. See "Predicting the rest".
+
+### The news bar
+
+`news_banner` in a run's [`course_settings.json`](#course_settingsjson) puts one line across the
+bottom of the window, directly above the height strip:
+
+> Official Race Odometer [here](https://some.url)
+
+It is the only thing on screen that says something a **person wrote** rather than something a phone
+measured, which is why it looks different from everything else: full width, no caption, and out of
+the panel where all the readings live. There is nothing there at all when a run has nothing to say —
+same as the height strip on a run with no course.
+
+**Exactly one line, always.** A bar that can wrap is a bar that reflows the map every time you edit a
+sentence, and the map is what people came for. A message too long for the width scrolls right to
+left instead, at a constant speed derived from its own length — scrolling every message in a fixed
+number of seconds would blur a long one and make a short one crawl. It loops seamlessly, which is the
+only reason there are two copies of the text in the markup: the track slides by exactly half its own
+width, and half of a two-copy track is one copy, so the join lands pixel-perfect with nothing
+measured. A message that fits is simply centred and stays still.
+
+Under `prefers-reduced-motion` nothing moves at all — and a long message becomes **scrollable by
+hand**, with the same edge fades the height strip uses to say there is more. Merely stopping the
+animation would leave the message truncated with no way to reach the rest of it, which is the one
+outcome worse than either.
+
+`**bold**`, `*italic*`, `` `code` `` and `[text](https://…)` render; everything else is text. See
+[`course_settings.json`](#course_settingsjson) for what that subset refuses and why.
 
 ### Knowing a run is over
 
@@ -670,20 +715,29 @@ first alphabetically wins — arbitrary, but stable, which is what matters for t
 
 ### When the race starts
 
-The GPX **filename** may carry the start time, and if it does, that is the gun:
+`start_datetime` in the run's [`course_settings.json`](#course_settingsjson) is the gun:
 
 ```
 locations/UTMB/
-  UTMB_2026-08-28T09_00_00+02_00.gpx      the course, and the start: 28 Aug, 09:00 CEST
+  UTMB.gpx                the course
+  course_settings.json    "start_datetime": "2026-08-28T09:00:00+02:00"
 ```
 
-Anything before the timestamp is a label and is ignored, so name the file whatever reads well. The
-format is the same as a ping's — ISO 8601 with **every colon replaced by `_`** — with a little more
-give, because this one is typed by a person rather than written by a phone: seconds are optional, the
-zone may be `Z`, `+02_00`, `+02:00` or `+0200`, and leaving the zone off means *your* zone. A date
-with no time is refused rather than read as midnight; a gun time invented out of nothing is worse
-than no gun time at all. A plain `course.gpx` names no start, and everything below simply doesn't
-apply to it.
+ISO 8601, with a little give, because this one is typed by a person rather than written by a phone:
+seconds are optional, the zone may be `Z`, `+02:00`, `+0200` or even `+02_00`, and leaving the zone
+off means *your* zone — which is rarely what you want, since a race is watched from elsewhere as
+often as not, so write the offset. A date with no time is refused rather than read as midnight; a gun
+time invented out of nothing is worse than no gun time at all. A run whose settings say nothing about
+a start has none, and everything below simply doesn't apply to it.
+
+> The `+02_00` spelling is accepted for one reason: filenames in this repo can't hold a colon, so
+> every timestamp anyone here has typed writes the offset that way, and one copied into a settings
+> file should mean what it looks like it means. In JSON there is no such constraint — write `+02:00`.
+
+This **used to be the GPX's filename** (`UTMB_2026-08-28T09_00_00+02_00.gpx`). Nothing reads a
+filename for a time any more. Two things were wrong with it: moving the gun meant renaming a file,
+and a race with no route mapped yet couldn't have a start at all. Name the `.gpx` whatever reads
+well; the alphabetically first one in the folder is still the course.
 
 Two things follow from a start being known:
 
@@ -697,8 +751,8 @@ Two things follow from a start being known:
   would otherwise read as the first 400 m of the race, at a pace nobody is going to hold for 170 km.
 
   This is why the snap cache records the start it was computed against, alongside the course's sha
-  and the snap radius. A GPX renamed to move the gun keeps its blob sha — the sha is a hash of the
-  content — so nothing else in that tuple could ever notice.
+  and the snap radius. The gun lives in a different file from the course, so a start edited mid-race
+  changes nothing else in that tuple — without recording it, nothing could notice.
 
 With a course present, three things change:
 
@@ -890,6 +944,11 @@ that is older than one already snapped — a backfill, which was never scored ag
 it. The parsed course itself is deliberately *not* cached; a long route would dwarf everything else
 in storage, and the browser's HTTP cache makes refetching it free.
 
+A run's [`course_settings.json`](#course_settingsjson) is free on exactly the same terms, and for
+every run at once: the listing already names each one and carries its sha, and the bodies are a few
+hundred bytes off the CDN. One fetch per run per edit, per browser, ever — and nothing at all on a
+poll that found no edits.
+
 ## Predicting the rest
 
 Past the last ping the map used to say "Not reached yet" and stop. It now forecasts: hover any part
@@ -994,16 +1053,8 @@ any, all, or none of them:
 
 Files are never edited once written.
 
-A run's `.gpx` follows the same filename convention, for the same reason and with the same syntax —
-it is the only place to put a fact about a race that no ping can carry, because the whole use of it
-is to be known before any ping exists:
-
-```
-locations/UTMB/UTMB_2026-08-28T09_00_00+02_00.gpx
-```
-
-The difference is that a ping's whole name *is* the timestamp, while a course's name is a label with
-a timestamp on the end, and the stamp is optional. See "When the race starts".
+A run's `.gpx` follows no naming convention at all — call it whatever reads well. The alphabetically
+first `.gpx` in the folder is the course.
 
 `ntwrk` is range-checked rather than merely required to be a number: the tooltip renders it as `3/4`,
 so a `7` there would be a claim about a scale that doesn't exist, and a value outside `0`–`4` is
@@ -1037,6 +1088,126 @@ those hold snaps for pings that must now be left alone.
 
 `v10` is `bpm`, and it is the `v6`/`v8` story for the third time: the heart rate is already sitting in
 files that were committed before the reader learned to look for one.
+
+`v11` is `v9` in reverse, and it bites in the same place. The scheduled start has *left* the index —
+it used to be read out of the course's filename and folded into the tree record, and it now comes
+from `course_settings.json`, a separate file with a separate blob sha and its own cache. A browser
+holding the `v10` tree would go on reading a start off records the new code never writes, showing a
+countdown sourced from a filename convention that no longer exists, and no settings edit could
+correct it. The snap caches go with it for the `v9` reason: every stored distance-along was computed
+against a gun time, and the answer now comes from somewhere else entirely.
+
+### `course_settings.json`
+
+Everything else in a run's folder is a *measurement* — a ping is where a phone was, a course is where
+the route goes. This one file is the only place a run makes a **statement** about itself:
+
+```json
+{
+  "id": "UTMB",
+  "label": "Ultra Trail de Mont Blanc",
+  "start_datetime": "2026-08-28T09:00:00+02:00",
+  "ping_frequency": { "min_interval": 5, "max_interval": 30, "k": 0.3, "midpoint": 25 },
+  "news_banner": "Official Race Odometer [here](https://some.url)",
+  "distance": 165,
+  "total_ascent": 9900
+}
+```
+
+The whole file is optional, **so is every field in it**, and an unusable field costs that field and
+nothing else. These are written by hand, mid-race, quite possibly on a phone: a parser that threw the
+document away over a distance typed as `"165 km"` would take the race's name off the screen. So every
+field is read the way a ping's optional fields are — taken if it is the shape it should be, dropped
+without comment if it isn't. `ping_frequency` is the one exception, and there is a reason below.
+
+| field | type | what it does |
+| --- | --- | --- |
+| `id` | string | **ignored.** For whoever is editing the file, so a block pasted into the wrong folder is visible to a human reading it. The folder name is the run's identity and a file may not rename its own run. |
+| `label` | string | what the run is **called**, everywhere on screen: the heading, the picker, the tab title. Plain text — emoji and accents are fine, markup is not. The folder name stays the `?run=` key. |
+| `start_datetime` | ISO 8601 | the gun. See "When the race starts". |
+| `ping_frequency` | object | the phone's own ping curve, for this run. See below. |
+| `news_banner` | string | one line shown between the height strip and the map. A tiny Markdown subset. |
+| `distance` | number, **km** | shown under the course name. |
+| `total_ascent` | number, **m** | shown beside it. |
+
+**The stated figures win.** Everywhere else on this page a measurement beats a claim, because the
+claim is a guess about what happened; here the claim *is* the race. An official 165 km is what the
+entrants signed up for and what every sign on the course says, whatever a hand-traced GPX adds up to.
+The course is the fallback, so a run that says nothing still gets a line — and either half may come
+from either source, so naming only `distance` gets that distance beside the course's own climb.
+
+**`label` is plain text on purpose.** It reaches an `<option>`, `document.title` and a WebGL text
+layer, none of which can render markup — so Markdown there would show as literal asterisks in two
+places out of three. Emoji and accents need nothing done to them; the page is UTF-8 throughout.
+
+**`news_banner` renders four constructs and refuses everything else:** `[text](https://…)`,
+`**bold**`, `*italic*`, `` `code` ``. Written by hand rather than pulled in as a dependency — this
+repo has none, and a Markdown library is a large thing to take on for four things. The message is
+HTML-escaped *first*, so markup in it is text; only `http:` and `https:` are ever linked, and a
+`javascript:` URL falls through visibly un-linked rather than being silently swallowed. An unclosed
+`**` is two asterisks, not a guess. The bar is exactly one line tall — a bar that can wrap is one
+that reflows the map every time you edit a sentence — and a message too long for the width scrolls
+right-to-left at a constant speed, or becomes scrollable by hand under `prefers-reduced-motion`.
+
+#### `ping_frequency`, and why it is the one clamped field
+
+The phone picks its own ping interval from a logistic on its battery, and this page derives its poll
+schedule from the same curve — see "Polling when a ping is due". Naming the curve per run is what
+lets one repo hold races tracked by two differently-configured phones. Anything you leave out falls
+back to `config.js`, so `{ "midpoint": 20 }` is a legal file that moves the knee and leaves the ends
+alone.
+
+**The units are not uniform**, and this is the likeliest thing to get wrong:
+
+| key | unit |
+| --- | --- |
+| `min_interval` | minutes |
+| `max_interval` | minutes |
+| `k` | per battery-percentage-**point** — not a time |
+| `midpoint` | a battery **percentage** — not a time |
+
+This is a file in a repo reaching into the poll scheduler, and GitHub allows **60 API requests an
+hour per IP**. A `min_interval` of `0` — a plausible typo, and the default value of an empty form
+field — makes every branch of `nextPollMs` return its 30-second floor, which spends the entire hourly
+budget in half an hour and locks the map out for everyone behind that connection, on every run, until
+the reset. Nothing on screen would say why. So:
+
+- **`min_interval` may not go below two minutes** (`CONFIG.pingFloorMs`). At two minutes the page
+  polls about 30 times an hour, leaving room for a second viewer.
+- **A malformed curve falls back whole, never half.** A sane `min` beside a nonsense `max` is not
+  four independent numbers, it is one shape, and half of it applied to half of the default is a curve
+  nobody chose. A file asking for less than the floor is *ignored*, not clamped up to it — silently
+  honouring a curve you didn't write is how you end up debugging a schedule that matches neither the
+  file nor the default.
+
+Only those four constants are per-run. The fallback rate, the refresh floor, the backoff cap, the
+poll guard and the jitter window all stay in `config.js`: they are properties of *this page's*
+relationship with the GitHub API rather than of any phone. A settings file gets to say how often its
+phone pings; it does not get to say how often the map polls.
+
+#### Editing it mid-race
+
+You can, and it costs nothing. The file is a blob in the tree listing the page already fetches, so
+its sha arrives free; the body comes from the CDN, content-addressed and cached forever, so one
+version is fetched at most once per browser. In the steady state — every sha matching what is already
+stored — the settings pass makes **zero** requests. Settings are fetched for *every* run rather than
+just the one on screen, because the picker has to label them all and upcoming ones sort by a gun time
+that lives in here; that is one small file per run per edit, and nothing at all otherwise.
+
+An edit lands on the next poll. **Worst case is about 15 minutes**: a run that has declared itself
+finished backs its schedule off to `maxPollMs`, and a banner on a finished race is exactly the thing
+you'd want to edit. Longer if the tab is in the background — it keeps its schedule but spends no
+requests until you come back to it — or if the rate limit is in a backoff window.
+
+Two failure rules are worth knowing, because both are silent if you get them backwards:
+
+- **A settings fetch that fails keeps the last known values.** Degrading to nothing would drop the
+  run's gun time, and a missing gun is not a cosmetic loss: every warm-up ping would snap onto the
+  course, and the distance, climb, pace and forecast built on them would all be quietly wrong.
+- **A deleted settings file removes its settings — unless the listing was truncated.** A tree that
+  hit GitHub's 100k-entry cap and dropped entries looks exactly like a repo where those files were
+  deleted, and acting on it would strip the gun times off runs whose settings are sitting right there
+  in the folder.
 
 `is_finish: true` marks the phone's **last upload of a run**. It is deliberately a normal ping rather
 than a separate marker file with no coordinates: every consumer of a point assumes a fix, so a
@@ -1099,6 +1270,13 @@ interval = 5min + (30min - 5min) / (1 + e^(0.3 × (battery - 25)))
 Whole minutes, **floored**, because that is what the phone's scheduler does — rounding would put
 every prediction up to half a minute after the ping it is predicting. Note the last column: the
 curve approaches 30 minutes without reaching it, so a flat battery pings every 29.
+
+Those four constants are the **fallback**. A run whose `course_settings.json` names a
+`ping_frequency` uses its own curve instead, so one repo can hold races tracked by two
+differently-configured phones — see [`course_settings.json`](#course_settingsjson) for the units and
+for why `min_interval` is the one clamped field in this app. Nothing else about the schedule is
+per-run: the refresh floor, the backoff cap, the poll guard and the jitter window belong to this
+page's relationship with the GitHub API, not to any phone.
 
 Every ping already carries the battery it was sent on (`btry`), so
 [`src/schedule.js`](src/schedule.js) can work out when the next one is due and sleep until then
@@ -1253,7 +1431,8 @@ src/
   main.js           entry point: wires everything together, owns the poll loop
   config.js         repo coordinates, poll interval — the only file to edit
   route.js          which run the URL pins, if any
-  github.js         data layer: the tree request, the run index, the point cache
+  github.js         data layer: the tree request, the run index, the point cache, the settings cache
+  settings.js       reads a run's course_settings.json — the only place a run states anything
   geo.js            the visitor's own position, from the browser (the only device API here)
   points.js         cache -> sorted array, time position, bounding box
   gpx.js            reads a .gpx into segments and waypoints (no dependencies)
@@ -1266,12 +1445,13 @@ src/
                     given moment was daylight, and the moon's phase
   predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
+  news.js           the one-line news bar: a tiny safe Markdown subset, and when to scroll it
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
   colors.js         reads the CSS colour tokens
-  util.js           time parsing (pings and course filenames), 24-hour clocks, race days, pace,
-                    formatting, pool, storage guard
+  util.js           time parsing (ping filenames and hand-written starts), 24-hour clocks, race days,
+                    pace, formatting, escaping, pool, storage guard
 test/
   *.test.js         run with `npm test`
 package.json        scripts only — no dependencies, nothing to install
@@ -1295,6 +1475,10 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
   committed before the reader learned to look for it, and `hydrate` diffs on sha, which never changes,
   so without the bump it stays invisible forever on exactly the browsers that had visited before. This
   has now happened four times (`v6`, `v8`, `v10`); assume it applies rather than checking.
+- New thing a run should be able to **state about itself** → a field in `course_settings.json`, read
+  in `settings.js`. Every field there is optional and an unusable one is dropped silently, so adding
+  one breaks no existing file. If it changes what a *cached* record means, bump `V` as well — that is
+  what `v11` was.
 - Something that needs to know **where the run was at a moment** → `traceAt` in `stats.js`, which is
   the measured counterpart to `positionAt` in `predict.js`: that one guesses forward from the model,
   this one reads backwards off the trace, and both hand back a place on the course. The sun marks are
@@ -1378,6 +1562,20 @@ design rests on: a cold start costs one API request and downloads every file onc
 an unchanged poll downloads nothing, one new point upstream downloads exactly one
 file, opening a run for the first time costs no API request at all, and loose files
 never surface as a run.
+
+`course_settings.json` is tested at the two seams where a mistake would be *silent*. On the caching
+side: settings cost zero API requests, an unchanged sha is never refetched, a **failed fetch keeps
+the last known values** rather than dropping a gun time, a file that will not parse costs its run
+nothing it already had, a deleted file is mirrored, and a **truncated listing is not a deletion**. On
+the parsing side: any subset is legal, an unusable field costs that field alone, `id` is ignored, and
+a `min_interval` under the floor is *refused* rather than clamped — with a case for every way a
+partial ping curve could sneak through, because that one reaches the API budget.
+
+The news bar's Markdown gets a test per ordering bug it is built to avoid, since all of them are
+invisible until the wrong day: that a code span containing `*` is not emphasised from the inside,
+that an asterisk in a URL stays in the URL rather than having an `<em>` pushed into the middle of the
+`href`, that `**x**` is bold and not two empty italics, that only `http:`/`https:` are ever linked,
+and that a quote in a link label cannot break out of the tag.
 
 The course work is covered the same way. The GPX parser is tested against a real MapOut
 export, [`test/fixtures/test.gpx`](test/fixtures/test.gpx), rather than a string written to
@@ -1523,12 +1721,13 @@ the course end even from **beyond** the 500 m threshold, where the identical fix
 flag snaps nowhere at all, and that on a closed loop it resolves to the end rather than the
 start, which is the ambiguity the whole cost function exists to fight.
 
-Scheduled starts are tested at the seam each one could fail at. The filename parser is checked
-on the real UTMB name and on every form the timestamp is allowed to take, and pinned against
-the *ping* parser it deliberately isn't: `parseTime` returns NaN for a course filename, and
-that assertion is there so nobody merges the two functions back together. Everything it must
-refuse rather than guess at gets a case — a bare year, a date with no time — because a gun
-time invented from nothing is the one failure that would look right on screen.
+Scheduled starts are tested at the seam each one could fail at. The start parser is checked on
+every form the timestamp is allowed to take — including the `+02_00` spelling a filename forces,
+which is the one `Date.parse` refuses — and pinned against the *ping* parser it deliberately
+isn't: `parseTime` returns NaN for anything with a label in front of the stamp, and that
+assertion is there so nobody merges the two functions back together. Everything it must refuse
+rather than guess at gets a case — a bare year, a date with no time — because a gun time invented
+from nothing is the one failure that would look right on screen.
 
 The ordering has a test for each way a future timestamp could leak somewhere built for past
 ones: that an upcoming run is never live however close its gun is, that it sorts to the top of

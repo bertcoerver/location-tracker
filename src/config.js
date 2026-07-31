@@ -31,10 +31,28 @@ export const CONFIG = {
   // They live here only because `btry` is what the ping actually carries, and a
   // mismatch is SILENT — the map would just poll at the wrong times, with no
   // symptom anyone would notice. Retune the phone, retune these.
+  //
+  // They are the FALLBACK now: a run whose `course_settings.json` names a
+  // `ping_frequency` overrides them for that run alone, which is what lets one repo
+  // hold races tracked by two differently-configured phones. See settings.js.
   minPingMs: 300000,
   maxPingMs: 1800000,
   batteryK: 0.3,
   batteryMid: 25,
+
+  // The shortest ping interval a settings file is allowed to claim.
+  //
+  // Not a property of any phone — a guard on the API budget, and the only clamp in
+  // this app that exists because a file in the repo can reach into the scheduler.
+  // `nextPollMs` sleeps about one ping interval, so a claimed interval is very
+  // nearly a poll rate: at two minutes that is 30 requests an hour against a limit
+  // of 60, leaving room for a second viewer. Below it the page would spend the whole
+  // hourly budget and lock every run out, with nothing on screen saying why.
+  //
+  // A file asking for less doesn't get clamped to this, it gets IGNORED — see
+  // `parsePing`. Silently honouring half of a curve nobody chose is how you end up
+  // debugging a schedule that matches neither the file nor the default.
+  pingFloorMs: 120000,
 
   pollGuardMs: 30000, // the commit still has to land AND reach the tree API
   maxPollMs: 900000,  // backoff cap, and the floor poll on a long wait
@@ -218,7 +236,22 @@ export const CONFIG = {
   // column is a few tens of metres of course, so this smooths over ~100 m of
   // ground: enough to settle GPS elevation noise, far too little to flatten a
   // hill. The underlying min/max summary is not touched.
-  profileSmoothPx: 3
+  profileSmoothPx: 3,
+
+  // --- the news banner -------------------------------------------------------
+  // One line, which is the whole design: a bar that can grow to two lines is a bar
+  // that reflows the map under it every time somebody edits a sentence.
+  newsHeight: 30,
+  // How fast a banner too long to fit crosses the screen, in CSS pixels per second.
+  // Slow enough to read at a glance, fast enough that the end of a long sentence
+  // arrives before you have given up on it — a 400-px overflow takes about six
+  // seconds. The DURATION is derived from this and the text's own width, so the
+  // speed is the same whatever the banner says; scrolling every message in a fixed
+  // time would make a long one unreadable and a short one crawl.
+  newsSpeedPxPerSec: 60,
+  // The gap between the end of the message and the start of its repeat. Without one
+  // the loop reads as a single run-on sentence with no beginning.
+  newsGapPx: 96
 };
 
 // localStorage keys. Bump the version suffix when the cached shape changes —
@@ -266,7 +299,22 @@ export const CONFIG = {
 // browser holding those bodies from an earlier visit would go on showing a tooltip
 // with no pulse in it forever. One forced re-hydrate, free against the API budget,
 // every body coming from the CDN.
-const V = 'v10';
+//
+// v11: a run's scheduled start has left the index. It used to be read out of the
+// course's FILENAME and folded into the tree record by `buildIndex`; it now comes
+// from that run's `course_settings.json`, which is a separate file with a separate
+// blob sha and its own cache. This is the v9 situation in reverse and it bites in
+// the same place: the listing is fetched with `If-None-Match`, and a repo nobody has
+// pushed to answers 304 — on which `refreshIndex` hands back the CACHED index. A
+// browser holding the v10 tree would go on reading a `start` off records the new code
+// never writes, so it would show a countdown sourced from a filename convention that
+// no longer exists, and no settings edit could ever correct it.
+//
+// And `lt.snap` goes with it, for the reason it went at v9: every stored `along` was
+// computed against a gun time, `snapAll` records which one, and the answer now comes
+// from somewhere else entirely. A pre-gun ping snapped under the old start would keep
+// its place on the course with nothing able to notice.
+const V = 'v11';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the
@@ -289,6 +337,18 @@ export const LS_TREE_ETAG = `lt.tree-etag.${V}`;
 // marking them are on screen before any network call. Not per-run for the same
 // reason the tree isn't — it is one fact about all of them at once.
 export const LS_BEACONS   = `lt.beacons.${V}`;
+
+// What every run says about itself: one parsed `course_settings.json` per run, in
+// one record. Not per-run, for the same reason the tree isn't — the picker labels
+// every run and sorts the upcoming ones by their gun, so this is read for all of them
+// on every paint and fetched for none of them most of the time.
+//
+// Held SEPARATELY from the index rather than folded into it, which is the whole
+// design. The index's invalidation key is the tree ETag; a settings file's is its own
+// blob sha. Merging them would put one value under two keys with only one ever
+// checked, and since a 304 makes `refreshIndex` return the cached index untouched,
+// the merged half would be permanently one poll stale.
+export const LS_SETTINGS  = `lt.settings.${V}`;
 
 // When the index was last fetched. Persisted so the refresh throttle survives a
 // page reload — in memory it resets, and refresh-mashing spends the budget.

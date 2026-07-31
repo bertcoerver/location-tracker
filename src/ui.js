@@ -1,11 +1,54 @@
 // The status panel and the run picker — all DOM, no map, no network.
 
+import { gainAt } from './course.js';
 import { byRecency, isLive } from './github.js';
+import { fmtDistance, metres } from './layers.js';
 import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
 import { positionAt, predictAt } from './predict.js';
 import { originOf } from './stats.js';
 import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm } from './util.js';
+
+/**
+ * What the course is, in one line: "165 km · 9,900 m", or nothing.
+ *
+ * Pure and exported for the same reason `clockReading` is — it is a decision with
+ * four ways out, and the rest of this file is text-node assignment.
+ *
+ * The STATED figures win over the measured ones wherever they exist, which is the
+ * opposite of how this page treats everything else and is deliberate. Elsewhere a
+ * measurement beats a claim because the claim is a guess about what happened; here
+ * the claim is the race — an official 165 km is what the entrants signed up for and
+ * what every sign on the course will say, whatever a hand-traced GPX adds up to. The
+ * measurement is the fallback, so a run whose settings say nothing still gets a line.
+ *
+ * Either half may come from either source. A settings file naming only the distance
+ * gets its distance and the course's own climb, which is the honest combination.
+ *
+ * @param {object|null} settings this run's parsed settings, or null.
+ * @param {object|null} course   from `buildCourse`, or null.
+ * @returns {string} '' to hide the line.
+ */
+export function courseFigures(settings, course) {
+  // Kilometres in the file, metres everywhere in the code — `fmtDistance` takes
+  // metres and decides for itself whether to write km, which is what keeps this
+  // line reading the same whether it came from a settings file or from a GPX.
+  const distance = Number.isFinite(settings?.distance)
+    ? settings.distance * 1000
+    : (course?.length ?? null);
+
+  const ascent = Number.isFinite(settings?.totalAscent)
+    ? settings.totalAscent
+    // `gainAt` at the far end of the course is the same number as the last entry of
+    // `cumUp`, reached through the public API rather than by indexing an array this
+    // module has no business knowing the shape of.
+    : (course ? gainAt(course, course.length).up : null);
+
+  const parts = [];
+  if (Number.isFinite(distance) && distance > 0) parts.push(fmtDistance(distance));
+  if (Number.isFinite(ascent) && ascent > 0) parts.push(`${metres(ascent)} climb`);
+  return parts.join(' · ');
+}
 
 /**
  * What the race clock should say, as data rather than DOM.
@@ -16,13 +59,13 @@ import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm } from './util.js'
  *
  * Two sources for "when did this start", in order of authority:
  *
- *   1. the SCHEDULED start, which the course filename declared. It is a stated fact
+ *   1. the SCHEDULED start, which the run's settings declared. It is a stated fact
  *      about the race and is known before anybody has moved — which is what lets
  *      this box speak for a run with no pings at all, and that is most of the point
  *      of a course-only folder being a run: the route is on the map, the height
  *      profile is drawn, and this says when it begins.
- *   2. the first ping, the only thing available for a run whose course said nothing,
- *      and exactly what this box has always counted from.
+ *   2. the first ping, the only thing available for a run that said nothing, and
+ *      exactly what this box has always counted from.
  *
  * Neither, and there is nothing to count.
  *
@@ -117,6 +160,7 @@ export function createUi({ onRecenter, onRunPick }) {
   // `titleTextEl` is the hidden sizer that gives the wrapper its width.
   const titleEl  = el('title');
   const titleTextEl = el('title-text');
+  const figuresEl = el('course-figures');
   const dotEl    = el('dot');
   const tickerEl = el('ticker');
   const tickerTextEl = el('ticker-text');
@@ -141,7 +185,25 @@ export function createUi({ onRecenter, onRunPick }) {
   // `stillRunning` asks it whether a quiet phone could still be on the course.
   let forecast = null;
   let index = {};
+  // What every run says about itself — labels, gun times, ping curves — keyed by
+  // run. Held here alongside the index rather than beside it, and always set with
+  // it: the picker sorts upcoming runs by a start that lives in here and labels
+  // them with a name that lives in here, so an index from one poll and settings
+  // from the next would sort a race by a gun time it no longer has. See `setRuns`.
+  let settings = {};
   let run = null;
+  // The run's course, for the figures line. Null until its GPX has landed, and null
+  // again the moment the run changes — a distance left over from the last race is
+  // worse than no distance at all.
+  let course = null;
+
+  /** This run's own settings, or an empty object. Never null, so `?.` isn't needed
+   *  at a dozen call sites for a thing that is always a record or nothing. */
+  const mine = () => settings[run] || {};
+
+  /** What a run is CALLED. The folder name remains its identity — the URL, the
+   *  caches and the beacons all key on it — and this is only ever what is shown. */
+  const labelFor = name => settings[name]?.label || name;
 
   tickerEl.addEventListener('click', onRecenter);
 
@@ -204,7 +266,7 @@ export function createUi({ onRecenter, onRunPick }) {
       // fault — and for an upcoming race, having not pinged is the expected state
       // rather than a problem. So this says which of the two silences it is and
       // leaves the number to the clock beside it, which already has the countdown.
-      const start = index[run]?.start ?? null;
+      const start = mine().start ?? null;
       tickerTextEl.textContent = Number.isFinite(start) && Date.now() < start
         ? 'Not started yet'
         : 'No locations yet';
@@ -227,7 +289,9 @@ export function createUi({ onRecenter, onRunPick }) {
    */
   function expectation(last) {
     if (!live()) return '';
-    const due = dueInMs(last);
+    // This run's own ping curve when its settings named one, so a race tracked by a
+    // differently-configured phone is not counted down against another phone's.
+    const due = dueInMs(last, Date.now(), mine().ping);
     if (due === null) return '';
     return due > 0 ? ` · next ~${coarse(due)}` : ' · overdue';
   }
@@ -246,7 +310,7 @@ export function createUi({ onRecenter, onRunPick }) {
    */
   function renderClock(now = Date.now()) {
     const reading = clockReading({
-      start: index[run]?.start ?? null, points, finish, live: live(now), now
+      start: mine().start ?? null, points, finish, live: live(now), now
     });
 
     clockEl.hidden = !reading;
@@ -317,7 +381,7 @@ export function createUi({ onRecenter, onRunPick }) {
     // An upcoming race sorts by its scheduled start, so it sits at the top of the
     // list where it can be found rather than at the bottom among the finished ones.
     // Being top of the PICKER is not being the default view — see `defaultRun`.
-    const names = Object.keys(index).sort(byRecency(index));
+    const names = Object.keys(index).sort(byRecency(index, settings));
 
     // The status dot doubles as the live indicator: its COLOUR is whether the
     // last poll worked, and it PULSES while the run is still going. Two dots
@@ -327,6 +391,7 @@ export function createUi({ onRecenter, onRunPick }) {
     // whether there is still a finish worth predicting.
     renderClock(now);
     renderFinish();
+    renderFigures();
 
     // One run is not a choice — but it is still the heading, so the control
     // stays and merely stops being one. Hiding it, as the old separate picker
@@ -339,7 +404,7 @@ export function createUi({ onRecenter, onRunPick }) {
     // Nothing to list yet: the heading still has to say something, and the
     // option carries no value because there is no run to navigate to.
     if (!names.length) {
-      const label = run || 'Location Tracker';
+      const label = run ? labelFor(run) : 'Location Tracker';
       runEl.add(new Option(label, '', false, true));
       titleTextEl.textContent = label;
       return;
@@ -347,7 +412,7 @@ export function createUi({ onRecenter, onRunPick }) {
 
     // What the closed control will be showing, which is what has to be measured.
     // The live marker is deliberately not part of it — see the loop below.
-    titleTextEl.textContent = run || names[0];
+    titleTextEl.textContent = labelFor(run || names[0]);
 
     for (const name of names) {
       // The live marker, but never on the run being shown. Its own liveness is
@@ -356,9 +421,30 @@ export function createUi({ onRecenter, onRunPick }) {
       // panel has always refused to do. Inside the open list it earns its place:
       // there it is the only thing saying which of the others is still running.
       const current = name === run;
-      const label = !current && isLive(index[name], now) ? `● ${name}` : name;
-      runEl.add(new Option(label, name, false, current));
+      // The VALUE stays the folder name — it is what `openRun` and the URL key on,
+      // and a label is display only. Which is also why this is `new Option(text,
+      // value)` rather than one string doing both jobs.
+      const shown = labelFor(name);
+      runEl.add(new Option(!current && isLive(index[name], now) ? `● ${shown}` : shown,
+        name, false, current));
     }
+  }
+
+  /**
+   * "165 km · 9,900 m climb" under the course name, or nothing.
+   *
+   * Redrawn from `renderRuns`, which is the one function already called on every
+   * poll, every tick of the 15-second timer and every run switch — the figures
+   * change with the run and with the settings, and both of those arrive through it.
+   *
+   * `textContent`, not `innerHTML`: the numbers are formatted here and the units are
+   * literals, but the whole point of `distance` is that somebody typed it into a
+   * file in a repo, and that file is not markup.
+   */
+  function renderFigures() {
+    const line = courseFigures(mine(), course);
+    figuresEl.hidden = !line;
+    figuresEl.textContent = line;
   }
 
   return {
@@ -418,16 +504,47 @@ export function createUi({ onRecenter, onRunPick }) {
     /** @param {string|null} next the run now on screen, null when there are none. */
     setRun(next) {
       run = next;
-      document.title = run ? `${run} · Location Tracker` : 'Location Tracker';
+      document.title = run ? `${labelFor(run)} · Location Tracker` : 'Location Tracker';
       // The visible name is the picker's own selected option now, so there is
       // one place it comes from rather than a text node to keep in step.
       renderRuns();
     },
 
-    /** @param {Object} next the run index: name -> { files, latest }. */
-    setRuns(next, current) {
+    /**
+     * The run's course, or null while it is loading and after a run switch.
+     *
+     * The panel had no access to a course at all until the figures line needed one.
+     * It is given the whole object rather than two numbers so that `courseFigures`
+     * can decide for itself what to fall back to — which is the sort of decision
+     * that goes wrong when two callers each pre-digest it their own way.
+     *
+     * @param {object|null} next from `buildCourse`.
+     */
+    setCourse(next) {
+      course = next;
+      renderFigures();
+    },
+
+    /**
+     * The run index and what every run says about itself, together.
+     *
+     * ONE setter for both, deliberately. The picker sorts by a gun time that lives
+     * in `settings` and labels by a name that lives there too, while liveness and
+     * the file list come from `index` — so two setters would let the panel hold one
+     * poll's index beside the next poll's settings, and sort an upcoming race by a
+     * start it no longer had. They arrive from the same poll; they land together.
+     *
+     * @param {Object} next     the run index: name -> { files, latest, course, settings }.
+     * @param {Object} nextSettings name -> parsed `course_settings.json`.
+     * @param {string|null} current the run on screen.
+     */
+    setRuns(next, nextSettings, current) {
       index = next;
+      settings = nextSettings || {};
       run = current;
+      // The tab title carries a label too, and a settings file that has only just
+      // landed is exactly the case where it was written before there was one.
+      document.title = run ? `${labelFor(run)} · Location Tracker` : 'Location Tracker';
       renderRuns();
     },
 

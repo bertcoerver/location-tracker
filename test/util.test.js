@@ -31,16 +31,16 @@ test('parseTime returns NaN for a name it cannot read', () => {
   assert.ok(Number.isNaN(parseTime('README.json')));
 });
 
-// --- a start time out of a course filename -------------------------------------
+// --- a start time somebody typed -----------------------------------------------
 
-test('parseStamp reads the scheduled start off a course filename', () => {
+test('parseStamp reads a stamp with a label in front of it', () => {
   assert.equal(
     parseStamp('UTMB_2026-08-28T09_00_00+02_00.gpx'),
     Date.parse('2026-08-28T09:00:00+02:00')
   );
 });
 
-test('parseTime cannot read a course filename — which is why parseStamp exists', () => {
+test('parseTime cannot read a labelled stamp — which is why parseStamp exists', () => {
   // The label in front of the stamp is what breaks it: `parseTime` replaces every
   // underscore with a colon, so `UTMB_2026…` becomes `UTMB:2026…`. Pinned here so
   // that nobody "simplifies" the two functions into one.

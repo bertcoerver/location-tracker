@@ -254,3 +254,40 @@ test('dueInMs has nothing to say without a battery', () => {
   assert.equal(dueInMs({ t: NOW }, NOW), null);
   assert.equal(dueInMs(null, NOW), null);
 });
+
+// --- one repo, two phones -----------------------------------------------------
+//
+// The four constants of the curve can come from a run's own `course_settings.json`
+// now, so a repo can hold races tracked by differently-configured phones. What must
+// NOT move with them is anything about how often this page talks to GitHub: a
+// settings file gets to say how often its phone pings, not how often the map polls.
+
+const FAST = { minPingMs: 2 * MIN, maxPingMs: 6 * MIN, batteryK: 0.3, batteryMid: 25 };
+
+test('a run\'s own curve is used when it has one', () => {
+  // On a full battery the logistic sits at its minimum, which is this phone's two
+  // minutes rather than the five in config.js.
+  assert.equal(pingIntervalMs(100, FAST), 2 * MIN);
+  assert.equal(pingIntervalMs(100), CONFIG.minPingMs, 'and the default is untouched');
+});
+
+test('every entry point takes the same curve, so they cannot disagree', () => {
+  // The panel says "next ~2m" and the page sleeps two minutes. If `dueInMs` and
+  // `nextPollMs` read different curves, the map would be counting down to one time
+  // and waking at another, and nothing on screen would say which was right.
+  const latest = ping(0, 100);
+
+  assert.equal(dueInMs(latest, NOW, FAST), 2 * MIN);
+  assert.equal(nextPollMs(latest, NOW, FAST), 2 * MIN + CONFIG.pollGuardMs);
+});
+
+test('a per-run curve cannot move the page\'s own limits', () => {
+  // The cap, the floor and the guard belong to this browser's relationship with the
+  // GitHub API, not to any phone. A settings file naming a six-minute maximum must
+  // not shorten the fifteen-minute backoff a long-silent run has earned.
+  assert.equal(nextPollMs({ t: NOW, btry: 50, is_finish: true }, NOW, FAST), CONFIG.maxPollMs);
+  assert.equal(nextPollMs(ping(600, 20), NOW, FAST), CONFIG.maxPollMs, 'ten hours of silence');
+  // And a ping with no battery in it still falls back to the page's fixed rate,
+  // because there is no curve to evaluate whoever owns it.
+  assert.equal(nextPollMs({ t: NOW }, NOW, FAST), CONFIG.pollMs);
+});

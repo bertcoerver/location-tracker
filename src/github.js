@@ -10,8 +10,12 @@
 // (2) is why one recursive tree request answers everything the UI needs: which
 // runs exist, which are live, which is newest, and what's in the one on screen.
 
-import { CONFIG, keysFor, LS_BEACONS, LS_TREE, LS_TREE_ETAG } from './config.js';
-import { parseStamp, parseTime, pool, storage } from './util.js';
+import { CONFIG, keysFor, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG } from './config.js';
+import { parseSettings } from './settings.js';
+import { parseTime, pool, storage } from './util.js';
+
+/** The one filename in a run's folder that is neither a ping nor a course. */
+export const SETTINGS_FILE = 'course_settings.json';
 
 /** Thrown when GitHub says we've spent our hourly budget. Carries when to retry. */
 export class RateLimitError extends Error {
@@ -82,7 +86,7 @@ export async function fetchTree(etag) {
  *   { 'vendee-10k': { files: { '<name>.json': '<sha>', … },
  *                     latest: <ms> | null,
  *                     course: { name: 'course.gpx', sha } | null,
- *                     start: <ms> | null } }
+ *                     settings: { sha } | null } }
  *
  * Pure, and the only place the layout of the repo is interpreted.
  *
@@ -94,15 +98,23 @@ export async function fetchTree(etag) {
  * folder must not make a finished race look live. If a run somehow has several,
  * the alphabetically first wins — arbitrary, but stable across polls.
  *
- * `start` is the scheduled gun, read out of that course's FILENAME — see
- * [`parseStamp`](./util.js#parseStamp). It is the one fact about a run that no
- * ping could ever carry, because the whole use of it is to be known before any
- * ping exists.
+ * A `course_settings.json` is what the run says about itself, and only its SHA is
+ * recorded here: this function reads a listing, and everything it produces has to
+ * be derivable from filenames alone. The body is fetched separately by
+ * `refreshSettings` and kept in its own cache, under its own key. It was excluded
+ * from `files` only incidentally before — its name carries no parsable time, so
+ * the ping filter dropped it — and an incidental exclusion is one that stops
+ * holding the moment somebody names a settings file something else.
+ *
+ * The run's scheduled start used to be here too, read out of the course's
+ * FILENAME. It has moved into the settings file, where it can be edited without
+ * renaming a GPX and where a run with no course can still have one. Nothing in this
+ * function knows about gun times any more; see [`parseSettings`](./settings.js).
  */
 export function buildIndex(entries) {
   const index = {};
   const record = run =>
-    (index[run] ??= { files: {}, latest: null, course: null, start: null });
+    (index[run] ??= { files: {}, latest: null, course: null, settings: null });
 
   for (const entry of entries) {
     if (entry.type !== 'blob') continue;
@@ -116,12 +128,15 @@ export function buildIndex(entries) {
 
     if (/\.gpx$/i.test(name)) {
       const found = record(run);
-      if (!found.course || name < found.course.name) {
-        found.course = { name, sha: entry.sha };
-        // Set together with the course it was read from, so the two can never
-        // disagree about which file the run's start came from.
-        found.start = parseStamp(name);
-      }
+      if (!found.course || name < found.course.name) found.course = { name, sha: entry.sha };
+      continue;
+    }
+
+    // Before the `.json` filter below, not after: this is a `.json` with no time in
+    // its name, so that filter would drop it, and we would be relying on the ping
+    // rule to exclude a file it knows nothing about.
+    if (name === SETTINGS_FILE) {
+      record(run).settings = { sha: entry.sha };
       continue;
     }
 
@@ -139,9 +154,9 @@ export function buildIndex(entries) {
 
   // A folder holding only a course IS a run — an upcoming one. It used to be
   // dropped here, on the grounds that with no `latest` it couldn't be sorted,
-  // marked live or defaulted to; the answer to all three turned out to be `start`
-  // and [`sortKey`](#sortKey) rather than deletion, and a race you are about to run
-  // is precisely the thing worth having on screen beforehand.
+  // marked live or defaulted to; the answer to all three turned out to be its
+  // scheduled start and [`sortKey`](#sortKey) rather than deletion, and a race you
+  // are about to run is precisely the thing worth having on screen beforehand.
   //
   // `latest: null` is what marks "hasn't moved yet", and it is null rather than
   // -Infinity because this record goes through JSON on its way to localStorage and
@@ -177,6 +192,84 @@ export async function refreshIndex() {
   return { changed: true, index, truncated: tree.truncated };
 }
 
+/** The last known settings for every run, so the first paint needs no network at
+ *  all. Mirrors `cachedIndex`, and is read the same way: synchronously, at module
+ *  load, before anything has been asked of GitHub. */
+export function cachedSettings() {
+  return storage.get(LS_SETTINGS) || {};
+}
+
+/**
+ * What every run says about itself: one parsed `course_settings.json` per run.
+ *
+ * Modelled on `refreshBeacons`, and free for the same reasons. The tree response
+ * already named each run's settings file and carried its blob sha, so there is no
+ * API request here at all; the bodies come from the CDN, content-addressed and
+ * `force-cache`d, which means one sha is fetched at most once per browser ever. In
+ * the steady state — every sha matching what is already stored — this makes ZERO
+ * requests and returns the cache untouched.
+ *
+ * Fetched for EVERY run rather than just the one on screen, which is the decision
+ * that makes the rest of the app simple. The picker lists every run and has to
+ * label each one; upcoming runs sort by a gun time that lives in here; and switching
+ * run paints from the points cache before any network call, so the settings for the
+ * run being switched TO have to be in memory already or that first paint is drawn
+ * against the wrong start. The cost of all that is one small file per run per edit.
+ *
+ * Two failure rules, and both are load-bearing:
+ *
+ *   A fetch that FAILS keeps the last parse. Degrading to an empty record would
+ *   silently drop the run's gun time, and a gun time that goes missing is not a
+ *   cosmetic loss: every warm-up ping would snap onto the course, and the distance,
+ *   the climb, the pace and the forecast built on top of them would all be wrong,
+ *   with nothing on screen admitting it. `hydrate` keeps its cache on failure for
+ *   the same reason.
+ *
+ *   Deletions are mirrored — but NOT from a truncated listing. A tree that hit
+ *   GitHub's cap and dropped some entries looks exactly like a repo where those
+ *   files were deleted, and acting on it would take the start times off runs whose
+ *   settings are sitting right there in the folder.
+ *
+ * @param {Object} index from `buildIndex`.
+ * @param {{prune?: boolean}} [opts] `prune: false` when the listing was truncated.
+ * @returns {Promise<Object>} run -> `{ sha, ...parseSettings(body) }`.
+ */
+export async function refreshSettings(index, { prune = true } = {}) {
+  const cache = cachedSettings();
+
+  const wanted = Object.entries(index)
+    .map(([run, record]) => ({ run, sha: record?.settings?.sha }))
+    .filter(({ run, sha }) => sha && cache[run]?.sha !== sha);
+
+  if (wanted.length) {
+    const fetched = await pool(wanted, CONFIG.concurrency, async ({ run, sha }) => {
+      try {
+        const res = await fetch(rawUrl(run, SETTINGS_FILE, sha), { cache: 'force-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // The sha is stored beside the parse, so the diff above is against the file
+        // that produced what we are holding rather than against whatever was last
+        // seen in a listing — which is what makes a failed fetch retry next poll
+        // instead of being written off as done.
+        return { run, value: { sha, ...parseSettings(await res.json()) } };
+      } catch {
+        // One unreadable or unparsable file mustn't cost every other run its
+        // settings, and mustn't cost THIS run the settings it already had.
+        return null;
+      }
+    });
+    for (const found of fetched) if (found) cache[found.run] = found.value;
+  }
+
+  if (prune) {
+    for (const run of Object.keys(cache)) {
+      if (!index[run]?.settings) delete cache[run];
+    }
+  }
+
+  storage.set(LS_SETTINGS, cache);
+  return cache;
+}
+
 /**
  * What "newest" means for a run: when it last pinged, or when it is due to start
  * if it hasn't pinged at all.
@@ -184,32 +277,41 @@ export async function refreshIndex() {
  * One expression, in one place, behind the one comparator everything sorts with.
  * The picker and `defaultRun` ordering runs differently is how you get a list with
  * one run at the top and a different one open behind it.
+ *
+ * The two halves now come from two different caches — `latest` off the tree listing,
+ * `start` out of the run's settings file — which is why this takes them separately
+ * rather than reading one record. See [`refreshSettings`](#refreshSettings) for why
+ * they are not merged.
  */
-function sortKey(record) {
-  return record?.latest ?? record?.start ?? -Infinity;
+function sortKey(record, start) {
+  return record?.latest ?? start ?? -Infinity;
 }
 
 /**
  * The descending order the picker and the run default both use.
  *
  * A comparator rather than a bare key, because subtracting two keys is only safe
- * while both are finite — and they aren't. A folder with an unstamped `course.gpx`
+ * while both are finite — and they aren't. A folder with a `course.gpx`, no settings
  * and no pings scores -Infinity, `-Infinity - -Infinity` is NaN, and a comparator
  * that returns NaN leaves the order to the engine. That is how a list that looked
  * stable starts shuffling between polls.
  *
  * Names break the tie, so several such runs sit in a fixed, readable order.
+ *
+ * @param {Object} [settings] run -> parsed settings, for the scheduled starts. Absent
+ *   is legal and means every upcoming run sorts on its name — which is what the very
+ *   first paint of a browser that has never seen this repo actually has to work with.
  */
-export function byRecency(index) {
+export function byRecency(index, settings = {}) {
   return (a, b) => {
-    const ka = sortKey(index[a]);
-    const kb = sortKey(index[b]);
+    const ka = sortKey(index[a], settings[a]?.start);
+    const kb = sortKey(index[b], settings[b]?.start);
     return ka === kb ? a.localeCompare(b) : kb - ka;
   };
 }
 
 /** The run to show when the URL doesn't ask for one: whichever moved last. */
-export function defaultRun(index) {
+export function defaultRun(index, settings = {}) {
   const names = Object.keys(index);
   if (!names.length) return null;
 
@@ -227,7 +329,7 @@ export function defaultRun(index) {
   // Sorted rather than reduced, so this and the picker agree by construction about
   // which run is first — and so that a repo of nothing but upcoming races picks the
   // same one every poll instead of whichever the reduce happened to start on.
-  return (pinged.length ? pinged : names).slice().sort(byRecency(index))[0];
+  return (pinged.length ? pinged : names).slice().sort(byRecency(index, settings))[0];
 }
 
 /**

@@ -13,30 +13,35 @@ export function parseTime(name) {
   return Date.parse(name.replace(/\.json$/, '').replace(/_/g, ':'));
 }
 
-// An ISO 8601 timestamp somewhere INSIDE a filename, with `_` standing in for the
-// colons a filename can't hold. Anchored to nothing, because the stamp is a suffix
-// in `UTMB_2026-08-28T09_00_00+02_00.gpx` and could be a prefix in the next thing
-// someone names by hand.
+// An ISO 8601 timestamp, allowing `_` wherever a colon belongs. Anchored to
+// nothing, so it is found wherever in the string it sits.
 const STAMP = /(\d{4}-\d{2}-\d{2})T(\d{2})[_:](\d{2})(?:[_:](\d{2}))?(Z|[+-]\d{2}[_:]?\d{2})?/;
 
 /**
- * A scheduled time embedded in a filename, or null if there isn't one.
+ * A scheduled time written by hand, or null if there isn't one.
  *
- * This is how a course announces when its race starts — the GPX filename, which
- * is the only place to put a fact about a run that no ping can carry, since the
- * whole point is that it is known before any ping exists.
+ * This is how a run announces when its race starts: `start_datetime` in its
+ * `course_settings.json` — the one fact about a run that no ping could ever carry,
+ * because the whole use of it is to be known before any ping exists.
  *
- * Deliberately NOT [`parseTime`](#parseTime), which reads the whole basename and
- * so chokes on a name with anything in front of the timestamp. The contracts
- * differ too: a ping with no parsable time is a broken ping and gets NaN, while a
- * course with no time in its name is the ordinary case and gets null.
+ * The `_`-for-`:` tolerance is why this is not `Date.parse`, and it is not
+ * historical. Filenames in this repo cannot hold a colon, so every timestamp anyone
+ * here has ever typed writes the UTC offset as `+02_00` — and that form, carried
+ * across into a JSON file where it is perfectly legible, is exactly what
+ * `Date.parse` returns NaN on. Both spellings mean the same instant to a reader, so
+ * both mean it here.
+ *
+ * Also deliberately NOT [`parseTime`](#parseTime), which reads the whole basename
+ * and so chokes on anything either side of the timestamp. The contracts differ too:
+ * a ping with no parsable time is a broken ping and gets NaN, while a run that named
+ * no start is the ordinary case and gets null.
  *
  * A date needs a time beside it to count. `2026-08-28` alone would have to be read
  * as midnight in some zone, and a gun time invented out of nothing is worse than
  * no gun time at all. Seconds are optional because nobody writes `:00` for a race
  * that starts on the hour. With no offset the browser's own zone is used, which is
- * what someone typing a local start time meant — and every real filename this repo
- * produces carries one anyway.
+ * what someone typing a local start time meant — though a race is watched from
+ * elsewhere as often as not, so writing the offset is always the better answer.
  *
  * `+0200` with no separator is accepted and normalised rather than handed to
  * `Date.parse` as-is. That form is unambiguous to a reader, but only `±HH:MM` is

@@ -119,7 +119,7 @@ function emptyCache(course, start) {
  * @param {Array}   points  sorted oldest-first, as `buildPoints()` returns them
  * @param {object}  cache   the previous result; pass a stale or empty one freely
  * @param {object}  [opts]
- * @param {number|null} [opts.start] the gun, when the course filename named one.
+ * @param {number|null} [opts.start] the gun, when the run's settings named one.
  *   Pings before it are left off the course entirely — see the loop below.
  * @param {Function} [opts.nearest] injectable, for the tests.
  * @returns {{cache: object, snapped: number}}

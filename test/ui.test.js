@@ -10,7 +10,7 @@ import { buildCourse } from '../src/course.js';
 import { isLive } from '../src/github.js';
 import { buildForecast, predictAt } from '../src/predict.js';
 import { deriveStats } from '../src/stats.js';
-import { clockReading, stillRunning } from '../src/ui.js';
+import { clockReading, courseFigures, stillRunning } from '../src/ui.js';
 
 const MINUTE = 60000;
 const LAT0 = 46.5;
@@ -94,8 +94,8 @@ test('a finish freezes the clock there, even with a ping after it', () => {
 // --- no schedule at all ------------------------------------------------------
 
 test('an unscheduled run still counts from its first ping', () => {
-  // Every run behaved this way before course filenames carried a start, and every
-  // run whose course says nothing still does.
+  // Every run behaved this way before a run could schedule itself, and every run
+  // that says nothing still does.
   assert.deepEqual(read({ points: [ping(10), ping(40)], live: true, now: GUN + 70 * MINUTE }), {
     label: 'Elapsed', value: '1:00:00'
   });
@@ -183,4 +183,41 @@ test('a finish outranks a prediction that has not reached the line', () => {
   assert.equal(stillRunning({
     finish, record: { latest: last }, forecast, now: last + MINUTE
   }), false);
+});
+
+// --- what the course IS -------------------------------------------------------
+//
+// The third pure decision in the panel. Unlike everything else on this page, a
+// STATED figure beats a measured one here — and that inversion is the whole reason
+// this is a function with a test rather than two template holes.
+
+test('the stated figures win over the measured ones', () => {
+  // Elsewhere a measurement beats a claim, because the claim is a guess about what
+  // happened. Here the claim IS the race: an official 165 km is what the entrants
+  // signed up for and what every sign on the course says, whatever a hand-traced
+  // GPX adds up to.
+  const line = courseFigures({ distance: 165, totalAscent: 9900 }, flatCourse());
+
+  assert.equal(line, '165.0 km · 9,900 m climb');
+});
+
+test('the course is the fallback, not the second opinion', () => {
+  // A run whose settings say nothing still gets a line, out of the GPX. 20 km flat.
+  assert.equal(courseFigures({}, flatCourse()), '20.0 km');
+  assert.equal(courseFigures(null, flatCourse()), '20.0 km');
+});
+
+test('either half may come from either source', () => {
+  // A settings file naming only the distance gets its distance and the course's own
+  // climb, which is the honest combination rather than an all-or-nothing swap.
+  assert.equal(courseFigures({ distance: 165 }, flatCourse()), '165.0 km');
+  assert.equal(courseFigures({ totalAscent: 9900 }, flatCourse()), '20.0 km · 9,900 m climb');
+});
+
+test('nothing known is an empty line, which the panel hides', () => {
+  assert.equal(courseFigures({}, null), '');
+  assert.equal(courseFigures(null, null), '');
+  // A course with no climb worth reporting says its distance and stops, rather than
+  // claiming "0 m climb" — which reads as a measurement rather than as an absence.
+  assert.equal(courseFigures({}, flatCourse()).includes('climb'), false);
 });

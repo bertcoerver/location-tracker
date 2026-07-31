@@ -26,10 +26,14 @@
     --course:         #7b6cc4;
     --shadow:         0 1px 2px rgba(11,11,11,.08), 0 8px 24px rgba(11,11,11,.10);
 
-    /* How much of the bottom of the window the profile strip is covering. Both
-       are set by profile.js from config.js; everything anchored to the bottom
-       of the window reads --profile-h so nothing can disagree about it. */
+    /* How much of the bottom of the window each of the two bottom overlays is
+       covering: the height strip, set by profile.js, and the news bar above it,
+       set by news.js — both from config.js. Everything anchored to the bottom of
+       the window adds BOTH so nothing can disagree about where the bottom is.
+       Either may be 0px, and both are always set rather than removed: a missing
+       custom property makes a calc() invalid rather than making it zero. */
     --profile-h: 0px;
+    --news-h: 0px;
     --profile-min-w: 640px;
 
     /* Every ping is `--accent`. There used to be a `--point` blue for the older
@@ -237,6 +241,17 @@
     margin-top: 1px;
     color: var(--text-primary);
   }
+  /* What the course IS, under what it is called: "165 km · 9,900 m". Typeset like
+     the finish's range — small, quiet, tabular — because it is the same kind of
+     line: a qualifier under a headline rather than a reading of its own. */
+  #course-figures {
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    line-height: 1.4;
+    margin-top: 1px;
+    color: var(--text-muted);
+  }
+  #course-figures[hidden] { display: none; }
   /* The one thing under a value that isn't one: the finish's range, which is what
      stops the number above it being read as a promise. */
   #finish-range {
@@ -388,6 +403,81 @@
      it work on a phone: without it the strip's own horizontal scroll claims the
      gesture and the marker never moves. */
   #profile[data-dragging="true"] #profile-canvas { touch-action: none; cursor: grabbing; }
+
+  /* --- the news bar ------------------------------------------------------- */
+  /* Directly on top of the height strip, and an overlay like it, so a run with
+     nothing to say looks exactly as it did before this existed.
+
+     One `bottom` expression covers both cases, which is why the safe-area term is
+     here as well as inside #profile's height. With the strip up, #profile has
+     already absorbed the inset and --profile-h alone stacks this on it; with the
+     strip hidden (display:none, above) nothing is consuming the inset and the
+     env() is what keeps the bar off the home indicator. */
+  #news {
+    left: 0; right: 0;
+    bottom: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px));
+    height: var(--news-h);
+    padding: 0 14px;
+    border-radius: 0;
+    border-left: 0; border-right: 0; border-bottom: 0;
+    display: flex;
+    align-items: center;
+    /* One line, always — see news.js. */
+    overflow: hidden;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--text-secondary);
+  }
+  #news[hidden] { display: none; }
+  #news a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  #news code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+  #news strong { font-weight: 600; color: var(--text-primary); }
+
+  #news-track { display: flex; white-space: nowrap; }
+  /* Two copies, and the gap carried INSIDE each one as its own margin. That is
+     what lets the animation be a bare -50%: half of a two-copy track is exactly
+     one copy, so the restart lands copy 1 where copy 2 was and the join is
+     invisible — with no measured pixel anywhere in it. Only the DURATION comes
+     from JS, so the text crosses at one speed whatever it says. */
+  .news-copy { margin-right: var(--news-gap, 96px); }
+  #news[data-marquee="true"] #news-track {
+    animation: news-scroll var(--news-dur, 20s) linear infinite;
+    /* The blur lives on #news (via .panel) and the transform on the track inside
+       it, deliberately. Animating a transform on the backdrop-filtered element
+       itself recomputes a 20px blur over a live deck.gl canvas every frame, which
+       is a phone-killer and flickers on WebKit. Promoting the track keeps the
+       blurred region still and composites only the text. */
+    will-change: transform;
+    transform: translateZ(0);
+  }
+  @keyframes news-scroll { to { transform: translateX(-50%); } }
+  /* Short enough to fit: centred, and the second copy has nothing to do. */
+  #news[data-marquee="false"] #news-track { width: 100%; justify-content: center; }
+  #news[data-marquee="false"] .news-copy { margin-right: 0; }
+  #news[data-marquee="false"] .news-copy + .news-copy { display: none; }
+  /* `prefers-reduced-motion` arrives here as data-marquee="false" on a message too
+     long to fit — see `marqueeState`. Killing the animation alone would truncate it
+     with no way to reach the rest, so the bar becomes scrollable by hand instead,
+     with the same fades the height strip uses to say there is more. */
+  @media (prefers-reduced-motion: reduce) {
+    #news { overflow-x: auto; scrollbar-width: none; justify-content: flex-start; }
+    #news::-webkit-scrollbar { display: none; }
+    #news[data-marquee="false"] #news-track { width: auto; }
+  }
+  #news::before, #news::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 28px;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .18s;
+  }
+  #news::before { left: 0;  background: linear-gradient(to right, var(--surface-2), transparent); }
+  #news::after  { right: 0; background: linear-gradient(to left,  var(--surface-2), transparent); }
+  #news[data-more-left="true"]::before,
+  #news[data-more-right="true"]::after { opacity: 1; }
 
   .tip {
     font: inherit;
@@ -621,7 +711,7 @@
   #profile-tip {
     position: fixed;
     z-index: 2;
-    bottom: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px) + 8px);
+    bottom: calc(var(--profile-h) + var(--news-h) + env(safe-area-inset-bottom, 0px) + 8px);
     /* Deliberately NOT `none`: the Google Maps link inside has to be clickable,
        and reaching it means moving the cursor off the canvas and into here.
        profile.js allows exactly that move and dismisses on any other. */
@@ -657,6 +747,11 @@
         <span id="title-text" aria-hidden="true"></span>
         <select id="run" aria-label="Course"></select>
       </h1>
+      <!-- How far and how much climbing, under the name rather than beside it:
+           it is the same fact as the name — what this course IS — and a second
+           captioned block would have put it among the readings, which are all
+           about what is happening right now. -->
+      <div id="course-figures" hidden></div>
     </div>
   </div>
   <!-- Then the same shape twice more: a caption and a value. The clock counts
@@ -679,6 +774,16 @@
   </div>
   <div id="viewer-note"></div>
   <div id="error"></div>
+</div>
+
+<!-- Between the height strip and the map, and an overlay on both. Two copies of
+     the message, because that is what makes a scrolling one loop seamlessly —
+     see news.js. The second is aria-hidden so it isn't read twice. -->
+<div id="news" class="panel" role="region" aria-label="Course news" hidden>
+  <div id="news-track">
+    <span class="news-copy"></span>
+    <span class="news-copy" aria-hidden="true"></span>
+  </div>
 </div>
 
 <div id="profile" class="panel" hidden>

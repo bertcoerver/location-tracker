@@ -577,10 +577,21 @@ export function createMap(container, {
     onFollowChange(on);
   }
 
-  /** How much of the bottom of the window the profile strip is covering, if any. */
+  /**
+   * How much of the bottom of the window the overlays are covering, if any: the
+   * height strip, plus the news bar stacked on top of it.
+   *
+   * Summed HERE rather than read from one combined custom property, and that is a
+   * platform constraint rather than a preference. An unregistered custom property
+   * holding a `calc()` comes back from `getComputedStyle` as the unresolved token
+   * string "calc(112px + 30px)", which `parseFloat` reads as NaN — the substitution
+   * only happens where the value is actually used in a declaration. Two reads and an
+   * addition is the version that works.
+   */
   function bottomInset() {
-    const value = getComputedStyle(document.documentElement).getPropertyValue('--profile-h');
-    return parseFloat(value) || 0;
+    const style = getComputedStyle(document.documentElement);
+    const px = name => parseFloat(style.getPropertyValue(name)) || 0;
+    return px('--profile-h') + px('--news-h');
   }
 
   return {

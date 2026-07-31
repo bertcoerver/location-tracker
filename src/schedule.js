@@ -20,17 +20,22 @@ import { CONFIG } from './config.js';
  *
  *   interval = min + (max - min) / (1 + e^(k * (battery - mid)))
  *
- * The constants live in [config.js](./config.js) and mirror the phone's script.
- * Note the shape: it is FLAT for most of a battery's life and does nearly all
- * its moving between 15% and 35%, which is exactly why the interval can't be
+ * The constants default to [config.js](./config.js), which mirrors the phone's
+ * script. Note the shape: it is FLAT for most of a battery's life and does nearly
+ * all its moving between 15% and 35%, which is exactly why the interval can't be
  * inferred from the gaps between recent pings — through that band each gap is
  * several minutes longer than the one before it, so inference is not merely
  * noisy but biased short, and would poll early and collect 304s.
  *
  * @param {number} btry battery percentage, as the phone reported it.
+ * @param {object} [tuning] this run's own four constants, from its
+ *   `course_settings.json`. Passed in rather than looked up, so this file stays
+ *   pure and stays testable — and so a run tracked by a differently-configured
+ *   phone can be scheduled correctly alongside one that isn't. Defaulting to
+ *   CONFIG is what makes every caller that has no per-run curve unchanged.
  */
-export function pingIntervalMs(btry) {
-  const { minPingMs, maxPingMs, batteryK, batteryMid } = CONFIG;
+export function pingIntervalMs(btry, tuning = CONFIG) {
+  const { minPingMs, maxPingMs, batteryK, batteryMid } = tuning;
   const ms = minPingMs + (maxPingMs - minPingMs) / (1 + Math.exp(batteryK * (btry - batteryMid)));
   // FLOORED to the whole minute, because that is what the phone's scheduler
   // does — not rounded, which would put the prediction up to half a minute
@@ -75,11 +80,18 @@ export function pingIntervalMs(btry) {
  * starting while you're watching an old one. The floor stops us scheduling a
  * wake-up that `minRefreshMs` would only throw away.
  *
+ * Only the four logistic constants are per-run. Everything else here — the fallback
+ * rate, the floor, the cap, the guard, the jitter window — is a property of THIS
+ * PAGE's relationship with the GitHub API rather than of any phone, and belongs to
+ * the browser doing the asking. A settings file gets to say how often its phone
+ * pings; it does not get to say how often the map polls.
+ *
  * @param {{t: number, btry?: number}|null} latest the newest point on screen.
  * @param {number} [now] injectable clock.
+ * @param {object} [tuning] this run's ping curve — see `pingIntervalMs`.
  * @returns {number} milliseconds to wait.
  */
-export function nextPollMs(latest, now = Date.now()) {
+export function nextPollMs(latest, now = Date.now(), tuning = CONFIG) {
   // The run has declared itself over, so nothing more is coming and the whole
   // ladder below is beside the point. Straight to the cap — which is still a
   // poll, because a NEW run starting is the one thing left worth noticing.
@@ -89,7 +101,7 @@ export function nextPollMs(latest, now = Date.now()) {
   // Fall back to the fixed rate, which is what the whole page used to do.
   if (!latest || !Number.isFinite(latest.btry)) return CONFIG.pollMs;
 
-  const interval = pingIntervalMs(latest.btry);
+  const interval = pingIntervalMs(latest.btry, tuning);
   const expected = latest.t + interval + CONFIG.pollGuardMs;
   const overdue = now - expected;
 
@@ -115,10 +127,11 @@ export function nextPollMs(latest, now = Date.now()) {
  * doesn't ask too early, and it has no business being in a number shown to a
  * reader as the phone's own schedule.
  *
+ * @param {object} [tuning] this run's ping curve — see `pingIntervalMs`.
  * @returns {number|null} milliseconds until the next ping, or null.
  */
-export function dueInMs(latest, now = Date.now()) {
+export function dueInMs(latest, now = Date.now(), tuning = CONFIG) {
   // A finished run has no next ping to predict, whatever its battery said.
   if (!latest || latest.is_finish || !Number.isFinite(latest.btry)) return null;
-  return latest.t + pingIntervalMs(latest.btry) - now;
+  return latest.t + pingIntervalMs(latest.btry, tuning) - now;
 }

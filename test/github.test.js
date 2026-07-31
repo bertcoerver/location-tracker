@@ -5,10 +5,10 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONFIG, LS_BEACONS, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
+import { CONFIG, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
 import {
-  buildIndex, byRecency, cachedBeacons, defaultRun, fetchCourse, hydrate, isLive, newestFile,
-  RateLimitError, refreshBeacons, refreshIndex
+  buildIndex, byRecency, cachedBeacons, cachedSettings, defaultRun, fetchCourse, hydrate, isLive,
+  newestFile, RateLimitError, refreshBeacons, refreshIndex, refreshSettings
 } from '../src/github.js';
 
 // --- fakes -------------------------------------------------------------------
@@ -296,12 +296,17 @@ test('a run is live only if it pinged within the hour', () => {
 // ping — so a race three weeks out would pulse as live, top the picker, and take
 // the landing view. These are the tests that go red if it ever leaks.
 
-/** `TREE` plus a race a month out, with a stamped course and no pings. */
+/** `TREE` plus a race a month out: a course, a settings file, and no pings. */
 const UPCOMING = [
   ...TREE,
-  { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' }
+  { path: 'utmb/course.gpx', type: 'blob', sha: 'g' },
+  { path: 'utmb/course_settings.json', type: 'blob', sha: 's' }
 ];
 const GUN = Date.parse('2026-08-28T09:00:00+02:00');
+// The gun no longer travels with the index — it comes out of the run's settings
+// file, which is fetched separately and cached separately. Everything that sorts or
+// defaults now takes both, so the fixtures do too.
+const SCHEDULE = { utmb: { sha: 's', start: GUN } };
 
 test('an upcoming run is never live, however close its gun is', () => {
   const index = buildIndex(UPCOMING);
@@ -316,11 +321,23 @@ test('an upcoming run is never live, however close its gun is', () => {
 
 test('an upcoming run sorts by its gun, so it is findable in the picker', () => {
   const index = buildIndex(UPCOMING);
-  const order = Object.keys(index).sort(byRecency(index));
+  const order = Object.keys(index).sort(byRecency(index, SCHEDULE));
 
   // Top of the list: it is the next thing that will happen. Being top of the picker
   // is not being the default view — see the test below.
   assert.deepEqual(order, ['utmb', 'new-race', 'old-race']);
+});
+
+test('without its settings an upcoming run sorts on its name, not on nothing', () => {
+  // The very first paint of a browser that has never seen this repo has an index and
+  // no settings at all. That must be an ORDER — bottom of the list, by name, among
+  // the other things nothing is known about — rather than a comparator returning NaN
+  // and handing the list to the engine.
+  const index = buildIndex(UPCOMING);
+
+  const once = Object.keys(index).sort(byRecency(index));
+  assert.deepEqual(once, ['new-race', 'old-race', 'utmb']);
+  assert.deepEqual(once.slice().sort(byRecency(index)), once, 'and sorting again agrees');
 });
 
 test('byRecency is stable when nothing can be compared', () => {
@@ -342,17 +359,22 @@ test('defaultRun will not open on a race that has not started', () => {
   // The plain link still follows whichever run PINGED last. Opening on an upcoming
   // race means opening on an empty map, possibly while a real one is underway two
   // options down the picker.
-  assert.equal(defaultRun(buildIndex(UPCOMING)), 'new-race');
+  assert.equal(defaultRun(buildIndex(UPCOMING), SCHEDULE), 'new-race');
 });
 
 test('defaultRun falls back to an upcoming run when nothing has ever pinged', () => {
   // Then the empty map is the honest answer, and a countdown is better than nothing.
   const index = buildIndex([
-    { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' },
-    { path: 'later/X_2026-09-30T06_00_00+02_00.gpx', type: 'blob', sha: 'h' }
+    { path: 'utmb/course.gpx', type: 'blob', sha: 'g' },
+    { path: 'later/course.gpx', type: 'blob', sha: 'h' }
   ]);
+  const settings = {
+    utmb: { start: GUN },
+    later: { start: Date.parse('2026-09-30T06:00:00+02:00') }
+  };
 
-  assert.equal(defaultRun(index), 'later', 'the furthest-out gun is still the newest key');
+  assert.equal(defaultRun(index, settings), 'later',
+    'the furthest-out gun is still the newest key');
   assert.equal(defaultRun({}), null, 'and an empty index is still nothing at all');
 });
 
@@ -576,34 +598,58 @@ test('a folder holding only a course is a run — an upcoming one', () => {
   assert.equal(index['future-race'].latest, null);
   assert.deepEqual(index['future-race'].files, {});
   assert.deepEqual(index['future-race'].course, { name: 'course.gpx', sha: 'g' });
-  // No stamp in the filename, so no gun — which is the case that has to keep
-  // behaving exactly as an unscheduled run always did.
-  assert.equal(index['future-race'].start, null);
+  // And no settings file, so nothing anywhere says when it starts — the case that
+  // has to keep behaving exactly as an unscheduled run always did.
+  assert.equal(index['future-race'].settings, null);
 });
 
-test('a stamped course filename is the run\'s scheduled start', () => {
+test('a course filename says nothing but which file the course is', () => {
+  // It used to carry the gun time, and a stamped name still turns up in real repos.
+  // Nothing may read it: the start comes from the settings file now, and a filename
+  // quietly winning over what that file says is the one way to get a map drawing one
+  // route and counting down to another.
   const index = buildIndex([
     { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' }
   ]);
 
-  assert.equal(index.utmb.start, Date.parse('2026-08-28T09:00:00+02:00'));
+  assert.deepEqual(index.utmb.course, { name: 'UTMB_2026-08-28T09_00_00+02_00.gpx', sha: 'g' });
+  assert.equal(index.utmb.settings, null, 'no settings file, so nothing schedules it');
   // Still not a ping: a course must never make a run look like it has moved.
   assert.equal(index.utmb.latest, null);
   assert.deepEqual(index.utmb.files, {});
 });
 
-test('the start comes from the same course that won the tie-break', () => {
-  // Two courses, two stamps. Whichever file wins `course` must be the one `start`
-  // was read from, or the map draws one route and counts down to another.
+test('a settings file is neither a ping nor a course', () => {
+  const index = buildIndex([
+    { path: 'utmb/course.gpx', type: 'blob', sha: 'g' },
+    { path: 'utmb/course_settings.json', type: 'blob', sha: 's' },
+    { path: 'utmb/2026-08-28T09_05_00+02_00.json', type: 'blob', sha: 'p' }
+  ]);
+
+  assert.deepEqual(index.utmb.settings, { sha: 's' });
+  // Out of `files`, so it is never fetched as a ping and never diffed as one.
+  assert.deepEqual(Object.keys(index.utmb.files), ['2026-08-28T09_05_00+02_00.json']);
+  // And out of `latest`, so editing it mid-race cannot make a finished run look live.
+  assert.equal(index.utmb.latest, Date.parse('2026-08-28T09:05:00+02:00'));
+});
+
+test('a folder holding only a settings file is still a run', () => {
+  // A race entered but not yet mapped: a name and a gun time, no route, no pings.
+  const index = buildIndex([{ path: 'utmb/course_settings.json', type: 'blob', sha: 's' }]);
+
+  assert.deepEqual(Object.keys(index), ['utmb']);
+  assert.equal(index.utmb.course, null);
+  assert.deepEqual(index.utmb.settings, { sha: 's' });
+});
+
+test('the alphabetically first course still wins the tie-break', () => {
   const entries = [
-    { path: 'twice/b_2026-09-09T09_00_00Z.gpx', type: 'blob', sha: 'b' },
-    { path: 'twice/a_2026-08-28T07_00_00Z.gpx', type: 'blob', sha: 'a' }
+    { path: 'twice/b.gpx', type: 'blob', sha: 'b' },
+    { path: 'twice/a.gpx', type: 'blob', sha: 'a' }
   ];
 
   for (const order of [entries, [...entries].reverse()]) {
-    const found = buildIndex(order).twice;
-    assert.equal(found.course.name, 'a_2026-08-28T07_00_00Z.gpx');
-    assert.equal(found.start, Date.parse('2026-08-28T07:00:00Z'));
+    assert.deepEqual(buildIndex(order).twice.course, { name: 'a.gpx', sha: 'a' });
   }
 });
 
@@ -611,9 +657,7 @@ test('an upcoming run survives the round trip through JSON', () => {
   // This is the exact trip that made the old code drop these runs: `latest` was
   // -Infinity, which comes back out of JSON as null, so every comparison against it
   // went quietly wrong. It is null on the way in now, so there is nothing to lose.
-  const index = buildIndex([
-    { path: 'utmb/UTMB_2026-08-28T09_00_00+02_00.gpx', type: 'blob', sha: 'g' }
-  ]);
+  const index = buildIndex(UPCOMING);
 
   assert.deepEqual(JSON.parse(JSON.stringify(index)), index);
 });
@@ -855,4 +899,117 @@ test('a ping with no heart rate at all is untouched by it', async () => {
   const { cache } = await poll('vendee-10k');
 
   for (const point of Object.values(cache)) assert.equal('bpm' in point, false);
+});
+
+// --- what a run says about itself --------------------------------------------
+//
+// Settings are a second cache with a second invalidation key: the tree ETag says
+// when the LISTING changed, a blob sha says when THIS FILE did. Merging them into
+// the index would put one value under two keys with only one ever checked — and
+// since a 304 hands back the cached index untouched, the merged half would be
+// permanently one poll stale. These tests are what keeps the two apart.
+
+const SETTINGS_PATH = `${RUN}/course_settings.json`;
+const BODY = { id: 'vendee-10k', label: 'Vendée 10K', start_datetime: '2026-07-28T10:00:00+02:00' };
+
+test('settings cost no API request, and are fetched once per edit', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  const { index } = await refreshIndex();
+  gh.reset();
+
+  const settings = await refreshSettings(index);
+
+  assert.equal(settings['vendee-10k'].label, 'Vendée 10K');
+  assert.equal(settings['vendee-10k'].start, Date.parse('2026-07-28T10:00:00+02:00'));
+  // The tree already named the file and carried its sha, so the body comes off the
+  // CDN. Nothing here touches the hourly budget.
+  assert.deepEqual(gh.counts(), { api: 0, raw: 1 });
+
+  gh.reset();
+  await refreshSettings((await refreshIndex()).index);
+  assert.equal(gh.counts().raw, 0, 'an unchanged sha is not refetched');
+});
+
+test('an edited settings file is picked up, because its sha moved', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  await refreshSettings((await refreshIndex()).index);
+
+  gh.files.set(SETTINGS_PATH, { ...BODY, label: 'Vendée 10K — sold out' });
+  const settings = await refreshSettings((await refreshIndex()).index);
+
+  assert.equal(settings['vendee-10k'].label, 'Vendée 10K — sold out');
+});
+
+test('a failed fetch keeps the last known settings rather than dropping them', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  await refreshSettings((await refreshIndex()).index);
+
+  // The file changes — so the sha changes and it will be refetched — and the fetch
+  // fails. Degrading to an empty record here is not a cosmetic loss: the run's gun
+  // time would vanish, every warm-up ping would snap onto the course, and the
+  // distance, climb, pace and forecast built on them would all be quietly wrong.
+  gh.files.set(SETTINGS_PATH, { ...BODY, label: 'never served' });
+  const { index } = await refreshIndex();
+  gh.files.delete(SETTINGS_PATH);
+
+  const settings = await refreshSettings(index);
+
+  assert.equal(settings['vendee-10k'].label, 'Vendée 10K');
+  assert.equal(settings['vendee-10k'].start, Date.parse('2026-07-28T10:00:00+02:00'));
+});
+
+test('a settings file that will not parse costs that run nothing it had', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  await refreshSettings((await refreshIndex()).index);
+
+  gh.files.set(SETTINGS_PATH, 'this is not json at all');
+  const settings = await refreshSettings((await refreshIndex()).index);
+
+  assert.equal(settings['vendee-10k'].label, 'Vendée 10K');
+});
+
+test('a deleted settings file takes its run\'s settings with it', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  await refreshSettings((await refreshIndex()).index);
+
+  gh.files.delete(SETTINGS_PATH);
+  const settings = await refreshSettings((await refreshIndex()).index);
+
+  assert.equal('vendee-10k' in settings, false);
+  assert.deepEqual(cachedSettings(), {}, 'and it is gone from disk too');
+});
+
+test('a truncated listing is not a deletion', async () => {
+  // A tree that hit GitHub's 100k-entry cap and dropped entries looks exactly like a
+  // repo where those files were deleted. Acting on it would strip the gun times off
+  // runs whose settings are sitting right there in the folder.
+  gh.files.set(SETTINGS_PATH, BODY);
+  await refreshSettings((await refreshIndex()).index);
+
+  const settings = await refreshSettings(buildIndex([]), { prune: false });
+
+  assert.equal(settings['vendee-10k'].label, 'Vendée 10K');
+});
+
+test('settings survive a reload without any network at all', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  await refreshSettings((await refreshIndex()).index);
+
+  // What `main.js` reads synchronously at module load, before the first poll — which
+  // is what lets the first paint use the right gun time and the right name.
+  assert.equal(cachedSettings()['vendee-10k'].label, 'Vendée 10K');
+  assert.ok(localStorage.getItem(LS_SETTINGS), 'persisted under its own key');
+});
+
+test('one unreadable file does not cost every other run its settings', async () => {
+  gh.files.set(SETTINGS_PATH, BODY);
+  gh.files.set('locations/other/2026-07-28T09_00_00+02_00.json', { lat: 1, lon: 2 });
+  gh.files.set('locations/other/course_settings.json', { label: 'Other' });
+  const { index } = await refreshIndex();
+  gh.files.delete(SETTINGS_PATH);
+
+  const settings = await refreshSettings(index);
+
+  assert.equal(settings.other.label, 'Other');
+  assert.equal('vendee-10k' in settings, false, 'and the broken one simply is not there');
 });

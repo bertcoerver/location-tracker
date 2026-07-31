@@ -4,11 +4,12 @@
 import { CONFIG, keysFor, LS_REFRESH } from './config.js';
 import { buildCourse } from './course.js';
 import {
-  cachedBeacons, cachedIndex, defaultRun, fetchCourse, hydrate, loadCache, RateLimitError,
-  refreshBeacons, refreshIndex
+  cachedBeacons, cachedIndex, cachedSettings, defaultRun, fetchCourse, hydrate, loadCache,
+  RateLimitError, refreshBeacons, refreshIndex, refreshSettings
 } from './github.js';
 import { createGeo, geoMessage, isDenied, viewerFrom } from './geo.js';
 import { parseGpx } from './gpx.js';
+import { createNews } from './news.js';
 import { buildPoints, latestOf } from './points.js';
 import { buildForecast } from './predict.js';
 import { nextPollMs } from './schedule.js';
@@ -31,6 +32,11 @@ import { fmtClock, persistedAt, storage, throttle } from './util.js';
 let pinned = pinnedRun();
 
 let index = cachedIndex();
+// What every run says about itself. Read off disk here, synchronously, for the same
+// reason the index is: the first paint happens before any network call, and it has to
+// paint against the right gun time, the right name and the right ping curve. A run's
+// settings are a few hundred bytes, so holding all of them costs nothing.
+let settings = cachedSettings();
 let run = null;
 let backoffUntil = 0;
 
@@ -108,6 +114,10 @@ addEventListener('keydown', event => {
   if (event.key === 'Escape' && selection) select(null);
 });
 
+// The one thing on screen that a person wrote. It owns its own height, which
+// everything anchored to the bottom of the window adds in — see `bottomInset`.
+const news = createNews(document.getElementById('news'));
+
 const ui = createUi({
   // The ticker is the Follow button now. Clicking it always means "take me to
   // the runner" — following is switched OFF by panning the map, which is the
@@ -169,12 +179,11 @@ if (geo.supported()) {
 function show(cache) {
   const points = buildPoints(cache);
 
-  // The gun, when the course filename declared one. Read off the INDEX rather than
-  // off the parsed course, because the index is what arrives first and what
-  // survives in localStorage: the cached points paint before the GPX has even been
-  // asked for, and they have to paint against the right start. A renamed GPX also
-  // keeps its blob sha, so `course` could never notice a moved gun anyway.
-  const start = index[run]?.start ?? null;
+  // The gun, when this run's settings declared one. Read off the SETTINGS cache
+  // rather than off the parsed course, because that cache is what arrives first and
+  // what survives in localStorage: the cached points paint before the GPX has even
+  // been asked for, and they have to paint against the right start.
+  const start = settings[run]?.start ?? null;
 
   if (course) {
     const key = keysFor(run).snap;
@@ -241,6 +250,10 @@ async function loadCourse() {
 
   map.setCourse(course);
   profile.setCourse(course);
+  // The panel too, now that it has a figures line to draw — and it is the one view
+  // that can show something useful without a course at all, when the settings state
+  // the distance themselves. See `courseFigures`.
+  ui.setCourse(course);
   return true;
 }
 
@@ -251,7 +264,7 @@ async function loadCourse() {
  */
 function resolve() {
   if (pinned && index[pinned]) return pinned;
-  return defaultRun(index) ?? pinned;
+  return defaultRun(index, settings) ?? pinned;
 }
 
 // Whether the run change now being reconciled was ASKED for, and so should be
@@ -285,6 +298,7 @@ async function reconcile() {
     courseSha = null;
     map.setCourse(null);
     profile.setCourse(null);
+    ui.setCourse(null);
     ui.setRun(run);
     // Before painting, because painting an empty cache is what makes the panel
     // speak. "No locations yet" is a claim about the RUN; with nothing fetched
@@ -293,7 +307,12 @@ async function reconcile() {
     ui.setState('loading');
     show(loadCache(run));     // paint that run's cache before the CDN answers
   }
-  ui.setRuns(index, run);
+  ui.setRuns(index, settings, run);
+  // Whatever this run has to say, if anything. Outside the `switching` branch, so
+  // editing a banner mid-race reaches the screen on the next poll rather than only
+  // when somebody changes run; `setBanner` is idempotent, so the repeat costs
+  // nothing and — crucially — does not restart a scrolling message.
+  news.setBanner(settings[run]?.banner);
   if (!run) return;
 
   // Points first: they're the live data, and they're already half in hand. The
@@ -368,6 +387,22 @@ async function poll() {
   try {
     const { index: next, truncated } = await refreshIndex();
     index = next;
+
+    // Immediately after the listing, and deliberately NOT inside `reconcile`. That
+    // function runs on every run switch and every press of the back button, and
+    // settings are not a per-navigation fact — they change once or twice in a run's
+    // life. `refreshIndex` is also what produced the shas this diffs against, so
+    // pairing them is what lets `apply()` see one consistent (index, settings) pair
+    // rather than a pair that shifts under it mid-pass.
+    //
+    // In the steady state every sha matches what is already stored, so this makes no
+    // requests at all and adds nothing to the time before the map is repainted.
+    //
+    // `prune` off on a truncated listing: a tree that hit GitHub's cap and dropped
+    // entries is indistinguishable from a repo where those files were deleted, and
+    // acting on it would strip the gun times off runs whose settings are right there.
+    settings = await refreshSettings(index, { prune: !truncated });
+
     await apply();
 
     ui.setError(truncated
@@ -414,7 +449,10 @@ const refresh = throttle(poll, CONFIG.minRefreshMs, { store: persistedAt(LS_REFR
 let timer = 0;
 function schedule() {
   clearTimeout(timer);
-  timer = setTimeout(tick, nextPollMs(latest));
+  // Against THIS run's ping curve when its settings named one, so a race tracked by a
+  // phone on a different schedule is polled on that schedule rather than on the one
+  // in config.js. Undefined falls back there, which is every run that says nothing.
+  timer = setTimeout(tick, nextPollMs(latest, Date.now(), settings[run]?.ping));
 }
 
 async function tick() {
