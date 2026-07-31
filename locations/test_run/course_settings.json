@@ -1,0 +1,12 @@
+{
+    "id": "test_run",
+    "label": "Running Fôret Vouvant",
+    "ping_frequency": {
+        "min_interval": 10,
+        "max_interval": 30,
+        "k": 0.3,
+        "midpoint": 25
+    },
+    "distance": 28,
+    "total_ascent": 750
+}
