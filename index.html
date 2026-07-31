@@ -15,7 +15,14 @@
      the inset handling the page already does. -->
 <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<!-- Deliberately NOT `apple-mobile-web-app-capable`. It still works, but it opts
+     into the OLD standalone mode, and that one insets the web view above the home
+     indicator while STILL reporting a non-zero `safe-area-inset-bottom` — so the
+     strip below the height profile gets counted twice: once as dead space iOS
+     paints in the document's background colour, once as our own `env()` padding.
+     The manifest's `display: standalone` drives standalone on its own since iOS
+     15.4, and that path honours `viewport-fit=cover`, so the view actually
+     reaches the bottom of the screen and one inset is one inset. -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 

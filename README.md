@@ -1847,6 +1847,17 @@ worth more here than it sounds — the height strip and the news bar anchor to t
 bottom of the window, and Safari's URL bar spends its life moving around down
 there.
 
+**Do not add `apple-mobile-web-app-capable`.** It is the obvious-looking meta tag
+and it is a trap. It opts into iOS's *old* standalone mode, which insets the web
+view above the home indicator and then still reports a non-zero
+`safe-area-inset-bottom` — so the clearance below the height strip is counted
+twice, once as dead space iOS fills with the document's background colour (a bare
+white band under the chart) and once as our own `env()` padding. The manifest's
+`display: standalone` has driven standalone since iOS 15.4 and that path honours
+`viewport-fit=cover`, so the view reaches the bottom of the screen and one inset
+is one inset. `apple-mobile-web-app-status-bar-style` is still wanted, and is what
+lets the map run up under the clock.
+
 **Offline.** `sw.js` holds the whole rule set, and it is one rule applied four
 times: cache what cannot change, and never cache what must be fresh.
 
