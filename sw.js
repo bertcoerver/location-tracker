@@ -1,0 +1,200 @@
+// The service worker: what makes the page survive a bad connection, which on the
+// races this thing is pointed at is most of them.
+//
+// The whole design is one rule applied four times — cache what cannot change, and
+// never cache what must be fresh:
+//
+//   api.github.com          network only. This is the listing, fetched with an
+//                           ETag and `cache: 'no-store'`, and it is the ONLY
+//                           thing that says a new ping exists. A stale one here
+//                           is a runner who has stopped moving.
+//   raw.githubusercontent   cache-first WHEN the URL carries a sha, forever.
+//                           `rawUrl` in github.js appends the blob sha as the
+//                           query string, so such a URL is content-addressed and
+//                           its body can never change. Without one it is a plain
+//                           branch path, which can — so that goes to the network.
+//   basemaps.cartocdn.com   cache-first, capped. The tiles you have looked at are
+//                           the tiles you are standing on.
+//   same origin             cache-first off the precache. The app shell.
+//
+// Updating: this worker never calls skipWaiting on its own. The page spots the
+// waiting worker and offers a reload, because a tracker that reloads itself out
+// from under someone reading it is worse than one that is a version behind. See
+// src/sw-register.js.
+
+// Bump on every deploy that changes a shell file. It is what evicts the old
+// precache — the caches below are keyed by it, and `activate` deletes every cache
+// whose name is not on the current list.
+const VERSION = '1';
+
+const SHELL = `shell-v${VERSION}`;
+// Neither of these carries the version, and that is the point: they hold bytes
+// that a deploy cannot invalidate — sha-addressed blobs and map tiles. Keying them
+// to VERSION would throw away every ping and every tile of a race already being
+// watched because a stylesheet changed, which is the opposite of what this is for.
+const DATA = 'data-v1';
+const TILES = 'tiles-v1';
+const KEEP = [SHELL, DATA, TILES];
+
+// ~40 KB per @2x tile, so this is a soft ceiling around 50 MB. Tiles are the only
+// thing here that grows without bound; everything else is a fixed shell.
+const TILE_LIMIT = 1200;
+// Trimming walks every key, so it is far too expensive to do on each miss.
+const TRIM_EVERY = 50;
+let sinceTrim = 0;
+
+// Everything the app needs to paint with no network at all. `test/sw.test.js`
+// checks this against the actual contents of src/, so adding a module without
+// adding it here fails the suite rather than quietly shipping a worker that
+// misses it.
+const SHELL_URLS = [
+  './',
+  './manifest.webmanifest',
+  './vendor/deck.gl-9.3.7.min.js',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-512-maskable.png',
+  './icons/apple-touch-icon.png',
+  './src/colors.js',
+  './src/config.js',
+  './src/course.js',
+  './src/geo.js',
+  './src/github.js',
+  './src/gpx.js',
+  './src/layers.js',
+  './src/main.js',
+  './src/map.js',
+  './src/news.js',
+  './src/pin.js',
+  './src/points.js',
+  './src/predict.js',
+  './src/profile.js',
+  './src/route.js',
+  './src/schedule.js',
+  './src/settings.js',
+  './src/snap.js',
+  './src/stats.js',
+  './src/sun.js',
+  './src/sw-register.js',
+  './src/ui.js',
+  './src/util.js',
+];
+
+self.addEventListener('install', event => {
+  // `addAll` is atomic: one 404 and the whole install fails, leaving the previous
+  // worker in charge. That is the right failure — a half-populated precache would
+  // serve an app shell with a hole in it.
+  event.waitUntil(caches.open(SHELL).then(cache => cache.addAll(SHELL_URLS)));
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names.map(n => (KEEP.includes(n) ? null : caches.delete(n))));
+    // Take over the pages that are already open. Safe here in a way it would not
+    // be mid-session: nothing activates until the page has asked it to.
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('message', event => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+});
+
+self.addEventListener('fetch', event => {
+  const req = event.request;
+
+  // Not returning a response at all is the cleanest "network only": the browser
+  // does exactly what it would have done with no worker installed, including
+  // honouring the `no-store` and `If-None-Match` that github.js sets by hand.
+  if (req.method !== 'GET') return;
+
+  const url = new URL(req.url);
+
+  if (req.mode === 'navigate') {
+    event.respondWith(shell());
+    return;
+  }
+
+  if (url.hostname === 'api.github.com') return;
+
+  if (url.hostname === 'raw.githubusercontent.com') {
+    // `?<sha>` means content-addressed. See `rawUrl`.
+    if (url.search) event.respondWith(immutable(req));
+    return;
+  }
+
+  if (url.hostname.endsWith('basemaps.cartocdn.com')) {
+    event.respondWith(tile(req));
+    return;
+  }
+
+  if (url.origin === self.location.origin) event.respondWith(asset(req));
+});
+
+/**
+ * The app shell for any navigation. `ignoreSearch` because every deep link into
+ * this app is the same document with a different `?run=` on it.
+ */
+async function shell() {
+  const cached = await caches.match('./', { cacheName: SHELL, ignoreSearch: true });
+  if (cached) return cached;
+  return fetch('./');
+}
+
+/** A precached file, with the network as the fallback for anything not in it. */
+async function asset(req) {
+  const cached = await caches.match(req, { cacheName: SHELL });
+  if (cached) return cached;
+  return fetch(req);
+}
+
+/**
+ * A sha-addressed blob: cache-first and never revalidated, because the URL cannot
+ * point at different bytes tomorrow. This is what makes a run you have already
+ * watched replay with no network.
+ */
+async function immutable(req) {
+  const cache = await caches.open(DATA);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+
+  const res = await fetch(req);
+  if (res.ok) cache.put(req, res.clone()).catch(() => {});
+  return res;
+}
+
+/** A basemap tile: cache-first, and trimmed back to `TILE_LIMIT` now and then. */
+async function tile(req) {
+  const cache = await caches.open(TILES);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+
+  const res = await fetch(req);
+
+  // An opaque response cannot be `put` at all — it throws rather than returning a
+  // rejected promise in some engines, hence the try. Tiles come back CORS-clean
+  // in practice; when they do not, the map still draws, it just will not persist.
+  if (res.ok && res.type !== 'opaque') {
+    try {
+      await cache.put(req, res.clone());
+      if (++sinceTrim >= TRIM_EVERY) {
+        sinceTrim = 0;
+        await trim(cache);
+      }
+    } catch { /* quota, or an opaque response after all */ }
+  }
+
+  return res;
+}
+
+/**
+ * Evict oldest-first back to the cap. `cache.keys()` resolves in insertion order,
+ * so this is FIFO rather than true LRU — for map tiles the two barely differ, and
+ * an exact LRU would mean writing an access timestamp on every hit.
+ */
+async function trim(cache) {
+  const keys = await cache.keys();
+  const excess = keys.length - TILE_LIMIT;
+  for (let i = 0; i < excess; i++) await cache.delete(keys[i]);
+}

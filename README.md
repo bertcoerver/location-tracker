@@ -1452,6 +1452,13 @@ src/
   colors.js         reads the CSS colour tokens
   util.js           time parsing (ping filenames and hand-written starts), 24-hour clocks, race days,
                     pace, formatting, escaping, pool, storage guard
+  sw-register.js    installs the service worker and offers the update
+sw.js               the service worker: what the app caches, and what it must never cache
+manifest.webmanifest  name, icons, colours — what makes it installable
+icons/
+  icon.svg          the mark; render.py rasterises the PNGs beside it
+vendor/
+  deck.gl-*.min.js  vendored, not a CDN link — see "Offline" below
 test/
   *.test.js         run with `npm test`
 package.json        scripts only — no dependencies, nothing to install
@@ -1828,7 +1835,57 @@ band of their own just under the waypoint names rather than sharing that row, be
 kinds of label competing for one line is how the collision rule above ends up dropping the
 interesting one.
 
+## Offline, and installing it
+
+The page is a PWA: it can be installed to a home screen, and it opens without a
+network. Both matter for the same reason — the races this is pointed at are in
+mountains, and the signal there is bad exactly when you most want to look.
+
+**Installing.** Android and desktop Chrome offer it themselves. iOS never does:
+Share → *Add to Home Screen*. Installed, it runs without browser chrome, which is
+worth more here than it sounds — the height strip and the news bar anchor to the
+bottom of the window, and Safari's URL bar spends its life moving around down
+there.
+
+**Offline.** `sw.js` holds the whole rule set, and it is one rule applied four
+times: cache what cannot change, and never cache what must be fresh.
+
+| | strategy | why |
+|---|---|---|
+| `api.github.com` | **network only** | the listing is the only thing that says a new ping exists. A stale one here looks exactly like a runner who has stopped moving, which is the worst failure this app has. |
+| `raw.githubusercontent.com?<sha>` | cache first, forever | `rawUrl` puts the blob sha in the query string, so the URL is content-addressed and its bytes can never change. A URL *without* one is a plain branch path, which can — so that goes to the network. |
+| `basemaps.cartocdn.com` | cache first, ~1200 tiles | the ground you have already looked at is the ground you are standing on. Evicted oldest-first once over the cap. |
+| same origin | cache first | the app shell, precached on install. |
+
+So a cold open on a dead connection still paints: the shell comes from the cache,
+the points come from `localStorage`, and the tiles are whatever you last looked at.
+It says how old the newest fix is, as it always does — that line is what keeps
+"offline" from being mistaken for "nothing is happening".
+
+**deck.gl is vendored** into `vendor/` rather than linked from unpkg. It is 1.6 MB
+and it sits between opening the page and seeing a map, so it has to be precacheable
+— and a cross-origin script comes back opaque, which a `Cache` refuses to store.
+
+**Updating.** Bump `VERSION` in `sw.js` whenever a shell file changes; `activate`
+deletes every cache not on the keep list. The data and tile caches deliberately do
+*not* carry the version, so shipping a CSS tweak cannot throw away the pings of a
+race already in progress. The new version is never swapped in automatically — the
+panel offers a *Reload* and waits. A tracker that reloads itself out from under
+someone watching a runner between checkpoints is worse than one a version behind.
+
+**Icons.** `icons/icon.svg` is the source; `python3 icons/render.py` rasterises the
+PNGs, which are committed like everything else. Pillow is the only thing it needs,
+and nothing builds at deploy time.
+
+**In development** the worker installs on `localhost` too, since that counts as a
+secure context. Worth knowing when a change to `src/` seems not to land: hard-reload,
+or tick *Update on reload* in the browser's Application panel.
+
 ## Publishing
 
 One-time setup: **Settings → Pages → Deploy from a branch → `main` / `/ (root)`**. The empty
 `.nojekyll` file stops Pages running the repo through Jekyll.
+
+Every path in `index.html`, `manifest.webmanifest` and `sw.js` is relative, which is
+what lets the whole thing work from the `/location-tracker/` subpath a project Pages
+site is served under.

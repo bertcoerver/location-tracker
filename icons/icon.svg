@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Location Tracker</title>
+  <desc>
+    The app's own mark: a ping. The same orange as the page's `accent` on the same
+    near black as its dark `surface-1`, so the icon and the page it opens read as
+    one thing. The rings are the halo layers.js draws around the newest fix.
+    All of the art sits inside a radius of 155, well within the 204.8 maskable
+    safe zone, which is what lets the same drawing serve both purposes.
+    Source of truth for the PNGs beside it; see icons/render.py.
+  </desc>
+  <rect width="512" height="512" fill="#1a1a19"/>
+  <g transform="translate(256 256)">
+    <circle r="150" fill="none" stroke="#eb6834" stroke-width="10" opacity="0.22"/>
+    <circle r="104" fill="none" stroke="#eb6834" stroke-width="12" opacity="0.45"/>
+    <circle r="58" fill="#eb6834"/>
+  </g>
+</svg>

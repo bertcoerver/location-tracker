@@ -21,6 +21,7 @@ import { createProfile } from './profile.js';
 import { same } from './pin.js';
 import { createUi } from './ui.js';
 import { pinnedRun, pushRun } from './route.js';
+import { registerSw } from './sw-register.js';
 import { fmtClock, persistedAt, storage, throttle } from './util.js';
 
 // An explicit ?run= in the URL, which pins the view. Null means "show whichever
@@ -125,6 +126,10 @@ const ui = createUi({
   onRecenter: () => map.recenter(),
   onRunPick: name => openRun(name)
 });
+
+// The offline cache. Last in the wiring and first thing that can be deleted: the
+// page behaves identically without it, right up until the signal goes.
+registerSw({ onUpdateReady: apply => ui.setUpdateReady(apply) });
 
 // Asking the device where it is — the one thing here that isn't the network. The
 // dot it produces is not part of the run: no cache, nothing persisted about the
