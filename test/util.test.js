@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   ago, coarse, dayOffset, dayTag, escapeHtml, fmtClock, fmtCountdown, fmtDuration, fmtElapsed,
-  fmtHm, fmtPace, mapsUrl, parseStamp, parseTime, persistedAt, pool, throttle
+  fmtHm, fmtPace, fmtStamp, mapsUrl, parseStamp, parseTime, persistedAt, pool, throttle
 } from '../src/util.js';
 
 test('parseTime recovers the ISO timestamp from a filename', () => {
@@ -434,6 +434,20 @@ test('fmtHm drops the seconds, for times nobody measured', () => {
   // a precision the window printed beside it explicitly denies.
   assert.equal(fmtHm(at(2026, 7, 28, 13, 24, 40)), '13:24');
   assert.equal(fmtHm(at(2026, 7, 28, 9, 5, 0)), '09:05');
+});
+
+test('fmtStamp names the day as well as the time', () => {
+  // The clock's caption is the one reading that still wants a date: "3d 4h" says
+  // how long and not until when, and the weekday answers "which weekend" without
+  // any arithmetic.
+  assert.equal(fmtStamp(at(2026, 7, 28, 9, 0, 0)), 'Tue 28 Jul, 09:00');
+  assert.equal(fmtStamp(at(2026, 8, 29, 23, 5, 0)), 'Sat 29 Aug, 23:05');
+});
+
+test('fmtStamp drops neither the leading zero on the clock nor it from the date', () => {
+  // A padded day of the month reads as a filename; a padded hour is what keeps the
+  // times under a column of runs lining up.
+  assert.equal(fmtStamp(at(2026, 1, 3, 6, 7, 0)), 'Sat 3 Jan, 06:07');
 });
 
 test('neither clock ever says AM or PM', () => {

@@ -94,6 +94,33 @@ export function fmtHm(t) {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * A date AND a time: "Thu 30 Jul, 09:00".
+ *
+ * The one reading on this page that still wants a full date. `dayTag` replaced the
+ * date everywhere else because a tooltip on a one-day race has no business
+ * repeating it four hundred times — but the clock's own caption is stating the
+ * moment the count runs from, and "09:00" alone would leave "3d 4h until 09:00"
+ * meaning nothing. It is written once, under a number that is only interesting
+ * because of it.
+ *
+ * The weekday is there for the countdown, which is where this is read from
+ * furthest away: "Sat 29 Aug" answers "which weekend" without any arithmetic.
+ *
+ * English names spelled out here rather than left to `Intl`, for the reason
+ * `fmtClock` gives — one wording, chosen here, testable anywhere — and in the
+ * viewer's own zone, for the reason it gives too.
+ */
+export function fmtStamp(t) {
+  const d = new Date(t);
+  return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}, `
+    + `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 /**
  * Which day of the run a moment falls on, counted in LOCAL CALENDAR days from
  * `origin`: 0 on the day of the start, 1 on the morning after, -1 the evening

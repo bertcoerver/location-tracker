@@ -11,6 +11,7 @@ import { isLive } from '../src/github.js';
 import { buildForecast, predictAt } from '../src/predict.js';
 import { deriveStats } from '../src/stats.js';
 import { clockReading, courseFigures, stillRunning } from '../src/ui.js';
+import { fmtStamp } from '../src/util.js';
 
 const MINUTE = 60000;
 const LAT0 = 46.5;
@@ -34,7 +35,7 @@ test('a scheduled run counts down, with no pings needed', () => {
   // The whole point of a course-only folder being a run: the route is on the map,
   // the height profile is drawn, and this says when it begins.
   assert.deepEqual(read({ start: GUN, now: GUN - 4 * 3600000 - 31 * MINUTE }), {
-    label: 'Starts in', value: '4:31:00'
+    label: 'Starts in', value: '4:31:00', sub: `until ${fmtStamp(GUN)}`, dnf: false
   });
 });
 
@@ -48,14 +49,16 @@ test('warm-up pings do not start the clock — the gun does', () => {
   // Pings from the drive to the start are real fixes and are drawn, but the race
   // has not begun, so this still counts down rather than claiming an elapsed time.
   assert.deepEqual(read({ start: GUN, points: [ping(-90), ping(-20)], now: GUN - 5 * MINUTE }), {
-    label: 'Starts in', value: '0:05:00'
+    label: 'Starts in', value: '0:05:00', sub: `until ${fmtStamp(GUN)}`, dnf: false
   });
 });
 
 // --- after the gun -----------------------------------------------------------
 
 test('at the gun the countdown becomes an elapsed clock at zero', () => {
-  assert.deepEqual(read({ start: GUN, now: GUN }), { label: 'Elapsed', value: '0:00:00' });
+  assert.deepEqual(read({ start: GUN, now: GUN }), {
+    label: 'Elapsed', value: '0:00:00', sub: `since ${fmtStamp(GUN)}`, dnf: false
+  });
 });
 
 test('the clock runs from the gun while waiting for the first ping', () => {
@@ -63,7 +66,7 @@ test('the clock runs from the gun while waiting for the first ping', () => {
   // thing on screen saying so. A claim from the schedule rather than from the
   // phone, and the honest one to make in the gap before the first fix.
   assert.deepEqual(read({ start: GUN, now: GUN + 20 * MINUTE }), {
-    label: 'Elapsed', value: '0:20:00'
+    label: 'Elapsed', value: '0:20:00', sub: `since ${fmtStamp(GUN)}`, dnf: false
   });
 });
 
@@ -73,13 +76,17 @@ test('elapsed time is measured from the gun, not from the first ping', () => {
     start: GUN, points: [ping(-30), ping(20), ping(45)], live: true, now: GUN + 50 * MINUTE
   });
 
-  assert.deepEqual(reading, { label: 'Elapsed', value: '0:50:00' });
+  assert.deepEqual(reading, {
+    label: 'Elapsed', value: '0:50:00', sub: `since ${fmtStamp(GUN)}`, dnf: false
+  });
 });
 
 test('a scheduled run that has gone quiet freezes at its last ping', () => {
   assert.deepEqual(read({
     start: GUN, points: [ping(20), ping(180)], live: false, now: GUN + 900 * MINUTE
-  }), { label: 'Total', value: '3:00:00' });
+  }), {
+    label: 'Total', value: '3:00:00', sub: `since ${fmtStamp(GUN)}`, dnf: false
+  });
 });
 
 test('a finish freezes the clock there, even with a ping after it', () => {
@@ -88,7 +95,9 @@ test('a finish freezes the clock there, even with a ping after it', () => {
   const finish = { ...ping(200), is_finish: true };
   assert.deepEqual(read({
     start: GUN, points: [ping(20), finish, ping(240)], finish, live: false, now: GUN + 900 * MINUTE
-  }), { label: 'Total', value: '3:20:00' });
+  }), {
+    label: 'Total', value: '3:20:00', sub: `since ${fmtStamp(GUN)}`, dnf: false
+  });
 });
 
 // --- no schedule at all ------------------------------------------------------
@@ -97,14 +106,52 @@ test('an unscheduled run still counts from its first ping', () => {
   // Every run behaved this way before a run could schedule itself, and every run
   // that says nothing still does.
   assert.deepEqual(read({ points: [ping(10), ping(40)], live: true, now: GUN + 70 * MINUTE }), {
-    label: 'Elapsed', value: '1:00:00'
+    label: 'Elapsed', value: '1:00:00', sub: `since ${fmtStamp(GUN + 10 * MINUTE)}`, dnf: false
   });
 });
 
 test('an unscheduled quiet run reads first-to-last as a total', () => {
   assert.deepEqual(read({ points: [ping(10), ping(130)], live: false, now: GUN + 900 * MINUTE }), {
-    label: 'Total', value: '2:00:00'
+    label: 'Total', value: '2:00:00', sub: `since ${fmtStamp(GUN + 10 * MINUTE)}`, dnf: false
   });
+});
+
+// --- a total nobody finished --------------------------------------------------
+
+test('a course that ran out with no finish ping is a DNF', () => {
+  // The forecast walked off the end of the course while the phone never said it
+  // crossed anything — so the clock stopped, but not because the race ended.
+  const { forecast, points } = quietAt7km();
+  const reading = read({
+    start: GUN, points, forecast, live: false, now: GUN + 900 * MINUTE
+  });
+
+  assert.equal(reading.dnf, true);
+  assert.equal(reading.label, 'Total');
+});
+
+test('a finish ping is a finish, not a DNF', () => {
+  const { forecast, points } = quietAt7km();
+  const finish = { ...points[points.length - 1], is_finish: true };
+  assert.equal(read({
+    start: GUN, points: [...points.slice(0, -1), finish], finish, forecast,
+    live: false, now: GUN + 900 * MINUTE
+  }).dnf, false);
+});
+
+test('a live run is never a DNF, however quiet', () => {
+  const { forecast, points } = quietAt7km();
+  assert.equal(read({
+    start: GUN, points, forecast, live: true, now: GUN + 90 * MINUTE
+  }).dnf, false);
+});
+
+test('with no course there is no line to have not crossed', () => {
+  // A run with no route has no forecast and no finish line, so its silence supports
+  // "Total" and nothing more.
+  assert.equal(read({
+    start: GUN, points: [ping(20), ping(180)], live: false, now: GUN + 900 * MINUTE
+  }).dnf, false);
 });
 
 // --- is the run still underway? ----------------------------------------------

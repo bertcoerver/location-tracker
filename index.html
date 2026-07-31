@@ -226,6 +226,12 @@
      second shuffles the digits sideways, and a run name is unaffected by them. */
   #course-block, #clock, #finish { margin-top: 6px; }
   #clock[hidden], #finish[hidden] { display: none; }
+  /* "(DNF)" behind the total. Inside the value so it sits on the same line as the
+     digits, but typeset down to the caption's size and ink: the time is the
+     reading, this is a note about it, and at 20px it would have read as a second
+     number. */
+  #clock-dnf { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  #clock-dnf[hidden] { display: none; }
   .k {
     font-size: 11px;
     font-weight: 600;
@@ -253,8 +259,10 @@
   }
   #course-figures[hidden] { display: none; }
   /* The one thing under a value that isn't one: the finish's range, which is what
-     stops the number above it being read as a promise. */
-  #finish-range {
+     stops the number above it being read as a promise. The clock's "since" line
+     is the same shape and shares the rule — a duration is only half a fact until
+     something says what it is measured against. */
+  #finish-range, #clock-since {
     font-variant-numeric: tabular-nums;
     font-size: 11px;
     line-height: 1.4;
@@ -760,7 +768,16 @@
        only the range under the second says it is a guess. -->
   <div id="clock" hidden>
     <div id="clock-label" class="k">Elapsed</div>
-    <div id="clock-time" class="v">0:00:00</div>
+    <!-- The total, and — when the course ran out from under a runner who never
+         sent a finish — "(DNF)" behind it. A tag rather than a caption change:
+         the number is still the time on the clock when it stopped, and this says
+         what kind of ending it was. Quiet and small so it reads as a note on the
+         figure rather than as part of it. -->
+    <div class="v"><span id="clock-time">0:00:00</span><span id="clock-dnf" hidden> (DNF)</span></div>
+    <!-- What the number is measured against: "since Thu 30 Jul, 09:00", or
+         "until" it before the gun. Typeset like the finish's range, because it
+         is the same kind of line — a small qualifier under a big number. -->
+    <div id="clock-since"></div>
   </div>
   <div id="finish" hidden>
     <!-- "Estimated", not "Finish". The box only ever appears while the run is

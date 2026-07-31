@@ -7,7 +7,7 @@ import { finishOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
 import { positionAt, predictAt } from './predict.js';
 import { originOf } from './stats.js';
-import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm } from './util.js';
+import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm, fmtStamp } from './util.js';
 
 /**
  * What the course is, in one line: "165 km · 9,900 m", or nothing.
@@ -72,19 +72,45 @@ export function courseFigures(settings, course) {
  * Warm-up pings arriving before the gun do not start the clock — the gun does,
  * which is why the countdown never looks at `points`.
  *
+ * DNF is the one reading that is about how the run ended rather than when. It is
+ * exactly the gap between the two ways a clock can stop: the phone said "finish",
+ * or the forecast walked off the end of the course while the phone never did. The
+ * first is a finish; the second is a run that stopped being trackable somewhere
+ * out there, and calling that a plain "Total" states a finishing time for somebody
+ * who may never have finished.
+ *
+ * It needs a course to say so — `forecast` is null for a run with no route, and
+ * with no finish line to predict crossing there is nothing to have not crossed.
+ * Such a run keeps its bare "Total", which is all its silence supports.
+ *
  * @param {number|null} start the scheduled gun, or null
  * @param {Array}       points sorted oldest-first
  * @param {object|null} finish the ping the phone marked as its last, if any
  * @param {boolean}     live whether the run counts as still underway
+ * @param {object|null} forecast this run's pace model, or null with no course.
+ *   Only ever asked whether it EXISTS: `live` has already been decided from it,
+ *   and a stopped clock on a run that has a course and no finish ping is the
+ *   whole of the DNF case.
+ * `sub` names the moment the number is measured against — "since Thu 30 Jul,
+ * 09:00", or "until" it while the gun is still ahead. A duration on its own is
+ * half a fact: "3d 4h" says how long and not until when, and "9:34:52" on a page
+ * showing three days of runs does not say which day it counted. It is also the
+ * only place the two sources for the count are visible — a run counting from its
+ * first ping says so by naming a ragged time, where a scheduled one names the gun.
+ *
  * @param {number}      now
- * @returns {{label: string, value: string}|null} null to hide the box entirely.
+ * @returns {{label: string, value: string, sub: string, dnf: boolean}|null} null
+ *   to hide the box entirely.
  */
-export function clockReading({ start, points, finish, live, now }) {
+export function clockReading({ start, points, finish, live, forecast = null, now }) {
   const scheduled = Number.isFinite(start);
   if (!scheduled && !points.length) return null;
 
   if (scheduled && now < start) {
-    return { label: 'Starts in', value: fmtCountdown(start - now) };
+    return {
+      label: 'Starts in', value: fmtCountdown(start - now),
+      sub: `until ${fmtStamp(start)}`, dnf: false
+    };
   }
 
   const from = scheduled ? start : points[0].t;
@@ -96,13 +122,24 @@ export function clockReading({ start, points, finish, live, now }) {
   // while waiting for a first fix, at the cost that a race whose phone never reports
   // at all counts up for ever. `live` cannot help here: it is ping-based by design,
   // so a started run with no pings is never live.
-  if (!points.length) return { label: 'Elapsed', value: fmtElapsed(now - from) };
+  const sub = `since ${fmtStamp(from)}`;
+
+  if (!points.length) {
+    return { label: 'Elapsed', value: fmtElapsed(now - from), sub, dnf: false };
+  }
 
   // The finish rather than the newest point, which is the same thing unless a ping
   // that failed to upload turns up after it — then the race still ended when the
   // phone said it did.
   const to = live ? now : (finish || latestOf(points)).t;
-  return { label: live ? 'Elapsed' : 'Total', value: fmtElapsed(to - from) };
+  return {
+    label: live ? 'Elapsed' : 'Total',
+    value: fmtElapsed(to - from),
+    sub,
+    // A stopped clock, a course, and no finish marker: the run ended without the
+    // phone ever saying it crossed the line.
+    dnf: !live && !finish && Boolean(forecast)
+  };
 }
 
 /**
@@ -169,6 +206,8 @@ export function createUi({ onRecenter, onRunPick }) {
   const clockEl     = el('clock');
   const clockTimeEl = el('clock-time');
   const clockLabelEl = el('clock-label');
+  const clockDnfEl  = el('clock-dnf');
+  const clockSinceEl = el('clock-since');
   const finishEl      = el('finish');
   const finishTimeEl  = el('finish-time');
   const finishRangeEl = el('finish-range');
@@ -304,13 +343,17 @@ export function createUi({ onRecenter, onRunPick }) {
    * which is the one thing this box must never say — so the label changes with it,
    * and a stopped clock reads "Total" rather than "Elapsed".
    *
+   * A total the phone never confirmed picks up "(DNF)" behind it — the run stopped
+   * without a finish, and the time beside it is when it stopped rather than when it
+   * ended. Under both, the moment being counted from or to.
+   *
    * Every decision is in [`clockReading`](#clockReading); this puts the answer on
    * screen. Recomputed from the timestamps every tick rather than counted up, so it
    * can't drift and a backgrounded tab comes back with the right number.
    */
   function renderClock(now = Date.now()) {
     const reading = clockReading({
-      start: mine().start ?? null, points, finish, live: live(now), now
+      start: mine().start ?? null, points, finish, live: live(now), forecast, now
     });
 
     clockEl.hidden = !reading;
@@ -318,6 +361,8 @@ export function createUi({ onRecenter, onRunPick }) {
 
     clockLabelEl.textContent = reading.label;
     clockTimeEl.textContent = reading.value;
+    clockDnfEl.hidden = !reading.dnf;
+    clockSinceEl.textContent = reading.sub;
   }
 
   /**
