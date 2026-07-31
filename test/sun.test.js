@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCourse, pointAt } from '../src/course.js';
-import { sunPois, sunTimes } from '../src/sun.js';
+import { isDaylight, moonPhase, sunPois, sunTimes } from '../src/sun.js';
 
 const MINUTE = 60000;
 const HOUR = 3600000;
@@ -87,6 +87,165 @@ test('a sun that never crosses the horizon is reported as no event', () => {
 
   // And at the other pole, where the seasons are the other way round.
   assert.equal(sunTimes(Date.UTC(2026, 5, 21, 12), -80, 0).sunrise, null);
+});
+
+test('the two polar skies are told apart, and an ordinary day is neither', () => {
+  // A sun that never sets and a sun that never rises were one answer — both
+  // events null — which is right about the crossings and silent about the sky.
+  assert.equal(sunTimes(Date.UTC(2026, 5, 21, 12), 80, 0).polar, 'day');
+  assert.equal(sunTimes(Date.UTC(2026, 11, 21, 12), 80, 0).polar, 'night');
+  // Southern hemisphere, so the seasons swap and the answers with them.
+  assert.equal(sunTimes(Date.UTC(2026, 5, 21, 12), -80, 0).polar, 'night');
+  assert.equal(sunTimes(Date.UTC(2026, 11, 21, 12), -80, 0).polar, 'day');
+
+  // Exactly at the pole the hour angle divides by a cosine of zero. The infinity
+  // that comes back lands on the correct side of the range on its own, which is
+  // worth pinning: it is the one input where the arithmetic and not a branch is
+  // doing the work.
+  assert.equal(sunTimes(Date.UTC(2026, 5, 21, 12), 90, 0).polar, 'day');
+  assert.equal(sunTimes(Date.UTC(2026, 11, 21, 12), 90, 0).polar, 'night');
+
+  // And a day with crossings has no polar answer to give.
+  assert.equal(sunTimes(Date.UTC(2026, 5, 21, 12), 45, 0).polar, null);
+});
+
+test('isDaylight agrees with the crossings it is asked about', () => {
+  // The property the weather glyph rests on: a ping a minute after the sunrise
+  // mark on the course must be daylight, and one a minute before it must not. Two
+  // formulas agreeing to within seconds would not be enough — this is the same
+  // arithmetic, asserted to be the same.
+  for (const [lat, lon, ele] of [[45.9, 6.5, null], [51.5, -0.13, null],
+    [-21.1, 55.5, 2500], [42.8, 0.15, 1800], [60, 24.9, null]]) {
+    for (const month of [0, 3, 6, 9]) {
+      const noon = Date.UTC(2026, month, 15, 12);
+      const { sunrise, sunset } = sunTimes(noon, lat, lon, ele);
+      const where = `${lat},${lon} in month ${month}`;
+
+      assert.equal(isDaylight(sunrise - MINUTE, lat, lon, ele), false,
+        `a minute before sunrise at ${where}`);
+      assert.equal(isDaylight(sunrise + MINUTE, lat, lon, ele), true,
+        `a minute after sunrise at ${where}`);
+      assert.equal(isDaylight(sunset - MINUTE, lat, lon, ele), true,
+        `a minute before sunset at ${where}`);
+      assert.equal(isDaylight(sunset + MINUTE, lat, lon, ele), false,
+        `a minute after sunset at ${where}`);
+    }
+  }
+});
+
+test('isDaylight knows midday from midnight, either side of the equator', () => {
+  // Solar midday and midnight rather than the clock's, so no case here depends on
+  // the offset between a longitude and its timezone.
+  for (const [lat, lon] of [[45.9, 6.5], [-21.1, 55.5], [1.35, 103.8]]) {
+    for (const month of [0, 5, 8, 11]) {
+      const { sunrise, sunset } = sunTimes(Date.UTC(2026, month, 15, 12), lat, lon);
+      const noon = (sunrise + sunset) / 2;
+      const where = `${lat},${lon} in month ${month}`;
+
+      assert.equal(isDaylight(noon, lat, lon), true, `solar noon at ${where}`);
+      assert.equal(isDaylight(noon + 12 * HOUR, lat, lon), false,
+        `solar midnight at ${where}`);
+    }
+  }
+});
+
+test('isDaylight in the polar cases follows the sky, not the clock', () => {
+  // A June midnight at 80°N is broad daylight and a December noon is not, and
+  // there are no crossings on either day to decide it from.
+  for (let hour = 0; hour < 24; hour += 3) {
+    assert.equal(isDaylight(Date.UTC(2026, 5, 21, hour), 80, 0), true,
+      `80°N in June at ${hour}:00`);
+    assert.equal(isDaylight(Date.UTC(2026, 11, 21, hour), 80, 0), false,
+      `80°N in December at ${hour}:00`);
+  }
+});
+
+test('standing high enough turns a minute of night into daylight', () => {
+  // The horizon dip reaching this function too, which is what keeps the glyph on a
+  // tooltip and the mark on the course from disagreeing about a mountain sunrise.
+  const at = Date.UTC(2026, 7, 22, 12);
+  const { sunrise } = sunTimes(at, 45, 0);
+
+  // Five minutes before the sea-level sunrise: night at the beach, and up at
+  // 2,500 m the sun has been up for a few minutes already.
+  const dark = sunrise - 5 * MINUTE;
+  assert.equal(isDaylight(dark, 45, 0), false, 'sea level');
+  assert.equal(isDaylight(dark, 45, 0, 2500), true, 'at 2,500 m');
+});
+
+// --- the moon -----------------------------------------------------------------
+
+test('the moon phase matches the almanac at the four turning points', () => {
+  // Four dates with a name, each read at the moment the phase was exact. Nothing
+  // here is tuned to the implementation: these are published times.
+  const cases = [
+    [Date.UTC(2025, 5, 11, 7, 44), '\u{1F315}', 'full, 11 June 2025'],
+    [Date.UTC(2025, 5, 25, 10, 31), '\u{1F311}', 'new, 25 June 2025'],
+    [Date.UTC(2025, 6, 2, 19, 30), '\u{1F313}', 'first quarter, 2 July 2025'],
+    [Date.UTC(2025, 6, 18, 0, 38), '\u{1F317}', 'last quarter, 18 July 2025'],
+    [Date.UTC(2026, 2, 3, 11, 38), '\u{1F315}', 'full, 3 March 2026'],
+    [Date.UTC(2024, 0, 11, 11, 57), '\u{1F311}', 'new, 11 January 2024']
+  ];
+
+  for (const [t, want, what] of cases) {
+    assert.equal(moonPhase(t, 45), want, what);
+  }
+});
+
+test('the phase advances through all eight over one synodic month', () => {
+  // From a new moon, sampled every three hours for 30 days: every glyph appears,
+  // each in one unbroken run, and in order. That is a stronger statement than any
+  // single date — it says the index is a fraction of a month and not a lookup that
+  // happens to land.
+  const start = Date.UTC(2025, 5, 25, 10, 31);
+  const seen = [];
+  for (let h = 0; h < 30 * 24; h += 3) {
+    const glyph = moonPhase(start + h * HOUR, 45);
+    if (glyph !== seen[seen.length - 1]) seen.push(glyph);
+  }
+
+  const order = ['\u{1F311}', '\u{1F312}', '\u{1F313}', '\u{1F314}',
+    '\u{1F315}', '\u{1F316}', '\u{1F317}', '\u{1F318}'];
+  // A 30-day window from a new moon runs a full cycle and starts the next one, so
+  // the first glyph comes round again at the end.
+  assert.deepEqual(seen, [...order, order[0]]);
+});
+
+test('below the equator the crescent leans the other way', () => {
+  // The same moon, seen from Chamonix and from Réunion. Waxing and waning swap;
+  // the new and full moons, which are symmetric, do not move.
+  const swaps = [
+    [Date.UTC(2025, 5, 28, 12), '\u{1F312}', '\u{1F318}'],  // waxing crescent
+    [Date.UTC(2025, 6, 2, 19, 30), '\u{1F313}', '\u{1F317}'], // first quarter
+    [Date.UTC(2025, 6, 7, 12), '\u{1F314}', '\u{1F316}']    // waxing gibbous
+  ];
+
+  for (const [t, north, south] of swaps) {
+    assert.equal(moonPhase(t, 45), north, `north at ${hhmm(t)}`);
+    assert.equal(moonPhase(t, -21), south, `south at ${hhmm(t)}`);
+  }
+
+  for (const t of [Date.UTC(2025, 5, 11, 7, 44), Date.UTC(2025, 5, 25, 10, 31)]) {
+    assert.equal(moonPhase(t, -21), moonPhase(t, 45), 'new and full are symmetric');
+  }
+});
+
+test('the moon is always up to something', () => {
+  // No absence to report and no gap in the eight: every moment resolves, including
+  // ones far outside any race this page will see.
+  const eight = new Set(['\u{1F311}', '\u{1F312}', '\u{1F313}', '\u{1F314}',
+    '\u{1F315}', '\u{1F316}', '\u{1F317}', '\u{1F318}']);
+
+  for (const t of [0, Date.UTC(1969, 6, 20), Date.UTC(2026, 6, 31, 4, 17),
+    Date.UTC(2099, 11, 31)]) {
+    for (const lat of [-89, -21, 0, 45, 89]) {
+      assert.ok(eight.has(moonPhase(t, lat)), `${t} at ${lat}`);
+    }
+  }
+
+  // The default hemisphere is the northern one, not a third answer.
+  const t = Date.UTC(2025, 5, 28, 12);
+  assert.equal(moonPhase(t), moonPhase(t, 45));
 });
 
 test('standing high up brings sunrise forward and holds sunset back', () => {

@@ -8,6 +8,7 @@ import {
 import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
 import { interpolateAt, originOf } from './stats.js';
+import { isDaylight, moonPhase } from './sun.js';
 import {
   ago, dayTag, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtPace, mapsUrl
 } from './util.js';
@@ -1006,7 +1007,18 @@ function weatherHtml(point) {
   const temp = weather.length === 2 ? weather[0] : null;
   const sky = weather[weather.length - 1];
 
-  return `<div class="wx"><span class="i" aria-hidden="true">${weatherIcon(sky)}</span>` +
+  // The ping's own place, its own moment, and — where it snapped — the course's
+  // height there: the same three arguments the 🌅 and 🌃 marks were placed from, so
+  // the glyph on this line and the marks on the course cannot disagree about
+  // whether a given minute was dark. A ping that missed the course passes no
+  // height and gets the sea-level horizon, which is the honest answer when we do
+  // not know how high it was standing.
+  const [lon, lat] = posOf(point);
+  const night = isDaylight(point.t, lat, lon, point.snap?.ele ?? null)
+    ? null
+    : moonPhase(point.t, lat);
+
+  return `<div class="wx"><span class="i" aria-hidden="true">${weatherIcon(sky, night)}</span>` +
     `${temp === null ? '' : `<span class="wt">${temp}</span>`}` +
     `<span class="wl">${sky}</span></div>`;
 }
@@ -1060,15 +1072,53 @@ function reading(icon, primary, secondary = null, strong = false) {
  * Whichever pattern is tested first decides, so the ladder runs from the weather you
  * would most want to know about down to the weather you wouldn't.
  *
- * Night is deliberately not distinguished. A moon for "Clear" at 02:00 needs a
- * sunrise table to be right, and would be wrong for half the year anywhere far
- * enough north — which is where these races tend to be.
+ * Night used to be deliberately not distinguished, on the grounds that a moon for
+ * "Clear" at 02:00 needs a sunrise table to be right and would otherwise be wrong
+ * for half the year anywhere far enough north — which is where these races tend to
+ * be. [`sun.js`](sun.js) is now exactly that table, so the objection is spent: the
+ * ladder still decides WHAT the weather was, and `night` decides how to draw it
+ * once the sun is down.
+ *
+ * @param {string} label the phone's own wording.
+ * @param {string|null} [night] the glyph to stand in for a sun after dark — the
+ *   moon phase, from `weatherHtml`. A glyph rather than a boolean, so this stays a
+ *   lookup and the astronomy stays in the module that owns it.
  */
-function weatherIcon(label) {
+function weatherIcon(label, night = null) {
   const s = String(label).toLowerCase();
   const hit = WEATHER.find(([pattern]) => pattern.test(s));
-  return hit ? hit[1] : ICON.temp;
+  const glyph = hit ? hit[1] : ICON.temp;
+
+  if (night === null || !AFTER_DARK.has(glyph)) return glyph;
+  return AFTER_DARK.get(glyph) ?? night;
 }
+
+// The three glyphs both tables below name, as constants rather than as the same
+// literal typed twice. Two of them carry a variation selector and one does not, so
+// a map keyed on a hand-copied glyph is a map that misses silently — and it has to
+// be declared before `AFTER_DARK`, which reads it as the module loads.
+const SUN = '☀️';
+const PART = '⛅';
+const CLOUD = '☁️';
+
+/**
+ * What the two glyphs that draw a SUN become once it has set.
+ *
+ * Only those two. Rain, fog, wind, snow and a thunderstorm look the same at
+ * midnight as at noon, and drawing them differently would be inventing a
+ * distinction the label does not make.
+ *
+ * `null` means "the moon" — whichever phase the caller worked out. ⛅ gets a plain
+ * cloud instead, because Unicode has no moon behind a cloud: it has the sun behind
+ * three different amounts of one and nothing lunar at all. So for the hours it
+ * cannot be drawn, the three-way distinction between "Mostly Cloudy", "Partly
+ * Cloudy" and "Mostly Clear" moves to the label sitting beside the glyph, which
+ * still spells out which of them it was.
+ */
+const AFTER_DARK = new Map([
+  [SUN, null],
+  [PART, CLOUD]
+]);
 
 const WEATHER = [
   [/tornado/,                          '\u{1F32A}️'], // 🌪️
@@ -1084,10 +1134,10 @@ const WEATHER = [
   // is the cloudy answer, while "Partly Cloudy" and "Mostly Clear" are both the
   // in-between one — so the qualifier has to be read together with what it qualifies,
   // and reading it first is what stops "Mostly Clear" arriving at a bare sun.
-  [/mostly cloud/,                     '☁️'],    // ☁️
-  [/partly|mostly|intermittent/,       '⛅'],          // ⛅
-  [/cloud|overcast|dreary/,            '☁️'],    // ☁️
-  [/clear|sun|fair/,                   '☀️'],    // ☀️
+  [/mostly cloud/,                     CLOUD],   // ☁️
+  [/partly|mostly|intermittent/,       PART],    // ⛅
+  [/cloud|overcast|dreary/,            CLOUD],   // ☁️
+  [/clear|sun|fair/,                   SUN],     // ☀️
   [/hot|frigid|cold/,                  ICON.temp]
 ];
 

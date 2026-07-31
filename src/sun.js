@@ -64,12 +64,14 @@ function fromDays(d) {
  * @param {number} lat   degrees, north positive
  * @param {number} lon   degrees, east positive
  * @param {number|null} [ele] metres above sea level, when the course knows it
- * @returns {{sunrise: number|null, sunset: number|null}} both null on a day the
- *   sun does not cross the horizon at all. A run inside a polar summer is then
- *   simply unmarked, rather than marked at a moment nothing happened — see the
- *   note on `acos` below. They are null as a pair because this reduction finds
- *   sunrise by reflecting sunset about noon, so there is one crossing to fail to
- *   find rather than two.
+ * @returns {{sunrise: number|null, sunset: number|null, polar: 'day'|'night'|null}}
+ *   both events null on a day the sun does not cross the horizon at all. A run
+ *   inside a polar summer is then simply unmarked, rather than marked at a moment
+ *   nothing happened — see the note on `acos` below. They are null as a pair
+ *   because this reduction finds sunrise by reflecting sunset about noon, so there
+ *   is one crossing to fail to find rather than two. `polar` says WHICH sky that
+ *   was — a sun that never set or one that never rose — and is null whenever there
+ *   were crossings to report.
  */
 export function sunTimes(t, lat, lon, ele = null) {
   // Longitude measured WESTWARD in radians, which is the convention the transit
@@ -108,9 +110,21 @@ export function sunTimes(t, lat, lon, ele = null) {
   // than as a latitude test. A midsummer sun at 80°N never gets that low and a
   // midwinter one never gets that high; both are `|cos| > 1` here, and both are
   // honestly answered by "no such crossing".
+  //
+  // WHICH way out of range says which of the two opposite skies it was, and it
+  // costs nothing to hand back: the hour angle needed to reach the horizon is
+  // more than half a turn — the sun never gets round to it — for a midnight sun,
+  // and less than nothing for a polar night. Exactly at the pole the denominator
+  // vanishes and the division hands back an infinity, which lands on the correct
+  // side of the range on its own — measured, at 90°N in June and in December. A
+  // NaN needs the numerator to vanish in the same breath, and midwinter is the
+  // safer thing to call that: "dark" is what an unmarked polar stretch already
+  // looks like on this page.
   const cosH = (Math.sin(h0) - Math.sin(phi) * Math.sin(dec)) /
     (Math.cos(phi) * Math.cos(dec));
-  if (!(cosH >= -1 && cosH <= 1)) return { sunrise: null, sunset: null };
+  if (!(cosH >= -1 && cosH <= 1)) {
+    return { sunrise: null, sunset: null, polar: cosH < -1 ? 'day' : 'night' };
+  }
 
   const w = Math.acos(cosH);
   const set = solarTransit(transit(w, lw, cycle), anomaly, longitude);
@@ -121,8 +135,37 @@ export function sunTimes(t, lat, lon, ele = null) {
     // either side — and computing it that way is what keeps the pair exactly
     // symmetric instead of a second's worth of rounding apart.
     sunrise: fromDays(noon - (set - noon)),
-    sunset: fromDays(set)
+    sunset: fromDays(set),
+    polar: null
   };
+}
+
+/**
+ * Was the sun up at this place, at this moment?
+ *
+ * Answered from the crossings themselves rather than from the sun's altitude,
+ * which is the longer way round and the one that cannot drift: it is the SAME
+ * arithmetic, at the same `h0`, that puts the 🌅 and 🌃 marks on the course — so a
+ * ping a minute after the sunrise mark is daylight by construction, rather than by
+ * two formulas agreeing to within a few seconds.
+ *
+ * `sunTimes` is asked about the solar day containing `t`, so a `t` before that
+ * day's sunrise is the night before it and a `t` after its sunset the night after.
+ * Both are simply outside the pair, and no day arithmetic is needed to say so.
+ *
+ * @param {number} t
+ * @param {number} lat degrees, north positive
+ * @param {number} lon degrees, east positive
+ * @param {number|null} [ele] metres, when it is known — the same horizon dip the
+ *   marks are placed with, so at 2,500 m a minute that is night at sea level can
+ *   be daylight here, and correctly.
+ * @returns {boolean} on a day with no crossings, whether it was the sun that never
+ *   set rather than the one that never rose.
+ */
+export function isDaylight(t, lat, lon, ele = null) {
+  const { sunrise, sunset, polar } = sunTimes(t, lat, lon, ele);
+  if (sunrise === null) return polar === 'day';
+  return t >= sunrise && t <= sunset;
 }
 
 /** The sun's mean anomaly, radians. */
@@ -149,6 +192,71 @@ function transit(w, lw, cycle) {
 /** The same, corrected for the equation of time. */
 function solarTransit(d, m, l) {
   return d + 0.0053 * Math.sin(m) - 0.0069 * Math.sin(2 * l);
+}
+
+/**
+ * The eight moons, new first and then waxing round to a waning crescent.
+ *
+ * In this order because the index below is a fraction of a synodic month, and
+ * that is what a synodic month does. Northern order: 🌒 is lit on its right.
+ */
+const MOONS = [
+  '\u{1F311}', // 🌑 new
+  '\u{1F312}', // 🌒 waxing crescent
+  '\u{1F313}', // 🌓 first quarter
+  '\u{1F314}', // 🌔 waxing gibbous
+  '\u{1F315}', // 🌕 full
+  '\u{1F316}', // 🌖 waning gibbous
+  '\u{1F317}', // 🌗 last quarter
+  '\u{1F318}'  // 🌘 waning crescent
+];
+
+/**
+ * Which of the eight moon glyphs the sky held, and which way round.
+ *
+ * The phase from the ELONGATION — how far round the sky the moon has moved from
+ * the sun — which is what a phase physically is: 0° is a new moon between us and
+ * the sun, 180° a full one opposite it. Both longitudes are ecliptic, and the
+ * moon's ecliptic LATITUDE is dropped: it never exceeds 5°, which is worth well
+ * under one percent of the angle, against buckets three and a half days wide.
+ *
+ * The moon's longitude is its mean longitude plus the equation of the centre,
+ * omitting evection and variation — a degree and a half at worst, three hours of
+ * lunar motion, which cannot move a bucket that a whole day does not. The sun's
+ * comes from the reduction above, which is why this is eight lines and not thirty.
+ *
+ * `lat` mirrors it. 🌒 is a crescent lit on the right, which is a crescent seen
+ * from the north; the same moon from Réunion — where La Diagonale is run — leans
+ * the other way. Reflecting the index swaps waxing for waning and leaves the new
+ * and full moons alone, which is exactly the transformation crossing the equator
+ * performs on the sky.
+ *
+ * @param {number} t
+ * @param {number} [lat] degrees, north positive. Zero, the default, is northern:
+ *   the equator sees the terminator lie flat and neither glyph is right there.
+ * @returns {string} one of the eight, always — the moon is up to something at
+ *   every moment, and there is no absence to report.
+ */
+export function moonPhase(t, lat = 0) {
+  const d = toDays(t);
+
+  // Mean longitude and mean anomaly, degrees, then the equation of the centre.
+  const mean = 218.316 + 13.176396 * d;
+  const anomaly = RAD * (134.963 + 13.064993 * d);
+  const moon = RAD * mean + RAD * 6.289 * Math.sin(anomaly);
+
+  const sun = eclipticLongitude(meanAnomaly(d));
+
+  // Into [0, 1): 0 new, 0.5 full. `%` keeps the sign of its left operand in this
+  // language, hence the second wrap rather than a bare modulo.
+  const turns = 2 * Math.PI;
+  const phase = (((moon - sun) % turns) + turns) % turns / turns;
+
+  // Round rather than floor, so each glyph owns the eighth of the month CENTRED
+  // on the phase it depicts: a full moon is 🌕 for the day and a half either side
+  // of full, which is how long it looks full for.
+  const i = Math.round(phase * 8) % 8;
+  return MOONS[lat < 0 ? (8 - i) % 8 : i];
 }
 
 // --- and where the run was when it happened ----------------------------------

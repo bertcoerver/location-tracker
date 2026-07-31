@@ -13,12 +13,17 @@ import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
 import { dayTag, fmtClock } from '../src/util.js';
 
+// Midday in the Alps in July, which matters to exactly one thing here: the weather
+// glyph now asks whether the sun was up, and this fix is in broad daylight.
 const point = {
   name: '2026-07-28T12_06_01+02_00.json',
   t: Date.parse('2026-07-28T12:06:01+02:00'),
   lat: 46.5,
   lon: 8.1
 };
+
+/** The same place thirteen hours on — 01:06 local, and comfortably dark. */
+const afterDark = { ...point, t: point.t + 13 * 3600000 };
 
 /** Strip the markup so a test reads what a person would see. */
 const text = html => html
@@ -327,7 +332,75 @@ test('"Partly Cloudy", "Mostly Cloudy" and "Mostly Clear" are three answers', ()
   assert.ok(glyph('14°C and Mostly Clear').includes('⛅'), 'mostly clear');
   assert.ok(glyph('14°C and Mostly Cloudy').includes('☁️'), 'mostly cloudy');
   assert.ok(glyph('14°C and Cloudy').includes('☁️'), 'cloudy');
+  // A sun, and only because this fix is at midday — see the night twin below.
   assert.ok(glyph('14°C and Clear').includes('☀️'), 'clear');
+});
+
+// --- and the same ladder after dark --------------------------------------------
+// Only the two entries that draw a sun change. Everything else looks the same at
+// midnight, and the ladder's order is untouched by any of this.
+
+const MOONS = ['\u{1F311}', '\u{1F312}', '\u{1F313}', '\u{1F314}',
+  '\u{1F315}', '\u{1F316}', '\u{1F317}', '\u{1F318}'];
+
+test('a clear night draws the moon, and no sun anywhere', () => {
+  const html = tooltipHtml({ ...afterDark, wthr: '4°C and Clear' }, false);
+  const out = text(html);
+
+  assert.ok(MOONS.some(m => out.includes(m)), out);
+  assert.ok(!out.includes('☀️'), out);
+  assert.ok(!out.includes('⛅'), out);
+  // The rest of the line is unchanged: the reading and the phone's own wording.
+  assert.ok(out.includes('4°C'), out);
+  assert.ok(out.includes('Clear'), out);
+});
+
+test('the moon drawn is the phase that was actually up', () => {
+  // 29 July 2026 is a full moon, and this fix is the small hours of the 29th. Not
+  // a property test — `test/sun.test.js` does the phases — but the one assertion
+  // that the tooltip asks about its OWN moment rather than about now.
+  const out = text(tooltipHtml({ ...afterDark, wthr: '4°C and Clear' }, false));
+  assert.ok(out.includes('\u{1F315}'), out);
+});
+
+test('a cloud stays a cloud at night, and the label keeps the difference', () => {
+  // ⛅ has no lunar twin in Unicode, so both cloudy answers draw ☁️ after dark and
+  // the three-way distinction lives on the label beside it.
+  const glyph = wthr => text(tooltipHtml({ ...afterDark, wthr }, false));
+
+  for (const label of ['Partly Cloudy', 'Mostly Clear', 'Mostly Cloudy', 'Cloudy']) {
+    const out = glyph(`4°C and ${label}`);
+    assert.ok(out.includes('☁️'), `${label}: ${out}`);
+    assert.ok(!out.includes('⛅'), `${label} drew a sun behind a cloud`);
+    assert.ok(!MOONS.some(m => out.includes(m)), `${label} drew a moon`);
+    assert.ok(out.includes(label), `${label} lost its wording`);
+  }
+});
+
+test('weather that looks the same at midnight is drawn the same', () => {
+  const day = wthr => text(tooltipHtml({ ...point, wthr }, false));
+  const night = wthr => text(tooltipHtml({ ...afterDark, wthr }, false));
+
+  for (const [label, want] of [['Heavy Rain', '🌧️'], ['Foggy', '🌫️'],
+    ['Breezy', '💨'], ['Heavy Snow', '❄️'], ['Isolated Thunderstorms', '⛈️'],
+    ['Gorgeous', '🌡️']]) {
+    assert.ok(day(`4°C and ${label}`).includes(want), `${label} by day`);
+    assert.ok(night(`4°C and ${label}`).includes(want), `${label} by night`);
+  }
+});
+
+test('a ping that never snapped still resolves its own sky', () => {
+  // No `snap`, so no height, so the sea-level horizon — the honest answer when we
+  // do not know how high it was standing, and not a crash.
+  const bare = { t: afterDark.t, lat: afterDark.lat, lon: afterDark.lon };
+  const out = text(tooltipHtml({ ...bare, wthr: '4°C and Clear' }, false));
+  assert.ok(MOONS.some(m => out.includes(m)), out);
+
+  // And a snapped one is asked at the height the course records there.
+  const high = { ...afterDark, snap: { along: 1000, lat: afterDark.lat,
+    lon: afterDark.lon, ele: 2500, off: 4 } };
+  assert.ok(MOONS.some(m => text(tooltipHtml({ ...high, wthr: '4°C and Clear' },
+    false)).includes(m)));
 });
 
 test('the whole vocabulary resolves to something, including words nobody planned for', () => {

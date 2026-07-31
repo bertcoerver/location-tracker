@@ -292,6 +292,11 @@ and brings sunrise the better part of ten minutes forward, so these marks do not
 written for the valley, and should not. It assumes the horizon is actually visible, which in a valley
 it is not — much closer than pretending the runner is at the beach, and the error is minutes.
 
+The same arithmetic decides the **weather glyph** on every ping tooltip, which is why a clear ping at
+02:00 draws the moon that was up rather than a midday sun — see [what a tooltip
+says](#what-a-tooltip-says) below. That is one crossing serving both, on purpose: a mark saying the sun had set and a tooltip four
+pixels away drawing a sun would be the page contradicting itself about the same minute.
+
 Two things fell out of building it. The glyph on the map is an `IconLayer` over a canvas the page
 rasterises itself, because deck.gl cannot draw a colour emoji as *text*: with `sdf` on and off alike a
 `TextLayer` renders 🌅 as a solid filled square while the digits beside it come out perfectly — its font
@@ -421,9 +426,37 @@ Clear" are both the in-between one. An unrecognised label falls through to `🌡
 so the line keeps its shape — and that case is genuinely "some temperature, no idea what sky", which
 is the one place a thermometer is still the right icon.
 
-Night is deliberately not distinguished. A moon for "Clear" at 02:00 needs a sunrise table to be
-right, and would be wrong for half the year anywhere far enough north — which is where these races
-tend to be.
+Night *used* to be deliberately not distinguished, on the grounds that a moon for "Clear" at 02:00
+needs a sunrise table to be right and would otherwise be wrong for half the year anywhere far enough
+north — which is where these races tend to be. [`sun.js`](src/sun.js) is now exactly that table, so
+the objection is spent. `weatherHtml` asks `isDaylight` whether the sun was up over *that ping*, at
+its own place and its own moment and — where it snapped — at the course's height there. That is the
+same crossing, at the same altitude-corrected horizon, that puts the 🌅 and 🌃 marks on the course, so
+the glyph on the tooltip and the marks a few pixels away cannot contradict each other about whether a
+minute was dark. Ordinary noon is unaffected: every ping in this repo that carries weather was taken
+in daylight and draws exactly what it drew before.
+
+Only the two glyphs that **draw a sun** change after dark. Rain, fog, wind, snow and a thunderstorm
+look the same at midnight, and drawing them differently would be inventing a distinction the label
+does not make. `⛅` becomes a plain `☁️`, because Unicode has the sun behind three different amounts of
+cloud and nothing lunar behind any of them — so for the hours it cannot be drawn, the three-way
+distinction between "Mostly Cloudy", "Partly Cloudy" and "Mostly Clear" lives on the label sitting
+beside the glyph, which still spells out which of them it was.
+
+And a **clear night draws the moon it actually was** — 🌑🌒🌓🌔🌕🌖🌗🌘, from the date, not a fixed
+crescent. On a clear night the phase is precisely the fact a night runner wants: a full moon is a trail
+you can see without the torch, and a new one is why the head torch battery matters. It is only ever
+drawn on a *clear* night, which is what keeps it honest — the page never claims a moon nobody could
+have seen through the cloud. **It is mirrored below the equator.** 🌒 is a crescent lit on its right,
+which is a crescent seen from the north; the same moon over Réunion, where La Diagonale is run, leans
+the other way, and reflecting the index swaps waxing for waning while leaving the new and full moons —
+the two symmetric ones — alone. The phase comes from the elongation, how far round the sky the moon has
+moved from the sun, which is what a phase physically is; the moon's ecliptic latitude is dropped and
+two small periodic terms with it, worth a degree and a half against buckets three and a half days wide.
+
+`🌑` is the one glyph worth a warning: it is a dark disc, and the tooltip has a dark theme. Checked in
+both, and it survives — Apple draws it a dark *blue*, which reads against the near-black card. It is
+also the correct answer, and a new moon genuinely is nothing to look at.
 
 **A ping carries no prediction.** It used to be scored against the forecast made before it arrived —
 `Predicted 12:36 · 47s late` — which was a reading about the *model* on a card about a runner, and it
@@ -1229,7 +1262,8 @@ src/
   schedule.js       when the next ping is due, from the battery the last one reported
   stats.js          per-ping time, distance and climb, interpolating a hovered spot, and where
                     the run was at a given moment
-  sun.js            sunrise and sunset times, and placing them on the run's own trace
+  sun.js            sunrise and sunset times, placing them on the run's own trace, whether a
+                    given moment was daylight, and the moon's phase
   predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
   map.js            deck.gl instance, camera, follow-latest behaviour
@@ -1265,6 +1299,10 @@ you'd add a bundler (Vite is the usual choice) — it isn't worth it before then
   the measured counterpart to `positionAt` in `predict.js`: that one guesses forward from the model,
   this one reads backwards off the trace, and both hand back a place on the course. The sun marks are
   its only caller so far.
+- Something that needs to know **whether a moment was dark** → `isDaylight` in `sun.js`, which answers
+  it from the same crossings the 🌅 and 🌃 marks are placed at, so nothing built on it can disagree with
+  what the map already shows. It takes an elevation for the same reason those do. `moonPhase` is beside
+  it for anything that wants to say *how* dark.
 - A new reading → decide first which of the three it is, because the card is laid out by that and
   nothing else. A fact about the **handset** goes in the status bar on the title line (`statusHtml`);
   a fact about the **weather** joins the weather line; a fact about the **run** is a `reading()` row.
@@ -1542,6 +1580,30 @@ The weather ladder is tested as an *order*, not as a lookup, because the order i
 "Tropical Storm" must be a cyclone and not a thunderstorm, and "Partly Cloudy", "Mostly Cloudy"
 and "Mostly Clear" must be three different answers. An unrecognised label is asserted to reach
 the fallback rather than to draw nothing.
+
+Every one of those cases now has a **night twin**, on a fix thirteen hours later at the same place:
+"Clear" draws a moon and no sun anywhere in the markup, both cloudy answers draw `☁️` while their
+labels still read "Partly Cloudy" and "Mostly Cloudy", and rain, fog, wind, snow, a thunderstorm and
+the fallback are asserted to draw the *same* glyph by day and by night — which is the half of this
+that could go wrong silently. The daytime fixture's midday is now stated rather than incidental,
+since it is what decides those assertions.
+
+`isDaylight` is tested against the crossings it is derived from rather than against a clock: at five
+places and four times of year, a minute before each sunrise is night and a minute after it is
+daylight, and the same at sunset. That is the property the whole feature rests on — a ping next to a
+🌅 mark agreeing with it. At 2,500 m, a minute that is night at sea level is asserted to be daylight,
+which is the altitude correction reaching this function too. The two polar skies are
+told apart at last: a June midnight at 80°N is daylight for all twenty-four hours and a December noon
+is not, and `sunTimes` now says *which* absence it found rather than only that there was one — pinned
+at 90°N as well, where the hour angle divides by a cosine of zero and the infinity that comes back
+lands on the right side of the range without a branch to help it.
+
+The moon is tested against **published dates** at the four turning points — full and new in June 2025,
+the two quarters in July — and then as a *cycle*: sampled every three hours for thirty days from a new
+moon, all eight glyphs must appear, each in one unbroken run, and in order. That says the index is a
+fraction of a synodic month rather than a lookup that happens to land. The hemisphere mirror is
+asserted as a swap (🌒 ↔ 🌘, 🌓 ↔ 🌗) with the new and full moons unchanged, because those two are
+symmetric and mirroring must be a no-op on them.
 
 Two tests exist because real data disagreed with the code, and both are recorded as such: a leg
 of 24 m over five minutes must produce **no** pace rather than `209:47/km`, and a leg of 0.4 m
