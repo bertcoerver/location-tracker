@@ -9,6 +9,11 @@
      worker only answers navigations to the app's own URL, so this one always comes
      off the network. Add it to the home screen the same way as the app to read the
      standalone numbers, which are the ones that matter for the safe area. -->
+<!-- Its own manifest, with `display: standalone` exactly like the app's. Without
+     one, Add to Home Screen falls back to iOS's LEGACY standalone path — the page
+     reports `navigator.standalone: true` but `display-mode: browser`, which is a
+     different code path from the app and so measures the wrong thing. -->
+<link rel="manifest" href="diag.webmanifest">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
   :root { color-scheme: light dark; }
@@ -42,6 +47,7 @@
 <body>
 <h1>Tracker diagnostics</h1>
 <table id="out"></table>
+<button id="nudge">Re-assert viewport-fit</button>
 <button id="reset">Clear caches + unregister worker</button>
 <button id="reload">Reload</button>
 <div id="edge"></div>
@@ -54,6 +60,7 @@ const add = (k, v, cls = '') => rows.push([k, v, cls]);
 // element and ask what came out. `env()` is not visible to getComputedStyle on the
 // custom property itself.
 const probe = document.createElement('div');
+probe.id = 'probe';
 probe.style.cssText =
   'position:fixed;padding:env(safe-area-inset-top) env(safe-area-inset-right)' +
   ' env(safe-area-inset-bottom) env(safe-area-inset-left);visibility:hidden';
@@ -63,6 +70,14 @@ const insetBottom = cs.paddingBottom;
 
 const mode = ['standalone', 'fullscreen', 'minimal-ui', 'browser']
   .find(m => matchMedia(`(display-mode: ${m})`).matches) || 'unknown';
+
+// Which load of this app session this is. The whole question is whether the
+// viewport changes shape between the FIRST paint after launch and every one after
+// it, so the page has to say which it is rather than rely on anyone remembering.
+// sessionStorage is per-app-launch on iOS, so a cold start resets it to 1.
+const loads = Number(sessionStorage.getItem('loads') || 0) + 1;
+sessionStorage.setItem('loads', String(loads));
+add('load # this launch', loads + (loads === 1 ? '  (fresh launch)' : '  (after reload)'));
 
 add('display-mode', mode, mode === 'standalone' ? 'good' : 'bad');
 add('navigator.standalone', String(window.navigator.standalone));
@@ -115,6 +130,26 @@ add('screen.height - innerHeight', dead, dead > 0 ? 'bad' : 'good');
     `<tr><td>${k}</td><td class="${c}">${String(v).replace(/[<&]/g, s => s === '<' ? '&lt;' : '&amp;')}</td></tr>`
   ).join('');
 })();
+
+// The candidate fix, on a button so it can be tried here before it goes anywhere
+// near the app. iOS appears to drop `viewport-fit=cover` on any load that is not
+// the first of a launch; rewriting the meta forces the viewport to be evaluated
+// again. If `screen.height - innerHeight` falls to 0 after tapping this — and the
+// orange bar reaches the bottom of the screen — that is the fix.
+document.getElementById('nudge').onclick = () => {
+  const vp = document.querySelector('meta[name="viewport"]');
+  const base = vp.getAttribute('content');
+  vp.setAttribute('content', base.replace('viewport-fit=cover', 'viewport-fit=contain'));
+  requestAnimationFrame(() => {
+    vp.setAttribute('content', base);
+    // Two frames: one for the change to take, one for the layout it causes.
+    requestAnimationFrame(() => {
+      document.getElementById('nudge').textContent =
+        `after nudge: dead ${screen.height - innerHeight}px, ` +
+        `bottom inset ${getComputedStyle(probe).paddingBottom}`;
+    });
+  });
+};
 
 document.getElementById('reset').onclick = async () => {
   for (const n of await caches.keys()) await caches.delete(n);
