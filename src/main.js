@@ -4,13 +4,14 @@
 import { CONFIG, keysFor, LS_REFRESH } from './config.js';
 import { buildCourse } from './course.js';
 import {
-  cachedBeacons, cachedIndex, cachedSettings, defaultRun, fetchCourse, hydrate, loadCache,
-  RateLimitError, refreshBeacons, refreshIndex, refreshSettings
+  cachedBeacons, cachedIndex, cachedSettings, defaultRun, fetchCourse, hydrate, hydrateMedia,
+  loadCache, RateLimitError, refreshBeacons, refreshIndex, refreshSettings
 } from './github.js';
 import { createGeo, geoMessage, isDenied, viewerFrom } from './geo.js';
 import { parseGpx } from './gpx.js';
+import { buildMediaAtlas, placeMedia } from './media.js';
 import { createNews } from './news.js';
-import { buildPoints, latestOf } from './points.js';
+import { buildPoints, fixesOf, latestOf } from './points.js';
 import { buildForecast } from './predict.js';
 import { nextPollMs } from './schedule.js';
 import { applySnaps, snapAll } from './snap.js';
@@ -50,6 +51,15 @@ let latest = null;
 let course = null;
 let courseSha = null;
 let courseError = '';
+
+// What the run's photographs and clips said about themselves — name -> record,
+// from `hydrateMedia`. Metadata only; the pictures live in the HTTP cache.
+let media = {};
+// The thumbnails, as one texture, and the shas it was built from. The key is what
+// stops a repaint — and `show` runs on every poll — from re-decoding every image
+// on the page for a set of files that hasn't changed.
+let atlas = null;
+let atlasKey = '';
 
 // The map and the height strip are two views of one run, so pointing at a place
 // in either marks it in the other. Each only reports what its OWN pointer is
@@ -182,7 +192,28 @@ if (geo.supported()) {
  * before the GPX itself has finished downloading.
  */
 function show(cache) {
-  const points = buildPoints(cache);
+  const pings = buildPoints(cache);
+
+  // Photographs, placed against the PINGS alone — never against an array that
+  // already has media in it, or one photo's position could be interpolated off
+  // another's and the answer would depend on what order the folder listed them.
+  //
+  // Done twice, and the two passes answer different questions. This one is only
+  // asked which files carry their own coordinates, because that decides what goes
+  // into `points` before the snapper sees it. The second pass, after snapping, is
+  // the one whose interpolated positions are worth keeping — by then the pings
+  // either side have places on the course, so a photo between them lands on the
+  // route rather than on a chord across it.
+  const placed = placeMedia(Object.values(media), pings, course);
+  const fixes = placed.filter(p => p.point);
+
+  // A photo that recorded where it was taken is a fix like any other: it goes in
+  // the array, it is snapped by the same 500 m rule, and it counts towards
+  // distance and climb. What it is NOT is the run's latest ping, its finish, or
+  // an orange dot — see `fixesOf` for each of those.
+  const points = fixes.length
+    ? [...pings, ...fixes.map(asPoint)].sort((a, b) => a.t - b.t)
+    : pings;
 
   // The gun, when this run's settings declared one. Read off the SETTINGS cache
   // rather than off the parsed course, because that cache is what arrives first and
@@ -213,17 +244,74 @@ function show(cache) {
   // array, so neither can mark a moment the other doesn't.
   const sun = sunPois(points, course);
 
-  latest = latestOf(points);
+  // The second pass. `pings` have their snaps by now, so `traceAt` inside
+  // `placeMedia` places the interpolated files on the course.
+  const pois = placeMedia(Object.values(media), pings, course);
+
+  // The newest PING, not the newest thing in the array. This drives
+  // `nextPollMs`, which reads the phone's battery off it, and a photograph does
+  // not carry one — so a picture uploaded after the last fix would set the poll
+  // curve for a run it knows nothing about.
+  latest = latestOf(fixesOf(points));
 
   map.setPoints(points);
   map.setForecast(forecast);
   map.setSun(sun);
+  // Before `setMedia`, because it is what decides whether the atlas in hand still
+  // belongs to these files — and if it doesn't, the map must be given null rather
+  // than a texture keyed to filenames that have gone.
+  refreshAtlas(pois);
+  map.setMedia(pois, atlas);
   profile.setPoints(points);
   profile.setForecast(forecast);
   profile.setSun(sun);
   profile.scrollToLatest();
   ui.setPoints(points);
   ui.setForecast(forecast);
+}
+
+/**
+ * A media POI as a member of the points array.
+ *
+ * Deliberately NOT the POI itself. The two live different lives from here: this
+ * one is handed to the snapper, which writes `snap` onto it, and to `deriveStats`,
+ * which hangs half a dozen more fields off it — while the POI is what the map
+ * draws a picture from and hands to a tooltip. Sharing one object would put a
+ * distance and a climb on the thing the tooltip reads, and it would read them.
+ *
+ * `name` is the media filename, which cannot collide with a `.json` and so is a
+ * safe key in the snapper's own cache.
+ */
+function asPoint(poi) {
+  return { name: poi.name, sha: poi.sha, t: poi.t, lat: poi.lat, lon: poi.lon, kind: 'media' };
+}
+
+/**
+ * Rebuild the thumbnail atlas, if these are not the files it was built from.
+ *
+ * Fired and forgotten: the anchor dots are drawn from `setMedia` immediately, and
+ * the pictures land on them whenever they have finished decoding. A map that
+ * waited for a photograph before painting anything would be a map that waits for
+ * a photograph.
+ *
+ * The key is checked twice — once to decide whether to build at all, and once
+ * when the build returns — because a run switch mid-decode is entirely ordinary,
+ * and the answer to a question nobody is asking any more must not be painted.
+ */
+function refreshAtlas(pois) {
+  const key = pois.map(poi => poi.sha).join();
+  if (key === atlasKey) return;
+
+  atlasKey = key;
+  // The texture in hand is cut up by filename, and these are different filenames.
+  atlas = null;
+
+  if (!pois.length) return;
+  buildMediaAtlas(pois).then(built => {
+    if (key !== atlasKey) return;
+    atlas = built;
+    map.setMedia(pois, atlas);
+  });
 }
 
 /**
@@ -301,6 +389,14 @@ async function reconcile() {
 
     course = null;
     courseSha = null;
+    // Another run's photographs, and the texture cut from them. Dropped here
+    // rather than left to be overwritten, because `show` runs immediately below
+    // against the new run's cache and would otherwise place the old run's
+    // pictures on it.
+    media = storage.get(keysFor(next).media) || {};
+    atlas = null;
+    atlasKey = '';
+    map.setMedia([], null);
     map.setCourse(null);
     profile.setCourse(null);
     ui.setCourse(null);
@@ -323,6 +419,12 @@ async function reconcile() {
   // Points first: they're the live data, and they're already half in hand. The
   // course only changes what the pings are drawn ON, so it can land second.
   show(await hydrate(run, index));
+  // Then the photographs, which are neither live nor structural — nobody is
+  // watching a race for the pictures, and a run with forty of them must not hold
+  // its own pings up. In the steady state this makes no requests at all: the
+  // records are diffed on sha and read off disk.
+  media = await hydrateMedia(run, index);
+  show(loadCache(run));
   if (await loadCourse()) show(loadCache(run));
 
   // This pass started the load, so this pass has to end it — otherwise the dot

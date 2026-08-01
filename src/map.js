@@ -5,11 +5,11 @@ import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
-  makeTooltip, pointLayers, sunLayers, sunTooltipHtml, tooltipHtml, viewerLayers,
-  waypointTooltipHtml
+  makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers, sunLayers, sunTooltipHtml,
+  tooltipHtml, viewerLayers, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
-import { boundsOf, latestOf, posOf, unionBounds } from './points.js';
+import { boundsOf, fixesOf, latestOf, posOf, unionBounds } from './points.js';
 import { positionAt } from './predict.js';
 import { interpolateAt, originOf } from './stats.js';
 
@@ -51,6 +51,12 @@ export function createMap(container, {
   // the points and pushed in from main.js rather than computed here, so the map and
   // the height strip are marking one set of moments rather than two.
   let sun = [];
+  // Photographs and clips, placed. Derived in main.js from the same pings this
+  // view draws, and pushed in beside the sun for the same reason — one set of
+  // marks, not two. `mediaAtlas` is the texture their thumbnails are cut from,
+  // and it arrives a moment later than they do: the pictures have to decode.
+  let media = [];
+  let mediaAtlas = null;
   let hover = null;      // [lon, lat] on the course, from the profile strip
   // The pinned point, from a click in either view. While one is held the map's
   // hover tooltip is suspended and the crosshair stops chasing the cursor.
@@ -120,6 +126,11 @@ export function createMap(container, {
       // `points-hit` itself makes against the course band under it — the smaller,
       // more specific target owns the pixels it covers, and the ping is still
       // there six pixels away.
+      // Above the pings for the reason just given, and BELOW the sun for its
+      // mirror image: a thumbnail is 44 px and a sun mark is 5, so with the order
+      // reversed a photograph that happened to land on a sunset would take the
+      // whole of it. The smaller, more specific target keeps the pixels it covers.
+      ...mediaLayers(media, mediaAtlas),
       ...sunLayers(sun),
       ...hoverLayers(hover)
     ];
@@ -171,6 +182,24 @@ export function createMap(container, {
       return {
         view: 'map',
         html: sunTooltipHtml(object, originOf(points)),
+        lat: object.lat,
+        lon: object.lon,
+        along: null
+      };
+    }
+
+    // A photograph. Above the ping branch for the sun's reason and then some: one
+    // that recorded its own coordinates is genuinely in the points array, so it
+    // has every field the branch below tests for and would be described as an
+    // ordinary fix — losing the picture, which is the whole of what it is.
+    //
+    // `along: null` like the sun's, and for the same reason: pinnable, not
+    // draggable. Sliding a photograph down the course would be sliding a
+    // photograph.
+    if (object?.kind === 'media') {
+      return {
+        view: 'map',
+        html: mediaTooltipHtml(object, originOf(points)),
         lat: object.lat,
         lon: object.lon,
         along: null
@@ -558,11 +587,19 @@ export function createMap(container, {
   /** Fit every point AND the course, clamped — this tracker often sits still,
    *  and a degenerate bounding box would otherwise fit to infinite zoom. */
   function fitView(pts) {
+    // Pings only, and this is the one consumer where that matters enough to say
+    // out loud. Everything else downstream of the snapper reads `p.snap`, which a
+    // photo more than 500 m off the course never gets — so distance, pace and
+    // climb are safe from a mis-filed picture by the ordinary rule. `boundsOf`
+    // reads `posOf`, which falls back to the RAW fix by design, so it is the one
+    // place a photograph taken in the Pyrenees can drag a race in the Alps into a
+    // camera fit 350 km wide. See `fixesOf`.
+    const fixes = fixesOf(pts);
     // The course is the thing worth seeing whole; the pings so far are usually a
     // small part of it, and fitting only those would open on a stretch of road
     // with no context.
     const bounds = unionBounds(
-      pts.length ? boundsOf(pts) : null,
+      fixes.length ? boundsOf(fixes) : null,
       course ? courseBounds(course) : null
     );
     if (!bounds) return null;
@@ -614,12 +651,16 @@ export function createMap(container, {
   return {
     /** Replace the drawn set. Fits on first data, then follows new arrivals. */
     setPoints(next) {
-      const previous = latestOf(points);
+      const previous = latestOf(fixesOf(points));
       const previousAt = previous ? String(posOf(previous)) : null;
       points = next;
       if (!points.length) return render();
 
-      const latest = latestOf(points);
+      // Following follows the RUNNER. A photograph timestamped after the last
+      // ping is not the runner having moved there, and letting one drag the
+      // camera is how uploading a picture from the car park ends the race early.
+      const latest = latestOf(fixesOf(points));
+      if (!latest) return render();
       const [lon, lat] = posOf(latest);
 
       if (!fitted) {
@@ -698,6 +739,22 @@ export function createMap(container, {
      */
     setSun(next) {
       sun = next;
+      render();
+    },
+
+    /**
+     * The run's photographs and clips, from `placeMedia`, and the texture their
+     * thumbnails come out of.
+     *
+     * Two arguments rather than two calls because they have to change together:
+     * the atlas is keyed by filename, so a marker list that has moved on from the
+     * atlas beside it draws the wrong picture for a beat. The atlas is null until
+     * the images have decoded, and stays null for a run whose files could none of
+     * them be read — `mediaLayers` then draws the anchor dots alone.
+     */
+    setMedia(next, atlas = null) {
+      media = next;
+      mediaAtlas = atlas;
       render();
     },
 

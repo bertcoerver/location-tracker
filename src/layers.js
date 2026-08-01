@@ -12,7 +12,8 @@ import { isDaylight, moonPhase } from './sun.js';
 import {
   ago, dayTag, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtPace, mapsUrl
 } from './util.js';
-import { latestOf, posOf } from './points.js';
+import { fixesOf, latestOf, posOf } from './points.js';
+import { mediaKind, THUMB_PX } from './media.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
@@ -272,6 +273,69 @@ function sunAtlas() {
 }
 
 /**
+ * Photographs and clips, as thumbnails on the map.
+ *
+ * Two layers, in the sun's idiom with the pickability the other way round. There
+ * the dot is what you point at and the glyph beside it is a label; here the
+ * picture IS the mark, so it owns the tooltip and the dot under it is the
+ * annotation — a 44 px marker has to float clear of the route to be legible, and
+ * a mark that has moved off its own coordinate needs something left behind saying
+ * where that was.
+ *
+ * The upward offset is also what keeps the pings reachable, and this is the same
+ * measurement `allLayers` records for the sun marks reversed. deck picks the
+ * topmost pickable layer; a 44 px box sitting ON the coordinate would swallow the
+ * 16 px hit disc of every fix underneath it, and on a course pinged every five
+ * minutes that is several. Lifted, the box sits mostly in empty ground above the
+ * route and the ping below stays pointable.
+ *
+ * @param {Array} pois from [`placeMedia`](media.js).
+ * @param {{atlas, mapping}|null} atlas from `buildMediaAtlas`, once its images
+ *   have decoded. Null until then, and null forever for a run whose files all
+ *   failed — in which case only the anchor dots draw, which is the honest result:
+ *   something is there, and we cannot show you what.
+ */
+export function mediaLayers(pois, atlas) {
+  if (!pois?.length) return [];
+
+  const ring = surface();
+  const fill = accent();
+
+  return [
+    new deck.ScatterplotLayer({
+      id: 'media-dot',
+      // Not pickable: the thumbnail above it owns the tooltip, and two pickable
+      // layers over one mark are two answers to one question.
+      data: pois,
+      radiusUnits: 'pixels',
+      getPosition: p => [p.lon, p.lat],
+      getRadius: 4,
+      stroked: true,
+      lineWidthUnits: 'pixels',
+      getLineWidth: 2,
+      getLineColor: [...ring, 255],
+      getFillColor: [...fill, 255]
+    }),
+
+    ...(atlas ? [new deck.IconLayer({
+      id: 'media',
+      data: pois,
+      pickable: true,
+      iconAtlas: atlas.atlas,
+      iconMapping: atlas.mapping,
+      // A POI whose image would not decode has no cell in the mapping, and deck
+      // draws nothing for it rather than drawing its neighbour's picture.
+      getIcon: p => p.name,
+      getPosition: p => [p.lon, p.lat],
+      getSize: THUMB_PX,
+      sizeUnits: 'pixels',
+      getPixelOffset: [0, -(THUMB_PX / 2 + 8)],
+      updateTriggers: { getIcon: atlas }
+    })] : [])
+  ];
+}
+
+/**
  * The point layers.
  *
  * When a run has a course, each ping is drawn three times: faintly where the GPS
@@ -288,7 +352,12 @@ function sunAtlas() {
  * @param {Array} points sorted oldest-first, each maybe carrying `snap`
  * @param {number} pulse 0..1, drives the halo on the newest fix
  */
-export function pointLayers(points, pulse) {
+export function pointLayers(all, pulse) {
+  // Media that carried its own coordinates rides in the points array so that it
+  // snaps and counts, but it is not drawn here: it has a thumbnail of its own,
+  // and a dot under that thumbnail is one mark claimed by two layers — with two
+  // tooltips to match. See `mediaLayers`.
+  const points = fixesOf(all);
   const latest = latestOf(points);
   const latestData = latest ? [latest] : [];
   const ring = surface();
@@ -771,6 +840,67 @@ export function sunTooltipHtml(poi, origin = null) {
   if (poi.ele !== null && poi.ele !== undefined) rows.push(reading(ICON.ele, metres(poi.ele)));
 
   rows.push(mapsLink(poi.lat, poi.lon, `${poi.event} · ${fmtClock(poi.t)}`));
+  return rows.join('');
+}
+
+/**
+ * Tooltip markup for a photograph or a clip.
+ *
+ * Built like the sun's, because it is the same kind of thing — a moment and a
+ * place — with one addition and one subtraction. The addition is the picture,
+ * first under the title, because it is the entire reason anybody clicked. The
+ * subtraction is certainty: a sunrise is calculated and a ping is measured, while
+ * a photo is half of one and half of the other, and the page has to say which
+ * half is which.
+ *
+ * Hence the provenance line. A photo that recorded its own coordinates is a
+ * measurement and says so; one placed between two pings is an inference and says
+ * that instead. This is the same admission the `interpolated across` caveat makes
+ * on the row above it, made about the position as a whole rather than about the
+ * gap it came out of.
+ *
+ * A file whose name carries no time has no moment to put in a title, so its
+ * filename goes there instead and the clock rows drop away — the waypoint
+ * treatment, for a thing that has become a place.
+ *
+ * @param {object} poi from [`placeMedia`](media.js).
+ * @param {number|null} [origin] the moment the run's clock counts from.
+ */
+export function mediaTooltipHtml(poi, origin = null) {
+  const day = poi.t === null ? '' : dayTag(poi.t, origin);
+  const rows = [titleHtml(poi.t === null
+    ? escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, ''))
+    : `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}`)];
+
+  // A `<video>` rather than an `<img>` only where one is needed. A GIF animates
+  // perfectly well as an image, and wrapping it in a player would give it
+  // controls it has no use for.
+  const src = encodeURI(poi.url || '');
+  rows.push(mediaKind(poi.name) === 'webm'
+    ? `<video class="media" src="${src}" autoplay loop muted playsinline></video>`
+    : `<img class="media" src="${src}" alt="">`);
+
+  if (origin !== null && poi.t !== null && poi.t >= origin) {
+    rows.push(reading(ICON.time, fmtDuration(poi.t - origin), null, true));
+  }
+
+  if (poi.along !== null && poi.along !== undefined) {
+    rows.push(reading(ICON.dist, fmtDistance(poi.along),
+      poi.gap > CONFIG.maxPingMs ? `interpolated across ${fmtDuration(poi.gap)}` : null, true));
+  }
+  if (poi.ele !== null && poi.ele !== undefined) rows.push(reading(ICON.ele, metres(poi.ele)));
+
+  // Where this mark came from, in the tooltip's quietest voice. Two facts can be
+  // wrong about a photograph and neither is visible from the map: that its
+  // position was worked out rather than recorded, and that its time was read off
+  // a clock nobody said the zone of.
+  const notes = [
+    poi.source === 'exif' ? 'placed from the photo' : 'interpolated from its filename',
+    poi.assumedUtc ? 'time zone assumed' : null
+  ].filter(Boolean);
+  rows.push(`<div class="m">${notes.join(' · ')}</div>`);
+
+  rows.push(mapsLink(poi.lat, poi.lon, poi.name));
   return rows.join('');
 }
 
@@ -1298,6 +1428,10 @@ export function makeTooltip(
     // Before the fall-through below, which tests nothing at all: a sun POI carries
     // a `t` and would be described as a fix, complete with a battery it never had.
     if (object.kind === 'sun') return tip(sunTooltipHtml(object, originOf(getPoints())));
+    // And a photograph carries one too — plus, when it recorded its own
+    // coordinates, everything else a fix has, because it IS one. It still wants
+    // its own tooltip: what makes it worth pointing at is the picture.
+    if (object.kind === 'media') return tip(mediaTooltipHtml(object, originOf(getPoints())));
 
     const points = getPoints();
     const latest = latestOf(points);

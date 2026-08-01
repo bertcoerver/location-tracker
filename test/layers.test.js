@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import {
   beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
-  splitWeather, sunGlyph, sunTooltipHtml, tooltipHtml, viewerLayers, waypointTooltipHtml
+  mediaTooltipHtml, splitWeather, sunGlyph, sunTooltipHtml, tooltipHtml, viewerLayers,
+  waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
@@ -911,6 +912,109 @@ test('a sun mark is not mistaken for a ping', () => {
 
   assert.match(text(html), /· sunset/, html);
   assert.doesNotMatch(html, /class="st"/, 'described a sunset as a phone');
+});
+
+// --- photographs and clips ----------------------------------------------------
+
+/** A media POI as `placeMedia` builds one. */
+function mediaPoi(over = {}) {
+  return {
+    kind: 'media',
+    name: '2026-08-22T20_53_00+02_00.jpeg',
+    sha: 'm1',
+    url: 'https://raw.githubusercontent.com/o/r/main/locations/run/2026-08-22T20_53_00+02_00.jpeg?m1',
+    animated: false,
+    assumedUtc: false,
+    t: GUN + 53 * 60000,
+    lat: 42.79,
+    lon: 0.14,
+    along: 8823,
+    ele: 1204,
+    gap: 30 * 60000,
+    source: 'trace',
+    point: false,
+    ...over
+  };
+}
+
+test('a photo leads with the picture, then says when and how far in', () => {
+  const poi = mediaPoi();
+  const html = mediaTooltipHtml(poi, GUN);
+
+  assert.match(html, /<img class="media" src="[^"]+\.jpeg\?m1" alt="">/, html);
+  assert.match(text(html), new RegExp(fmtClock(poi.t)));
+  assert.match(text(html), /53m/);
+  assert.match(text(html), /8\.8 km/);
+  assert.match(text(html), /1,204 m/);
+  assert.match(html, /href="https:\/\/maps\.google\.com\/\?q=/);
+});
+
+test('a clip is a player and a gif is not', () => {
+  // A GIF animates perfectly well as an image, and wrapping it in a player would
+  // give it controls it has no use for.
+  const clip = mediaTooltipHtml(mediaPoi({ name: 'a.webm', animated: true }), GUN);
+  assert.match(clip, /<video class="media"[^>]*\bloop\b/, clip);
+  assert.match(clip, /\bmuted\b/);
+  assert.match(clip, /\bplaysinline\b/);
+
+  const gif = mediaTooltipHtml(mediaPoi({ name: 'a.gif', animated: true }), GUN);
+  assert.match(gif, /<img class="media"/, gif);
+  assert.doesNotMatch(gif, /<video/);
+});
+
+test('a photo says whether its position was recorded or worked out', () => {
+  assert.match(text(mediaTooltipHtml(mediaPoi({ source: 'exif' }), GUN)), /placed from the photo/);
+  assert.match(text(mediaTooltipHtml(mediaPoi(), GUN)), /interpolated from its filename/);
+});
+
+test('a photo whose zone nobody recorded says so too', () => {
+  assert.match(text(mediaTooltipHtml(mediaPoi({ assumedUtc: true }), GUN)), /time zone assumed/);
+  assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /time zone assumed/);
+});
+
+test('a photo with no moment is titled like a place', () => {
+  // Rule four: coordinates and no timestamp anywhere. There is no wall clock to
+  // put in the title, so the filename goes there — the waypoint treatment, for a
+  // thing that has become a place.
+  const html = mediaTooltipHtml(mediaPoi({
+    name: 'summit.jpg', t: null, along: null, source: 'exif'
+  }), GUN);
+
+  assert.match(text(html), /summit/);
+  assert.doesNotMatch(html, /\u{1F552}/u, 'gave a race clock to a mark with no time');
+});
+
+test('a photo before the gun has no race clock rather than a negative one', () => {
+  const html = mediaTooltipHtml(mediaPoi({ t: GUN - 3600000 }), GUN);
+  assert.doesNotMatch(html, /\u{1F552}/u, html);
+});
+
+test('a photo placed across a long silence says it was interpolated', () => {
+  assert.match(text(mediaTooltipHtml(mediaPoi({ gap: 100 * 60000 }), GUN)),
+    /interpolated across 1h 40m/);
+});
+
+test('a filename cannot break out of the attributes it is written into', () => {
+  // Anything at all can be committed to a run's folder, so a filename is not a
+  // trusted string — and it reaches the page twice, as a src and as a title.
+  const html = mediaTooltipHtml(mediaPoi({
+    name: '"><script>alert(1)</script>.jpg',
+    url: 'https://example/"><script>alert(1)</script>.jpg',
+    t: null
+  }), GUN);
+
+  assert.doesNotMatch(html, /<script>/, html);
+});
+
+test('a photo is not mistaken for a ping', () => {
+  // The same dispatch trap the sun falls into, and worse: a photo that recorded
+  // its own coordinates is genuinely IN the points array, so it has every field
+  // the fall-through tests for.
+  const poi = mediaPoi({ source: 'exif', point: true });
+  const html = makeTooltip(() => [])({ object: poi, layer: { id: 'media' } }).html;
+
+  assert.match(html, /<img class="media"/, html);
+  assert.doesNotMatch(html, /class="st"/, 'described a photograph as a phone');
 });
 
 test('the two sun glyphs are one character each and not the same one', () => {

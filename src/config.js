@@ -94,6 +94,22 @@ export const CONFIG = {
   viewerMaxAgeMs: 30000,
   viewerTimeoutMs: 15000,
 
+  // --- photos and clips dropped into a run folder ---------------------------
+  // How many of them one run will draw, newest filename first.
+  //
+  // The only bound on this feature's bandwidth, and the reason it needs one is
+  // that a media file is three orders of magnitude bigger than a ping: a folder
+  // somebody syncs a phone's camera roll into would otherwise be a page load
+  // measured in hundreds of megabytes. Forty photos is more than any race has
+  // ever wanted and about 15 MB, spent once per browser against a
+  // content-addressed URL. Past it the extras are ignored rather than queued —
+  // the page degrades to the first forty rather than to a spinner.
+  mediaLimit: 40,
+  // How long to wait for a video's first frame before giving up on its
+  // thumbnail. A container the browser cannot decode fires no event at all, so
+  // this is what stops one unplayable clip leaving the atlas pending forever.
+  mediaFrameMs: 3000,
+
   // --- snapping pings onto a run's course, when it has a .gpx ---------------
   snapMeters: 500,     // further than this from the course and a ping is left where it is
   // Both of these are metres of cost per metre of movement, so they're directly
@@ -314,17 +330,32 @@ export const CONFIG = {
 // computed against a gun time, `snapAll` records which one, and the answer now comes
 // from somewhere else entirely. A pre-gun ping snapped under the old start would keep
 // its place on the course with nothing able to notice.
-const V = 'v11';
+//
+// v12: the index record grew a `media` map, and this is the v9 and v11 situation a
+// third time. The listing is fetched with `If-None-Match`, and the tree of a repo
+// nobody has pushed to answers 304 — on which `refreshIndex` hands back the CACHED
+// index. A browser holding the v11 tree would go on reading records that have no
+// `media` key in them at all, and nothing would ever prompt it to look again: no
+// photograph on the map, ever, on exactly the machines that had visited before the
+// feature shipped.
+const V = 'v12';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the
  * one you came from. `snap` holds each ping's place on the course, which is the
  * expensive thing we only ever want to compute once per ping.
+ *
+ * `media` holds what each photo said about itself — a time, maybe a coordinate,
+ * and nothing else. No pixels: a decoded thumbnail is megabytes and would empty
+ * the 5 MB quota on a handful of files, while the images themselves are already
+ * kept by the HTTP cache under a content-addressed URL. What is worth storing is
+ * the EXIF read, because that is the part that costs a download.
  */
 export function keysFor(run) {
   return {
     points: `lt.points.${V}.${run}`,
-    snap: `lt.snap.${V}.${run}`
+    snap: `lt.snap.${V}.${run}`,
+    media: `lt.media.${V}.${run}`
   };
 }
 

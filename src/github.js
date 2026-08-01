@@ -11,6 +11,7 @@
 // runs exist, which are live, which is newest, and what's in the one on screen.
 
 import { CONFIG, keysFor, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG } from './config.js';
+import { MEDIA_RE, mediaTime, resolveMedia } from './media.js';
 import { parseSettings } from './settings.js';
 import { parseTime, pool, storage } from './util.js';
 
@@ -114,7 +115,7 @@ export async function fetchTree(etag) {
 export function buildIndex(entries) {
   const index = {};
   const record = run =>
-    (index[run] ??= { files: {}, latest: null, course: null, settings: null });
+    (index[run] ??= { files: {}, media: {}, latest: null, course: null, settings: null });
 
   for (const entry of entries) {
     if (entry.type !== 'blob') continue;
@@ -129,6 +130,19 @@ export function buildIndex(entries) {
     if (/\.gpx$/i.test(name)) {
       const found = record(run);
       if (!found.course || name < found.course.name) found.course = { name, sha: entry.sha };
+      continue;
+    }
+
+    // A photograph or a clip. Beside the course branch above rather than beside
+    // the ping filter below, because it shares all three of that branch's
+    // properties and none of the ping filter's: it CREATES a run record, it
+    // stays out of `files` — so `hydrate` and `newestFile` never see it and the
+    // poll schedule is untouched — and above all it must not move `latest`.
+    // Dropping a photo into a race that finished last summer is not that race
+    // moving, and a run that goes live again because somebody uploaded a picture
+    // would be polled for pings that are never coming.
+    if (MEDIA_RE.test(name)) {
+      record(run).media[name] = entry.sha;
       continue;
     }
 
@@ -476,6 +490,53 @@ export async function hydrate(run, index) {
   for (const name of Object.keys(cache)) if (!(name in files)) delete cache[name];
 
   if (run) storage.set(keysFor(run).points, cache);
+  return cache;
+}
+
+/**
+ * Fills in one run's media the way `hydrate` fills in its points: diff against
+ * the cache on sha, read only what's genuinely new.
+ *
+ * What comes back is METADATA — a time, maybe a coordinate — and never pixels.
+ * That is the whole reason this is cached at all: the EXIF read costs a download,
+ * and the download is the expensive part, while the images themselves are already
+ * held by the HTTP cache under a content-addressed URL. So a photo is fetched and
+ * parsed once per browser ever, and a reload places its marker off disk before
+ * any network call, exactly as the cached points paint before the GPX lands.
+ *
+ * Capped at `CONFIG.mediaLimit`, newest filename first. The cap is on the FILES,
+ * before any of them is opened, because the point of it is the bandwidth — see
+ * the note beside it in config.js.
+ *
+ * @returns {Promise<Object>} name -> media record, for the whole run.
+ */
+export async function hydrateMedia(run, index) {
+  const listing = Object.entries(index[run]?.media || {});
+  // Newest first, so a folder over the cap keeps the pictures from the end of the
+  // race rather than the ones the listing happened to name first. A name with no
+  // stamp in it sorts last: it is placeable only if it carries its own
+  // coordinates, which is the rarer case and the less urgent one.
+  const files = Object.fromEntries(
+    listing
+      .sort((a, b) => (mediaTime(b[0]) || 0) - (mediaTime(a[0]) || 0))
+      .slice(0, CONFIG.mediaLimit)
+  );
+
+  const cache = storage.get(keysFor(run).media) || {};
+
+  const fresh = Object.entries(files).filter(([name, sha]) => cache[name]?.sha !== sha);
+  if (fresh.length) {
+    const fetched = await pool(fresh, CONFIG.concurrency, ([name, sha]) =>
+      resolveMedia(rawUrl(run, name, sha), name, sha).catch(() => null));
+    for (const media of fetched) if (media) cache[media.name] = media;
+  }
+
+  // Mirror deletions and the cap alike: a file no longer in `files` is one that
+  // was removed upstream or has fallen off the end of the limit, and either way
+  // it must stop being drawn.
+  for (const name of Object.keys(cache)) if (!(name in files)) delete cache[name];
+
+  if (run) storage.set(keysFor(run).media, cache);
   return cache;
 }
 

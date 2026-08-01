@@ -274,6 +274,48 @@ test('buildIndex ignores loose files, subtrees, non-json and unparsable names', 
   assert.equal(index['new-race'].latest, Date.parse('2026-07-28T12:00:00+02:00'));
 });
 
+test('buildIndex sorts media into its own map, in either case', () => {
+  const index = buildIndex([
+    ...TREE,
+    { path: 'new-race/2026-07-28T11_30_00+02_00.jpeg', type: 'blob', sha: 'm1' },
+    { path: 'new-race/2026-07-28T11_31_00+02_00.JPG', type: 'blob', sha: 'm2' },
+    { path: 'new-race/2026-07-28T11_32_00+02_00.png', type: 'blob', sha: 'm3' },
+    { path: 'new-race/2026-07-28T11_33_00+02_00.GIF', type: 'blob', sha: 'm4' },
+    { path: 'new-race/2026-07-28T11_34_00+02_00.webm', type: 'blob', sha: 'm5' },
+    { path: 'new-race/summit.jpg', type: 'blob', sha: 'm6' }
+  ]);
+
+  assert.equal(Object.keys(index['new-race'].media).length, 6);
+  // And out of `files`, which is what keeps `hydrate` and `newestFile` — and so
+  // the beacons and the whole poll schedule — from ever seeing one.
+  assert.equal(Object.keys(index['new-race'].files).length, 2, 'still only the two pings');
+});
+
+test('a photo never moves a run\'s latest', () => {
+  // The rule the `.gpx` branch has always followed, and the reason it matters
+  // here: dropping a picture into a race that finished last summer is not that
+  // race moving, and a run that went live again because somebody uploaded a photo
+  // would be polled for pings that are never coming.
+  const index = buildIndex([
+    ...TREE,
+    { path: 'old-race/2026-12-25T09_00_00+02_00.jpeg', type: 'blob', sha: 'm1' }
+  ]);
+
+  assert.equal(index['old-race'].latest, Date.parse('2026-07-01T09:00:00+02:00'));
+});
+
+test('a folder holding only a photo is still a run', () => {
+  const index = buildIndex([
+    ...TREE,
+    { path: 'photo-only/2026-07-28T11_30_00+02_00.jpeg', type: 'blob', sha: 'm1' }
+  ]);
+
+  assert.deepEqual(Object.keys(index).sort(), ['new-race', 'old-race', 'photo-only']);
+  assert.equal(index['photo-only'].latest, null);
+  assert.deepEqual(index['photo-only'].files, {});
+  assert.deepEqual(index['photo-only'].media, { '2026-07-28T11_30_00+02_00.jpeg': 'm1' });
+});
+
 test('defaultRun picks the run that pinged most recently', () => {
   assert.equal(defaultRun(buildIndex(TREE)), 'new-race');
 });

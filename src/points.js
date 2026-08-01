@@ -17,6 +17,30 @@ export function latestOf(points) {
 }
 
 /**
+ * The pings, and only the pings.
+ *
+ * A photograph that recorded its own coordinates is a fix for the purposes of
+ * distance, pace and climb — it happened, at a place, at a time, and the run
+ * genuinely passed through it. It is NOT a fix for the four purposes below, and
+ * each one breaks differently:
+ *
+ *   the camera fit (`fitView`), because a photo that came out of the wrong folder
+ *     is still 350 km away and would open the map on a continent;
+ *   the poll schedule (`main.js`), because `nextPollMs` reads the newest fix's
+ *     battery, and a photograph does not report one;
+ *   the finish (`finishOf`), because that reads the LAST element's `is_finish`,
+ *     so a photo taken after the line silently un-finishes a finished race;
+ *   the dots (`pointLayers`), because a media POI draws its own thumbnail and an
+ *     orange dot underneath it would be the same mark claimed twice.
+ *
+ * Allocation-free for the overwhelmingly common case of a run with no media at
+ * all, which is why the `some` is worth the line.
+ */
+export function fixesOf(points) {
+  return points.some(p => p.kind === 'media') ? points.filter(p => p.kind !== 'media') : points;
+}
+
+/**
  * The run's finish, if it has one — the ping the phone marked as its last.
  *
  * Deliberately only the NEWEST point, not `points.some(...)`: a finish with

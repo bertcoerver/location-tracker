@@ -1056,6 +1056,56 @@ Files are never edited once written.
 A run's `.gpx` follows no naming convention at all — call it whatever reads well. The alphabetically
 first `.gpx` in the folder is the course.
 
+### Photographs and clips
+
+Drop a `.jpg`, `.jpeg`, `.png`, `.gif` or `.webm` into a run's folder and it appears on the map as a
+small thumbnail, with the full-size version in its own tooltip. Name it like a ping and it is placed
+like one:
+
+```
+locations/maxi-part/2026-07-30T18_15_02+00_00.jpeg
+```
+
+A photo can also carry its *own* account of when and where it was taken, in EXIF, and the two
+accounts disagree constantly — the files this was built for were shot in 2024 and renamed into a 2026
+run. So the precedence is fixed, and it is split:
+
+- **the filename is the authority on *when***. It is what somebody typed on purpose; the camera's
+  clock is whatever it happened to be set to. A filename stamp beats `DateTimeOriginal` outright.
+- **the file is the authority on *where***. A coordinate the camera recorded beats one this page
+  worked out, however far off the course it lands.
+
+Four cases follow from those two lines:
+
+| the file has | what happens |
+| --- | --- |
+| a filename stamp, nothing else | interpolated between the pings either side of it |
+| a filename stamp *and* an EXIF time | same, and the **filename** is the time used |
+| EXIF coordinates | drawn where the camera says, and treated as a fix — it snaps to the course by the same 500 m rule, and it counts towards distance and climb |
+| coordinates and no timestamp anywhere | a place rather than a moment, in the idiom of a GPX waypoint |
+
+Interpolation only, never extrapolation: a moment before the first ping or after the last has no
+position this page can honestly claim, so such a file is not drawn at all. A file with neither a time
+nor a coordinate is dropped for the same reason.
+
+A file named `IMG_4021.jpg` has no timestamp — the shape is checked, not merely parsed, because
+`Date.parse('IMG:4021')` is not an error, it is a date in the year 4021.
+
+Photos never move a run's `latest`, never end up in the poll schedule, never un-finish a finished
+run, and never drag the opening camera fit — see `fixesOf` in `points.js` for all four. Only JPEG is
+opened at all: PNG, GIF and WebM all have somewhere in their spec for a timestamp and phones
+essentially never write one, so those three cost no request and rest on their filename. `.heic` — what
+an iPhone shoots by default, and what browsers largely cannot decode — is ignored rather than
+half-drawn, so export as JPEG.
+
+The tooltip says which half of a mark is measurement and which is inference: *placed from the photo*
+against *interpolated from its filename*, plus *time zone assumed* where an EXIF time arrived with no
+`OffsetTimeOriginal` beside it. A `.gif` or `.webm` marker is a still first frame with a ▶ badge —
+a WebGL texture cannot animate — and plays properly once the tooltip is open.
+
+At most `CONFIG.mediaLimit` files per run, newest first. That cap is the only bound on this
+feature's bandwidth: a media file is three orders of magnitude bigger than a ping.
+
 `ntwrk` is range-checked rather than merely required to be a number: the tooltip renders it as `3/4`,
 so a `7` there would be a claim about a scale that doesn't exist, and a value outside `0`–`4` is
 dropped. `0` is kept and shown — a phone with no bars is the interesting case, because it explains the
@@ -1446,6 +1496,7 @@ src/
   predict.js        the run's own pace model: ETAs for ground ahead, and how it scored on ground behind
   profile.js        the height profile strip and its distance axis (canvas 2D)
   news.js           the one-line news bar: a tiny safe Markdown subset, and when to scroll it
+  media.js          photos and clips in a run folder: EXIF, the filename-vs-metadata rules, thumbnails
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views

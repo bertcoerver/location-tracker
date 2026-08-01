@@ -739,6 +739,21 @@
     white-space: normal;
   }
   .tip img { display: block; margin-top: 6px; max-width: 100%; border-radius: 5px; }
+  /* A photograph or a clip from the run's folder, which wants more room than the
+     `img` URL a ping body can carry — hence a class rather than a wider rule on
+     the bare element above. Capped against the VIEWPORT as well as in pixels, so
+     a portrait photo can't push the card off the side of a phone. The background
+     is load-bearing: it gives the box its final size before the image has
+     decoded, and without it the card grows under the cursor and the pin jumps. */
+  .tip .media {
+    display: block;
+    margin-top: 6px;
+    width: 100%;
+    max-width: min(320px, 70vw);
+    height: auto;
+    border-radius: 6px;
+    background: var(--surface-2);
+  }
   /* The one thing in a tooltip you can click. Both tooltips have to opt out of
      `pointer-events: none` for this to be reachable — deck.gl's default style
      sets it, and #profile-tip used to. */

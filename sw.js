@@ -72,6 +72,7 @@ const SHELL_URLS = [
   './src/layers.js',
   './src/main.js',
   './src/map.js',
+  './src/media.js',
   './src/news.js',
   './src/pin.js',
   './src/points.js',

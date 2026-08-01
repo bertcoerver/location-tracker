@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  boundsOf, buildPoints, finishOf, latestOf, posOf, unionBounds
+  boundsOf, buildPoints, finishOf, fixesOf, latestOf, posOf, unionBounds
 } from '../src/points.js';
 
 const cache = {
@@ -76,4 +76,23 @@ test('unionBounds covers both boxes, and tolerates either being absent', () => {
   assert.deepEqual(unionBounds(a, null), a);
   assert.deepEqual(unionBounds(null, b), b);
   assert.equal(unionBounds(null, null), null);
+});
+
+test('fixesOf keeps the photographs out of the four places they break things', () => {
+  const points = [
+    { name: 'a.json', t: 100, lat: 45.8, lon: 6.1 },
+    { name: 'p.jpeg', t: 150, lat: 43.0, lon: -0.4, kind: 'media' },
+    { name: 'b.json', t: 200, lat: 45.9, lon: 6.2, is_finish: true }
+  ];
+
+  const fixes = fixesOf(points);
+  assert.deepEqual(fixes.map(p => p.name), ['a.json', 'b.json']);
+  // The two that matter most: the finish survives a photo taken after it, and the
+  // camera fit is not dragged 350 km west by a picture from another range.
+  assert.equal(finishOf(fixes).name, 'b.json');
+  assert.deepEqual(boundsOf(fixes), [[6.1, 45.8], [6.2, 45.9]]);
+  // Where a run has no media at all — every run, until somebody uploads one — the
+  // array comes back untouched rather than copied.
+  const plain = [points[0], points[2]];
+  assert.equal(fixesOf(plain), plain);
 });

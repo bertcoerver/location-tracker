@@ -3,7 +3,7 @@
 import { gainAt } from './course.js';
 import { byRecency, isLive } from './github.js';
 import { fmtDistance, metres } from './layers.js';
-import { finishOf, latestOf } from './points.js';
+import { finishOf, fixesOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
 import { positionAt, predictAt } from './predict.js';
 import { originOf } from './stats.js';
@@ -494,7 +494,12 @@ export function createUi({ onRecenter, onRunPick }) {
 
   return {
     setPoints(next) {
-      points = next;
+      // Pings only. Everything this panel says is about the PHONE — when it last
+      // reported, what its battery was doing, whether it called the race finished
+      // — and a photograph answers none of those. `finishOf` is the sharp one: it
+      // reads the last element's `is_finish`, so a picture uploaded after the line
+      // would quietly un-finish a finished race.
+      points = fixesOf(next);
       finish = finishOf(points);
       renderTicker(document.body.dataset.state);
       // The dot and the picker's markers are downstream of liveness too, and a
