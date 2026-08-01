@@ -21,7 +21,6 @@ import { createProfile } from './profile.js';
 import { same } from './pin.js';
 import { createUi } from './ui.js';
 import { pinnedRun, pushRun } from './route.js';
-import { maybeShowDiag } from './diag.js';
 import { registerSw } from './sw-register.js';
 import { fmtClock, persistedAt, storage, throttle } from './util.js';
 
@@ -131,9 +130,6 @@ const ui = createUi({
 // The offline cache. Last in the wiring and first thing that can be deleted: the
 // page behaves identically without it, right up until the signal goes.
 registerSw();
-
-// Throwaway: the `?diag=1` viewport readout. See src/diag.js.
-addEventListener('load', maybeShowDiag);
 
 // Asking the device where it is — the one thing here that isn't the network. The
 // dot it produces is not part of the run: no cache, nothing persisted about the

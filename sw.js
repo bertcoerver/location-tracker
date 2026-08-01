@@ -26,14 +26,14 @@
 // Updating: there is no update prompt and nothing ever calls `location.reload()`.
 // Because the code above is network-first, an online launch is already current, so
 // the only thing left to swap is this worker — and the standard lifecycle does
-// that on the next cold start with no reload at all. That matters more than it
-// sounds on iOS: reloading a standalone web app makes it lose `viewport-fit=cover`
-// and leaves a band of dead screen along the bottom that no CSS can paint.
+// that on the next cold start with no reload at all. Which is also the safer
+// behaviour on iOS, where an installed app reloading itself has a history of
+// coming back with a viewport the wrong shape.
 
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '3';
+const VERSION = '4';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes
@@ -66,7 +66,6 @@ const SHELL_URLS = [
   './src/colors.js',
   './src/config.js',
   './src/course.js',
-  './src/diag.js',
   './src/geo.js',
   './src/github.js',
   './src/gpx.js',

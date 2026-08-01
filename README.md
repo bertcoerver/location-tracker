@@ -1847,26 +1847,45 @@ worth more here than it sounds — the height strip and the news bar anchor to t
 bottom of the window, and Safari's URL bar spends its life moving around down
 there.
 
-**Do not add `apple-mobile-web-app-capable`.** It is the obvious-looking meta tag
-and it is a trap. It opts into iOS's *old* standalone mode, which insets the web
-view above the home indicator and then still reports a non-zero
-`safe-area-inset-bottom` — so the clearance below the height strip is counted
-twice, once as dead space iOS fills with the document's background colour (a bare
-white band under the chart) and once as our own `env()` padding. The manifest's
-`display: standalone` has driven standalone since iOS 15.4 and that path honours
-`viewport-fit=cover`, so the view reaches the bottom of the screen and one inset
-is one inset. `apple-mobile-web-app-status-bar-style` is still wanted, and is what
-lets the map run up under the clock.
+**Do not add `viewport-fit=cover`.** It is the obvious thing to want — it is what
+makes a page go edge to edge — and on an installed iOS app it is broken. The app
+gets a viewport it *reports* as full height, with correct-looking
+`safe-area-inset-*` values, but lays it out one status bar SHORT and pinned to the
+top. The missing 59 px come off the bottom, outside the layout viewport, where no
+stylesheet can paint and iOS fills them with the document's background colour. It
+shows up as a white stripe along the bottom of the screen. The viewport is fixed
+at launch, so rewriting the meta afterwards does not repair it, and nothing in CSS
+can reach the band.
+
+Without cover, iOS lays the app out below the status bar and everything is
+ordinary. The cost is the edge-to-edge look: the map no longer runs under the
+clock. Every `env(safe-area-inset-*)` then reports 0. Those terms are kept
+throughout the stylesheet — they cost nothing, they are right on every other
+platform, and they are what would make cover safe to try again.
+
+Two things were blamed for this before the real cause was found, and neither was
+it: `apple-mobile-web-app-capable` (still worth leaving out — it opts into iOS's
+legacy standalone mode, where `display-mode` reads `browser` and the manifest is
+ignored entirely) and `<meta name="theme-color">` (harmless; out only because the
+configuration that finally tested clean did not have it). Measured on iOS 18.7.
+
+The way it was finally found is worth repeating for the next one of these: a
+`?diag=1` overlay reporting `screen.height - innerHeight`, and a switch in the
+`<head>` that rewrote the metas from a number in `localStorage` so every candidate
+configuration could be tried from the phone without a deploy. Guessing one
+variable per round had been wrong three times running.
 
 **Offline.** `sw.js` holds the whole rule set, and it is one rule applied four
 times: cache what cannot change, and never cache what must be fresh.
 
 | | strategy | why |
 |---|---|---|
+| `index.html`, `src/*.js` | **network first**, 3 s timeout, cache fallback | the files that change. Online you are always current; offline the precached copy answers. Staleness here is what makes a fix impossible to verify. |
+| `vendor/`, `icons/` | cache first | big, and their names change when they do. |
 | `api.github.com` | **network only** | the listing is the only thing that says a new ping exists. A stale one here looks exactly like a runner who has stopped moving, which is the worst failure this app has. |
 | `raw.githubusercontent.com?<sha>` | cache first, forever | `rawUrl` puts the blob sha in the query string, so the URL is content-addressed and its bytes can never change. A URL *without* one is a plain branch path, which can — so that goes to the network. |
 | `basemaps.cartocdn.com` | cache first, ~1200 tiles | the ground you have already looked at is the ground you are standing on. Evicted oldest-first once over the cap. |
-| same origin | cache first | the app shell, precached on install. |
+| anything else same-origin | cache first | precached on install. |
 
 So a cold open on a dead connection still paints: the shell comes from the cache,
 the points come from `localStorage`, and the tiles are whatever you last looked at.
@@ -1877,20 +1896,31 @@ It says how old the newest fix is, as it always does — that line is what keeps
 and it sits between opening the page and seeing a map, so it has to be precacheable
 — and a cross-origin script comes back opaque, which a `Cache` refuses to store.
 
-**Updating.** Bump `VERSION` in `sw.js` whenever a shell file changes; `activate`
-deletes every cache not on the keep list. The data and tile caches deliberately do
-*not* carry the version, so shipping a CSS tweak cannot throw away the pings of a
-race already in progress. The new version is never swapped in automatically — the
-panel offers a *Reload* and waits. A tracker that reloads itself out from under
-someone watching a runner between checkpoints is worse than one a version behind.
+**Updating.** There is no update prompt and nothing calls `location.reload()`.
+`index.html` and `src/*.js` are network-first, so an online launch is already
+current and there is nothing for a reload to fetch; the worker itself swaps on the
+next cold start, which is the standard lifecycle. This replaced a "new version is
+ready — Reload" line that was actively harmful: it was cache-first underneath, so
+a fix could sit undelivered until someone noticed the prompt, which is how a
+one-line CSS change once took four rounds to land.
+
+Still bump `VERSION` in `sw.js` when a precached file changes; `activate` deletes
+every cache not on the keep list. The data and tile caches deliberately do *not*
+carry the version, so shipping a CSS tweak cannot throw away the pings of a race
+already in progress.
 
 **Icons.** `icons/icon.svg` is the source; `python3 icons/render.py` rasterises the
 PNGs, which are committed like everything else. Pillow is the only thing it needs,
 and nothing builds at deploy time.
 
 **In development** the worker installs on `localhost` too, since that counts as a
-secure context. Worth knowing when a change to `src/` seems not to land: hard-reload,
-or tick *Update on reload* in the browser's Application panel.
+secure context. Changes to `index.html` and `src/` land on reload by themselves now;
+if something else seems stuck, tick *Update on reload* in the browser's Application
+panel.
+
+**On iOS, an installed app has its own storage container**, separate from Safari's.
+Clearing site data in Safari does not touch it. The reliable reset is to delete the
+home-screen icon and add it again, which discards the container with it.
 
 ## Publishing
 

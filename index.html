@@ -2,51 +2,35 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- No `viewport-fit=cover`, and that is the whole fix for a bug that took a long
+     time to find. With it, an installed iOS app gets a viewport it reports as
+     full-height but lays out one status-bar SHORT, pinned to the top — leaving a
+     59 px band along the bottom that is outside the layout viewport, that no
+     stylesheet can paint, and that iOS fills with the document background. It
+     showed up as a white stripe under the height profile. It is fixed at launch,
+     so no amount of rewriting this meta afterwards repairs it.
+     Without cover, iOS lays the app out below the status bar and every
+     `env(safe-area-inset-*)` below reports 0. Those terms are kept: they cost
+     nothing, they are correct on every other platform, and they are what would
+     make cover safe to try again. Measured on iOS 18.7. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Location Tracker</title>
 
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<!-- No `<meta name="theme-color">`. It is the one thing in this head that diag.html
-     did not have, and diag.html was the version that launched full-screen: same
-     manifest-driven standalone, same `black-translucent`, 0 px of dead screen
-     against this page's 59. A theme colour asks iOS to paint the status bar, while
-     `black-translucent` asks it to put the page under one, and asking for both
-     appears to cost `viewport-fit=cover` — the viewport comes back a status bar
-     shorter, pinned to the top, leaving a band along the bottom that is outside
-     the layout viewport and that no stylesheet can reach.
-     The manifest still carries `theme_color` for the platforms that read it. -->
+<!-- No `<meta name="theme-color">`. It came out while hunting the bug above and
+     turned out NOT to be the cause — the fix was dropping `viewport-fit=cover`.
+     It stays out only because the configuration that finally tested clean on a
+     phone did not have it; the manifest still carries `theme_color`, so Android
+     and desktop lose nothing. Safe to restore if the browser chrome wants it. -->
 <!-- Deliberately NOT `apple-mobile-web-app-capable`: it opts into iOS's legacy
      standalone mode, where `display-mode` reads `browser` and the manifest is
-     ignored. The manifest's `display: standalone` has driven standalone since iOS
-     15.4 and is the path that honours `viewport-fit=cover`. (Measured on a phone:
-     on the legacy path the viewport loses the status bar's height on every load
-     after the first. On the manifest path it survives.) -->
+     ignored. The manifest's `display: standalone` has driven standalone since
+     iOS 15.4. (This was also once believed to be the cause of the viewport bug
+     above. It was not.) -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
-
-<!-- THROWAWAY, with src/diag.js. iOS fixes the viewport at launch — a query string
-     never arrives (start_url is `.`), and rewriting the meta afterwards does
-     nothing, so the only way to test a head variant is to have it already in place
-     when the app starts. This reads a number left in localStorage by the diag
-     overlay and edits the two metas above before the body is parsed.
-     Variant 0 is the shipping configuration and costs one localStorage read. -->
-<script>
-(function () {
-  var v = Number(localStorage.getItem('vpVariant') || 0);
-  if (!v) return;
-  var vp = document.querySelector('meta[name="viewport"]');
-  var bar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-  var plain = 'width=device-width, initial-scale=1';
-  // 1: no status-bar style. 2: the opaque one. 3: no viewport-fit=cover.
-  // 4: neither — the conservative layout, which should have no dead space at all.
-  if (v === 1) bar.remove();
-  if (v === 2) bar.setAttribute('content', 'default');
-  if (v === 3) vp.setAttribute('content', plain);
-  if (v === 4) { vp.setAttribute('content', plain); bar.remove(); }
-})();
-</script>
 
 <!-- Vendored rather than pulled from unpkg. It is 1.6 MB and it is the one thing
      between opening the page and seeing a map, so it has to be precacheable — and
