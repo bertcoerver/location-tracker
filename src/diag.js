@@ -45,7 +45,8 @@ export function maybeShowDiag() {
 }
 
 function render() {
-  if (document.getElementById('diag')) return;
+  document.getElementById('diag')?.remove();
+  document.getElementById('diag-edge')?.remove();
 
   // Per app launch on iOS, so a cold start reads 1 and anything after a reload
   // reads higher. The whole question is whether the viewport changes shape between
@@ -77,6 +78,7 @@ function render() {
     ['--profile-h', getComputedStyle(document.documentElement)
       .getPropertyValue('--profile-h').trim() || '(unset)'],
     ['#profile bottom', profileBottom()],
+    ['', 'TAP HERE TO NUDGE'],
   ];
 
   const box = document.createElement('div');
@@ -86,9 +88,27 @@ function render() {
     'background:rgba(0,0,0,.86);color:#fff;font:11px/1.5 ui-monospace,Menlo,monospace;' +
     'padding:8px 10px;border-radius:8px;max-width:calc(100vw - 16px)';
   box.innerHTML = rows
-    .map(([k, v]) => `<div>${k}: <b style="color:${
-      k === 'DEAD SPACE' && parseFloat(v) > 0 ? '#ff7a5c' : '#8fe3a0'}">${v}</b></div>`)
+    .map(([k, v]) => (k
+      ? `<div>${k}: <b style="color:${
+          k === 'DEAD SPACE' && parseFloat(v) > 0 ? '#ff7a5c' : '#8fe3a0'}">${v}</b></div>`
+      : `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #555;
+           text-align:center;color:#7ab8ff">${v}</div>`))
     .join('');
+  // The candidate runtime fix, on the overlay itself so one screenshot can answer
+  // whether it works. Rewriting the viewport meta forces iOS to evaluate it again;
+  // if DEAD SPACE falls to 0 and the orange bar reaches the bottom of the screen,
+  // this repairs the damage whatever is causing it.
+  box.addEventListener('click', () => {
+    const vp = document.querySelector('meta[name="viewport"]');
+    const base = vp.getAttribute('content');
+    vp.setAttribute('content', base.replace('viewport-fit=cover', 'viewport-fit=contain'));
+    requestAnimationFrame(() => {
+      vp.setAttribute('content', base);
+      // Two frames plus a beat: one for the meta to take, one for the layout it
+      // causes, and the timeout because iOS resizes the viewport asynchronously.
+      requestAnimationFrame(() => setTimeout(render, 250));
+    });
+  });
   document.body.append(box);
 
   // The same proof diag.html uses: a bar pinned to the bottom of the LAYOUT

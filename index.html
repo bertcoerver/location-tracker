@@ -8,21 +8,21 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<!-- Two theme colours rather than one, so the system chrome around the app matches
-     the surface it is framing instead of picking a side. `black-translucent` is
-     what lets the map run under the status bar in standalone — it is the other
-     half of `viewport-fit=cover`, and without it installing the app would lose
-     the inset handling the page already does. -->
-<meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#1a1a19" media="(prefers-color-scheme: dark)">
-<!-- Deliberately NOT `apple-mobile-web-app-capable`. It still works, but it opts
-     into the OLD standalone mode, and that one insets the web view above the home
-     indicator while STILL reporting a non-zero `safe-area-inset-bottom` — so the
-     strip below the height profile gets counted twice: once as dead space iOS
-     paints in the document's background colour, once as our own `env()` padding.
-     The manifest's `display: standalone` drives standalone on its own since iOS
-     15.4, and that path honours `viewport-fit=cover`, so the view actually
-     reaches the bottom of the screen and one inset is one inset. -->
+<!-- No `<meta name="theme-color">`. It is the one thing in this head that diag.html
+     did not have, and diag.html was the version that launched full-screen: same
+     manifest-driven standalone, same `black-translucent`, 0 px of dead screen
+     against this page's 59. A theme colour asks iOS to paint the status bar, while
+     `black-translucent` asks it to put the page under one, and asking for both
+     appears to cost `viewport-fit=cover` — the viewport comes back a status bar
+     shorter, pinned to the top, leaving a band along the bottom that is outside
+     the layout viewport and that no stylesheet can reach.
+     The manifest still carries `theme_color` for the platforms that read it. -->
+<!-- Deliberately NOT `apple-mobile-web-app-capable`: it opts into iOS's legacy
+     standalone mode, where `display-mode` reads `browser` and the manifest is
+     ignored. The manifest's `display: standalone` has driven standalone since iOS
+     15.4 and is the path that honours `viewport-fit=cover`. (Measured on a phone:
+     on the legacy path the viewport loses the status bar's height on every load
+     after the first. On the manifest path it survives.) -->
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 
