@@ -9,18 +9,43 @@
 // safe-area question is closed.
 
 /**
- * Draw the overlay, if `?diag=1` is on the URL. Returns without touching anything
- * otherwise, which is every ordinary load.
+ * Arm the toggle, and draw the overlay if it has been asked for. An ordinary load
+ * gets one event listener on the status panel and nothing else.
  */
 export function maybeShowDiag() {
-  // Sticky, and it has to be. The manifest's `start_url` is `.`, so launching from
-  // the home screen drops any query string — there is no way to ask for `?diag=1`
-  // on the one launch whose numbers actually matter. So `?diag=1` in Safari arms
-  // it, `?diag=0` disarms it, and in between it survives into the installed app.
+  // Three taps on the status panel toggle it, and that is the ONLY way that works
+  // on an installed iOS app. A home-screen web app has its own storage container,
+  // separate from Safari's, so a flag set in Safari is invisible here — and the
+  // manifest's `start_url` is `.`, so a home-screen launch drops any query string
+  // before the page ever sees it. A gesture is the one channel into the installed
+  // app that neither of those can cut.
+  let taps = 0;
+  let last = 0;
+  document.getElementById('status')?.addEventListener('pointerup', () => {
+    const now = Date.now();
+    taps = now - last > 800 ? 1 : taps + 1;
+    last = now;
+    if (taps < 3) return;
+    taps = 0;
+    if (localStorage.getItem('diag') === '1') {
+      localStorage.removeItem('diag');
+      document.getElementById('diag')?.remove();
+      document.getElementById('diag-edge')?.remove();
+    } else {
+      localStorage.setItem('diag', '1');
+      render();
+    }
+  });
+
+  // `?diag=1` still works, for Safari and for the desktop.
   const asked = new URLSearchParams(location.search).get('diag');
   if (asked === '1') localStorage.setItem('diag', '1');
   if (asked === '0') localStorage.removeItem('diag');
-  if (localStorage.getItem('diag') !== '1') return;
+  if (localStorage.getItem('diag') === '1') render();
+}
+
+function render() {
+  if (document.getElementById('diag')) return;
 
   // Per app launch on iOS, so a cold start reads 1 and anything after a reload
   // reads higher. The whole question is whether the viewport changes shape between
@@ -70,6 +95,7 @@ export function maybeShowDiag() {
   // viewport. Any screen visible below it is outside the viewport, and nothing in
   // this stylesheet can reach it.
   const edge = document.createElement('div');
+  edge.id = 'diag-edge';
   edge.style.cssText =
     'position:fixed;left:0;right:0;bottom:0;height:4px;background:#eb6834;z-index:99';
   document.body.append(edge);
