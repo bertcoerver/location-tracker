@@ -32,23 +32,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 
-<!-- THROWAWAY, with src/diag.js. iOS fixes the viewport at launch, so a head
-     variant has to be in place before the body is parsed. This reads a number the
-     diag overlay leaves in localStorage. 0 is what ships and costs one read; 1-3
-     ask for the edge-to-edge top back three different ways, to find out whether
-     any of them avoids the dead band along the bottom that cover caused. -->
-<script>
-(function () {
-  var v = Number(localStorage.getItem('vpVariant') || 0);
-  if (!v) return;
-  var vp = document.querySelector('meta[name="viewport"]');
-  var bar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-  vp.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
-  if (v === 2) bar.remove();
-  if (v === 3) bar.setAttribute('content', 'default');
-})();
-</script>
-
 <!-- Vendored rather than pulled from unpkg. It is 1.6 MB and it is the one thing
      between opening the page and seeing a map, so it has to be precacheable — and
      a cross-origin script comes back opaque, which a Cache cannot store. -->
@@ -97,6 +80,17 @@
        which is now the whole distinction from a ping. The colour doesn't carry
        it alone: see `viewerLayers` for the ring and the halo. */
     --viewer: #1a73e8;
+
+    /* What iOS paints behind the status bar. Without `viewport-fit=cover` the app
+       is laid out BELOW the status bar (see the top of this file), and the strip
+       left over is filled with the document's background colour — the one thing
+       about that strip a stylesheet can still decide. So it is the basemap's own
+       land colour rather than the panel's near-white, which is what makes it read
+       as the map continuing up behind the clock instead of as a bar above it.
+       Sampled from real light_all/dark_all tiles over the races in this repo:
+       #eef3ee is 70% of their pixels. Deliberately NOT `--surface-1`, which is a
+       panel colour and is also the halo behind the map labels. */
+    --chrome: #eef3ee;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -112,15 +106,17 @@
 
       /* Same hue, lifted for the dark surface. */
       --viewer:         #4a9eff;
+
+      /* dark_all is much darker than the dark panel: 64% of its pixels are this. */
+      --chrome:         #090909;
     }
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html, body { height: 100%; margin: 0; background: var(--chrome); }
   body {
     font: 13px/1.45 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
     color: var(--text-primary);
-    background: var(--surface-1);
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
   }

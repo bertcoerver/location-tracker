@@ -1854,26 +1854,37 @@ gets a viewport it *reports* as full height, with correct-looking
 top. The missing 59 px come off the bottom, outside the layout viewport, where no
 stylesheet can paint and iOS fills them with the document's background colour. It
 shows up as a white stripe along the bottom of the screen. The viewport is fixed
-at launch, so rewriting the meta afterwards does not repair it, and nothing in CSS
-can reach the band.
+at launch, so rewriting the meta afterwards does not repair it.
 
-Without cover, iOS lays the app out below the status bar and everything is
-ordinary. The cost is the edge-to-edge look: the map no longer runs under the
-clock. Every `env(safe-area-inset-*)` then reports 0. Those terms are kept
-throughout the stylesheet — they cost nothing, they are right on every other
-platform, and they are what would make cover safe to try again.
+All three ways of asking for it were tried on the device and all three band:
+cover with `black-translucent`, cover with no `apple-mobile-web-app-status-bar-style`
+at all, and cover with the opaque status bar. It is cover itself. Measured on
+iOS 18.7.
 
-Two things were blamed for this before the real cause was found, and neither was
-it: `apple-mobile-web-app-capable` (still worth leaving out — it opts into iOS's
-legacy standalone mode, where `display-mode` reads `browser` and the manifest is
-ignored entirely) and `<meta name="theme-color">` (harmless; out only because the
-configuration that finally tested clean did not have it). Measured on iOS 18.7.
+So the app is laid out below the status bar, and the map no longer runs up behind
+the clock. That is the real cost and it is worth stating plainly. What softens it
+is `--chrome`: the strip iOS leaves above the app is painted with the document
+background, which is the one thing about it CSS still decides, so it is set to the
+basemap's own land colour (`#eef3ee` light, `#090909` dark — sampled from real
+tiles over the races in this repo, where it is ~65-70% of the pixels) rather than
+to the panel's near-white. The strip then reads as the map continuing up behind
+the status bar instead of as a bar sitting above it. Every
+`env(safe-area-inset-*)` now reports 0; those terms are kept throughout the
+stylesheet because they cost nothing, are right on every other platform, and are
+what would make cover safe to try again if Apple ever fixes it.
 
-The way it was finally found is worth repeating for the next one of these: a
-`?diag=1` overlay reporting `screen.height - innerHeight`, and a switch in the
-`<head>` that rewrote the metas from a number in `localStorage` so every candidate
-configuration could be tried from the phone without a deploy. Guessing one
-variable per round had been wrong three times running.
+Two other things were blamed before the real cause was found, and neither was it:
+`apple-mobile-web-app-capable` (still worth leaving out — it opts into iOS's legacy
+standalone mode, where `display-mode` reads `browser` and the manifest is ignored
+entirely) and `<meta name="theme-color">` (harmless; out only because the
+configuration that finally tested clean did not have it).
+
+The method is worth repeating for the next one of these, because guessing one
+variable per round was wrong three times running: a `?diag=1` overlay reporting
+`screen.height - innerHeight` and a bar pinned to `bottom: 0` — any screen visible
+below that bar is outside the viewport — plus a switch in the `<head>` that rewrote
+the metas from a number in `localStorage`, so every candidate could be tried from
+the phone with no deploy in between.
 
 **Offline.** `sw.js` holds the whole rule set, and it is one rule applied four
 times: cache what cannot change, and never cache what must be fresh.

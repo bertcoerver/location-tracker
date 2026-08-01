@@ -33,7 +33,7 @@
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '5';
+const VERSION = '6';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes
@@ -66,7 +66,6 @@ const SHELL_URLS = [
   './src/colors.js',
   './src/config.js',
   './src/course.js',
-  './src/diag.js',
   './src/geo.js',
   './src/github.js',
   './src/gpx.js',
@@ -118,8 +117,8 @@ self.addEventListener('fetch', event => {
 
   if (req.mode === 'navigate') {
     // Only the app's own URL. Answering every same-origin navigation with the
-    // shell would shadow any other page in the repo — diag.html most of all,
-    // which exists precisely to be readable when the shell is the suspect.
+    // shell would shadow any other page ever added to this repo, including a
+    // debug page written specifically to be readable when the shell is suspect.
     const scope = new URL(self.registration.scope).pathname;
     if (url.pathname === scope || url.pathname === `${scope}index.html`) {
       event.respondWith(shell());
