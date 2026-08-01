@@ -743,18 +743,31 @@ export function createMap(container, {
     },
 
     /**
-     * The run's photographs and clips, from `placeMedia`, and the texture their
-     * thumbnails come out of.
+     * The run's photographs and clips, from `placeMedia`.
      *
-     * Two arguments rather than two calls because they have to change together:
-     * the atlas is keyed by filename, so a marker list that has moved on from the
-     * atlas beside it draws the wrong picture for a beat. The atlas is null until
-     * the images have decoded, and stays null for a run whose files could none of
-     * them be read — `mediaLayers` then draws the anchor dots alone.
+     * WHERE they are, and nothing else. The texture goes in through
+     * `setMediaAtlas` below, and the separation is load-bearing: decoding a
+     * photograph takes far longer than fetching a course, so the atlas resolves
+     * several paints after the list it was started from. Passing both together
+     * meant that late texture carried its stale positions in with it, and a photo
+     * that had already been re-placed onto the course jumped back off it — until
+     * the next poll happened to paint again. See `refreshAtlas` in main.js.
      */
-    setMedia(next, atlas = null) {
+    setMedia(next) {
       media = next;
-      mediaAtlas = atlas;
+      render();
+    },
+
+    /**
+     * The texture those thumbnails are cut out of, or null.
+     *
+     * Null until the images have decoded, and null for a run whose files could
+     * none of them be read — `mediaLayers` then draws the anchor dots alone.
+     * main.js keys the atlas on the run's shas and is the only thing that knows
+     * whether the one in flight still belongs to the markers on screen.
+     */
+    setMediaAtlas(next) {
+      mediaAtlas = next;
       render();
     },
 

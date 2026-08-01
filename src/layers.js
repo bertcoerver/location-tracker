@@ -289,6 +289,15 @@ function sunAtlas() {
  * minutes that is several. Lifted, the box sits mostly in empty ground above the
  * route and the ping below stays pointable.
  *
+ * The dot is coloured by where its position CAME FROM, which is the only thing
+ * about a photograph the map can be wrong about. A file carrying its own GPS was
+ * somewhere, and is the accent every other measured fix on this page is. A file
+ * carrying only a filename was placed between the two pings either side, and is
+ * the course purple — the same colour, for the same reason, as a sunrise mark:
+ * both are computed ONTO the route rather than read off a device, and neither
+ * tells you anything new about the runner. Reserving the accent for real readings
+ * is what stops an interpolation from looking like evidence.
+ *
  * @param {Array} pois from [`placeMedia`](media.js).
  * @param {{atlas, mapping}|null} atlas from `buildMediaAtlas`, once its images
  *   have decoded. Null until then, and null forever for a run whose files all
@@ -299,7 +308,8 @@ export function mediaLayers(pois, atlas) {
   if (!pois?.length) return [];
 
   const ring = surface();
-  const fill = accent();
+  const measured = accent();
+  const inferred = courseColor();
 
   return [
     new deck.ScatterplotLayer({
@@ -314,7 +324,7 @@ export function mediaLayers(pois, atlas) {
       lineWidthUnits: 'pixels',
       getLineWidth: 2,
       getLineColor: [...ring, 255],
-      getFillColor: [...fill, 255]
+      getFillColor: p => [...(p.source === 'exif' ? measured : inferred), 255]
     }),
 
     ...(atlas ? [new deck.IconLayer({

@@ -55,10 +55,9 @@ let courseError = '';
 // What the run's photographs and clips said about themselves — name -> record,
 // from `hydrateMedia`. Metadata only; the pictures live in the HTTP cache.
 let media = {};
-// The thumbnails, as one texture, and the shas it was built from. The key is what
-// stops a repaint — and `show` runs on every poll — from re-decoding every image
-// on the page for a set of files that hasn't changed.
-let atlas = null;
+// The shas the thumbnail texture was built from. The texture itself belongs to the
+// map; this is only what stops a repaint — and `show` runs on every poll — from
+// re-decoding every image on the page for a set of files that hasn't changed.
 let atlasKey = '';
 
 // The map and the height strip are two views of one run, so pointing at a place
@@ -257,11 +256,10 @@ function show(cache) {
   map.setPoints(points);
   map.setForecast(forecast);
   map.setSun(sun);
-  // Before `setMedia`, because it is what decides whether the atlas in hand still
-  // belongs to these files — and if it doesn't, the map must be given null rather
-  // than a texture keyed to filenames that have gone.
+  map.setMedia(pois);
+  // The pictures for them, which arrive on their own schedule and never carry a
+  // position with them.
   refreshAtlas(pois);
-  map.setMedia(pois, atlas);
   profile.setPoints(points);
   profile.setForecast(forecast);
   profile.setSun(sun);
@@ -294,9 +292,16 @@ function asPoint(poi) {
  * waited for a photograph before painting anything would be a map that waits for
  * a photograph.
  *
- * The key is checked twice — once to decide whether to build at all, and once
- * when the build returns — because a run switch mid-decode is entirely ordinary,
- * and the answer to a question nobody is asking any more must not be painted.
+ * Only ever hands the map a TEXTURE. The markers it is cut for were pushed in
+ * separately and have moved on by now — decoding takes long enough that the
+ * course usually lands first, which re-places every interpolated photo onto the
+ * route. A build that pushed its own stale `pois` back in undid exactly that.
+ *
+ * Keyed on the shas, so a paint whose files haven't changed keeps the texture it
+ * has instead of rebuilding one per poll. The key is checked twice — once to
+ * decide whether to build at all, and once when the build returns — because a run
+ * switch mid-decode is entirely ordinary, and the answer to a question nobody is
+ * asking any more must not be painted.
  */
 function refreshAtlas(pois) {
   const key = pois.map(poi => poi.sha).join();
@@ -304,13 +309,12 @@ function refreshAtlas(pois) {
 
   atlasKey = key;
   // The texture in hand is cut up by filename, and these are different filenames.
-  atlas = null;
+  map.setMediaAtlas(null);
 
   if (!pois.length) return;
   buildMediaAtlas(pois).then(built => {
     if (key !== atlasKey) return;
-    atlas = built;
-    map.setMedia(pois, atlas);
+    map.setMediaAtlas(built);
   });
 }
 
@@ -394,9 +398,9 @@ async function reconcile() {
     // against the new run's cache and would otherwise place the old run's
     // pictures on it.
     media = storage.get(keysFor(next).media) || {};
-    atlas = null;
     atlasKey = '';
-    map.setMedia([], null);
+    map.setMedia([]);
+    map.setMediaAtlas(null);
     map.setCourse(null);
     profile.setCourse(null);
     ui.setCourse(null);
@@ -419,13 +423,20 @@ async function reconcile() {
   // Points first: they're the live data, and they're already half in hand. The
   // course only changes what the pings are drawn ON, so it can land second.
   show(await hydrate(run, index));
+  if (await loadCourse()) show(loadCache(run));
   // Then the photographs, which are neither live nor structural — nobody is
   // watching a race for the pictures, and a run with forty of them must not hold
   // its own pings up. In the steady state this makes no requests at all: the
   // records are diffed on sha and read off disk.
+  //
+  // After the course, and that ordering is the difference between a photo landing
+  // on the route and landing beside it. An interpolated one is placed between the
+  // two pings either side, which sit on the COURSE once there is one and on their
+  // raw fixes until then — so a photo resolved first appears on a chord across the
+  // bend and then hops. Nothing else waits on this, and it is a megabyte of JPEG
+  // against a course file we were fetching anyway.
   media = await hydrateMedia(run, index);
   show(loadCache(run));
-  if (await loadCourse()) show(loadCache(run));
 
   // This pass started the load, so this pass has to end it — otherwise the dot
   // pulses forever, claiming a run is live when all it means is that the page is
