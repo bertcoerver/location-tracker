@@ -21,6 +21,9 @@
  *   was clicked; the raw fix is inside the tooltip, and its Maps link goes there.
  * @property {number|null} along metres along the course, or null for a ping
  *   that never snapped — it has a place on the map and none on the strip.
+ * @property {string} [media] the filename, on a selection that is a photograph or
+ *   a clip. It is what `same` compares such a selection by, and what lets the
+ *   card's own buttons find the next one along.
  */
 
 /**
@@ -79,6 +82,12 @@ export function clampTop(clientY, tipHeight, ceiling = Infinity, gap = 14, margi
  */
 export function same(a, b) {
   if (!a || !b) return false;
+  // A photograph is identified by its filename rather than by where it landed.
+  // Two shots from the same spot — a burst, or two frames either side of one
+  // ping — have the very same coordinates, and compared by place the second
+  // would read as the first being clicked again and put the pin DOWN. That is
+  // exactly the step the `>` button makes, so it is not a corner case.
+  if (a.media || b.media) return a.view === b.view && a.media === b.media;
   return a.view === b.view && a.lat === b.lat && a.lon === b.lon && a.along === b.along;
 }
 
@@ -86,8 +95,28 @@ export function same(a, b) {
  * Take ownership of the `#pin` element.
  *
  * @param {HTMLElement} [element]
+ * @param {(act: string) => void} [onAction] what a `[data-act]` button inside the
+ *   card was for. Delegated from the element itself rather than bound per button,
+ *   because `show` replaces the whole subtree every time the pinned point changes
+ *   — anything bound to a button would be thrown away with it, at a moment nobody
+ *   here can see coming. The handler is registered once and outlives every card.
+ *
+ *   Whoever passes this decides what the strings mean; this file only knows that
+ *   a click landed on something claiming to be one. `stopPropagation`, because the
+ *   pin sits over the map and a press inside it is not a press on the place
+ *   underneath — it must not put the very selection down that it is acting on.
  */
-export function createPin(element = document.getElementById('pin')) {
+export function createPin(element = document.getElementById('pin'), onAction = null) {
+  if (onAction) {
+    element.addEventListener('click', event => {
+      const act = event.target.closest?.('[data-act]');
+      if (!act || !element.contains(act)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onAction(act.dataset.act);
+    });
+  }
+
   return {
     /** Fill it in and show it. Positioning is a separate call — the content
      *  changes on a click, the position on every frame. */

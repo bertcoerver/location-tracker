@@ -13,7 +13,7 @@ import {
   ago, dayTag, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtPace, mapsUrl
 } from './util.js';
 import { fixesOf, latestOf, posOf } from './points.js';
-import { mediaKind, THUMB_PX } from './media.js';
+import { isVideo, THUMB_PX } from './media.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
@@ -865,6 +865,25 @@ function capStat(icon, value) {
 }
 
 /**
+ * One of the controls laid over a pinned photograph.
+ *
+ * `data-act` is the whole interface between this file and the click handler:
+ * layers.js knows what the buttons ARE and map.js knows what they DO, and neither
+ * has to import the other. pin.js delegates one listener on the element rather
+ * than binding three per selection, which matters because the card's markup is
+ * replaced wholesale every time the pin moves.
+ *
+ * `disabled` rather than absent at the ends of the run. A button that vanishes
+ * takes its neighbours' positions with it, so the one you meant to press next is
+ * no longer where you were about to press — and there is no way to tell "there is
+ * nothing further this way" from "this viewer has no such control".
+ */
+function mediaButton(act, glyph, label, enabled = true) {
+  return `<button type="button" class="mb ${act}" data-act="${act}" ` +
+    `title="${label}" aria-label="${label}"${enabled ? '' : ' disabled'}>${glyph}</button>`;
+}
+
+/**
  * Tooltip markup for a photograph or a clip.
  *
  * The one tooltip on this page that is not a card with a picture in it. It is the
@@ -895,15 +914,30 @@ function capStat(icon, value) {
  *
  * @param {object} poi from [`placeMedia`](media.js).
  * @param {number|null} [origin] the moment the run's clock counts from.
+ * @param {{prev: boolean, next: boolean}|null} [controls] whether to lay the
+ *   expand and step buttons over the picture, and which of the two steps lead
+ *   anywhere. Only the PINNED card passes this, and that is not a style choice:
+ *   the hover tooltip ignores the pointer outright — see `makeTooltip` — so a
+ *   button drawn on it could be seen and never pressed, which is worse than no
+ *   button at all. A click is what makes the card reachable, and a click is
+ *   already how you pin one.
  */
-export function mediaTooltipHtml(poi, origin = null) {
+export function mediaTooltipHtml(poi, origin = null, controls = null) {
   // A `<video>` rather than an `<img>` only where one is needed. A GIF animates
   // perfectly well as an image, and wrapping it in a player would give it
   // controls it has no use for.
   const src = encodeURI(poi.url || '');
-  const frame = mediaKind(poi.name) === 'webm'
+  const frame = isVideo(poi.name)
     ? `<video class="media" src="${src}" autoplay loop muted playsinline></video>`
     : `<img class="media" src="${src}" alt="">`;
+
+  // Over the picture rather than under it, for the reason the readings are: the
+  // card has no room that isn't photograph, and a strip of chrome below the image
+  // would be the one edge the picture didn't reach.
+  const buttons = !controls ? '' :
+    mediaButton('expand', '⤢', 'See it full size') +
+    mediaButton('prev', '‹', 'Previous photo', controls.prev) +
+    mediaButton('next', '›', 'Next photo', controls.next);
 
   const day = poi.t === null ? '' : dayTag(poi.t, origin);
   const title = poi.t === null
@@ -921,7 +955,7 @@ export function mediaTooltipHtml(poi, origin = null) {
   }
   if (poi.ele !== null && poi.ele !== undefined) stats.push(capStat(ICON.ele, metres(poi.ele)));
 
-  return `<figure class="ph">${frame}<figcaption class="cap">` +
+  return `<figure class="ph">${frame}${buttons}<figcaption class="cap">` +
     `<span class="ct">${title}</span>` +
     (stats.length ? `<span class="cs">${stats.join('')}</span>` : '') +
     '</figcaption></figure>';

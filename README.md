@@ -1058,9 +1058,9 @@ first `.gpx` in the folder is the course.
 
 ### Photographs and clips
 
-Drop a `.jpg`, `.jpeg`, `.png`, `.gif` or `.webm` into a run's folder and it appears on the map as a
-small thumbnail, with the full-size version in its own tooltip. Name it like a ping and it is placed
-like one:
+Drop a `.jpg`, `.jpeg`, `.png`, `.gif`, `.webm`, `.mp4`, `.m4v` or `.mov` into a run's folder and it
+appears on the map as a small thumbnail, with the picture itself in its own tooltip. Name it like a
+ping and it is placed like one:
 
 ```
 locations/maxi-part/2026-07-30T18_15_02+00_00.jpeg
@@ -1093,15 +1093,30 @@ A file named `IMG_4021.jpg` has no timestamp — the shape is checked, not merel
 
 Photos never move a run's `latest`, never end up in the poll schedule, never un-finish a finished
 run, and never drag the opening camera fit — see `fixesOf` in `points.js` for all four. Only JPEG is
-opened at all: PNG, GIF and WebM all have somewhere in their spec for a timestamp and phones
-essentially never write one, so those three cost no request and rest on their filename. `.heic` — what
-an iPhone shoots by default, and what browsers largely cannot decode — is ignored rather than
-half-drawn, so export as JPEG.
+opened at all: every other format has somewhere in its spec for a timestamp and phones essentially
+never write one, so the rest cost no request and rest on their filename.
 
-The tooltip says which half of a mark is measurement and which is inference: *placed from the photo*
-against *interpolated from its filename*, plus *time zone assumed* where an EXIF time arrived with no
-`OffsetTimeOriginal` beside it. A `.gif` or `.webm` marker is a still first frame with a ▶ badge —
-a WebGL texture cannot animate — and plays properly once the tooltip is open.
+Two format notes. `.heic` — what an iPhone shoots by default for **stills**, and what browsers
+largely cannot decode — is ignored rather than half-drawn, so export photos as JPEG. Video is the
+opposite call: WebM is the one container a browser is guaranteed to play and the one container a
+phone will not give you, so `.mov` (iOS) and `.mp4` (Android) are admitted as they come. A clip a
+particular browser can't decode gets its anchor dot and no thumbnail — Chrome and Firefox refuse
+HEVC-in-`.mov`, Safari doesn't — rather than hanging the map waiting for a frame that never arrives.
+
+The tooltip *is* the photograph, edge to edge, with the clock, the elapsed, the distance and the
+height laid over the foot of it. Where the position came from is said by the colour of the dot the
+picture floats above — accent orange for a photo that recorded its own coordinates, course purple for
+one interpolated between pings — rather than in words. Two caveats survive in the caption: a distance
+interpolated across a long silence is prefixed `~`, and a time read off a camera clock that named no
+zone gets `zone?` beside it. A `.gif` or a clip gets a ▶ badge on its marker, because a WebGL texture
+cannot animate, and plays properly once the tooltip is open.
+
+Click a thumbnail and the tooltip pins, which is what makes it reachable — the hover one ignores the
+pointer entirely so that it can't cover the very thumbnail holding it open. A pinned photograph
+carries three controls: **⤢** opens it full size over the whole window (Escape closes that first, and
+the pin second), and **‹ ›** step to the previous or next picture in the run, flying the camera to it
+and moving the pin with it. The order they walk is the run's own: oldest first, with any timeless
+place-not-a-moment files at the end.
 
 At most `CONFIG.mediaLimit` files per run, newest first. That cap is the only bound on this
 feature's bandwidth: a media file is three orders of magnitude bigger than a ping.
@@ -1500,6 +1515,7 @@ src/
   map.js            deck.gl instance, camera, follow-latest behaviour
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
+  shot.js           a photograph at full size, opened from the pinned card's ⤢
   colors.js         reads the CSS colour tokens
   util.js           time parsing (ping filenames and hand-written starts), 24-hour clocks, race days,
                     pace, formatting, escaping, pool, storage guard

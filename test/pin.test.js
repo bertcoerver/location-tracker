@@ -81,6 +81,20 @@ test('same() treats a switch of view as a move, not a dismissal', () => {
   assert.ok(!same(at('map', 46.5, 8.1, 100), at('profile', 46.5, 8.1, 100)));
 });
 
+test('same() tells two photographs apart by name, not by place', () => {
+  const shot = name => ({ view: 'map', lat: 46.5, lon: 8.1, along: null, media: name, html: '' });
+  // A burst, or two frames either side of one ping: identical coordinates, two
+  // different pictures. Compared by place the second would read as the first being
+  // clicked again and put the pin DOWN — and that is exactly the step the `>`
+  // button makes, so it is not a corner case.
+  assert.ok(!same(shot('a.jpg'), shot('b.jpg')));
+  // And the toggle still has to work: clicking the photograph already pinned is
+  // how you put it down.
+  assert.ok(same(shot('a.jpg'), shot('a.jpg')));
+  // A photograph and the bare place it sits on are not the same selection either.
+  assert.ok(!same(shot('a.jpg'), at('map', 46.5, 8.1, null)));
+});
+
 test('same() is false when either side is nothing', () => {
   // The first click of all, and the click on bare basemap that dismisses.
   assert.ok(!same(null, at('map', 46.5, 8.1, 100)));

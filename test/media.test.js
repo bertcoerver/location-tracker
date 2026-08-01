@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  isAnimated, MEDIA_RE, mediaKind, mediaTime, parseExif, placeMedia
+  isAnimated, isVideo, MEDIA_RE, mediaKind, mediaTime, parseExif, placeMedia
 } from '../src/media.js';
 
 const MINUTE = 60000;
@@ -26,14 +26,16 @@ function fixture(name) {
 
 // --- naming -------------------------------------------------------------------
 
-test('MEDIA_RE admits the five formats and nothing else', () => {
-  for (const name of ['a.jpg', 'a.jpeg', 'a.png', 'a.gif', 'a.webm',
-                      'A.JPG', 'A.JPEG', 'A.PNG', 'A.GIF', 'A.WEBM']) {
+test('MEDIA_RE admits the formats a phone actually produces, and nothing else', () => {
+  for (const name of ['a.jpg', 'a.jpeg', 'a.png', 'a.gif', 'a.webm', 'a.mp4', 'a.m4v', 'a.mov',
+                      'A.JPG', 'A.JPEG', 'A.PNG', 'A.GIF', 'A.WEBM', 'A.MP4', 'A.M4V', 'A.MOV']) {
     assert.ok(MEDIA_RE.test(name), `${name} should be media`);
   }
   // `.heic` is the one worth naming: it is what an iPhone shoots by default, and
-  // browsers largely cannot decode it. Excluded rather than half-supported.
-  for (const name of ['a.json', 'a.gpx', 'course_settings.json', 'a.heic', 'a.mp4', 'a.webp', 'a']) {
+  // browsers largely cannot decode it. Excluded rather than half-supported —
+  // unlike `.mov`, which is the same phone's video and which browsers largely
+  // CAN, so it is admitted and left to degrade where they can't.
+  for (const name of ['a.json', 'a.gpx', 'course_settings.json', 'a.heic', 'a.webp', 'a.avi', 'a']) {
     assert.ok(!MEDIA_RE.test(name), `${name} should not be media`);
   }
 });
@@ -42,12 +44,26 @@ test('the two jpeg spellings collapse to one kind', () => {
   assert.equal(mediaKind('a.jpg'), 'jpeg');
   assert.equal(mediaKind('a.JPEG'), 'jpeg');
   assert.equal(mediaKind('a.webm'), 'webm');
+  assert.equal(mediaKind('a.MOV'), 'mov');
   assert.equal(mediaKind('a.json'), null);
+});
+
+test('a clip is a clip whatever container it came in', () => {
+  for (const name of ['a.webm', 'a.mp4', 'a.m4v', 'a.MOV']) {
+    assert.equal(isVideo(name), true, `${name} should want a <video>`);
+  }
+  // A GIF moves and still is not video: it animates as an image, and a player
+  // would give it controls it has no use for.
+  for (const name of ['a.gif', 'a.jpg', 'a.png', 'a.json']) {
+    assert.equal(isVideo(name), false, `${name} should want an <img>`);
+  }
 });
 
 test('only the formats that can move get a play badge', () => {
   assert.equal(isAnimated('a.gif'), true);
   assert.equal(isAnimated('a.webm'), true);
+  assert.equal(isAnimated('a.mp4'), true);
+  assert.equal(isAnimated('a.mov'), true);
   assert.equal(isAnimated('a.jpg'), false);
   assert.equal(isAnimated('a.png'), false);
 });

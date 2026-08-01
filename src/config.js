@@ -338,7 +338,15 @@ export const CONFIG = {
 // `media` key in them at all, and nothing would ever prompt it to look again: no
 // photograph on the map, ever, on exactly the machines that had visited before the
 // feature shipped.
-const V = 'v12';
+//
+// v13: `MEDIA_RE` admits `.mp4`, `.m4v` and `.mov`, and this is v12 again in
+// miniature. What decides whether a file is media is `buildIndex`, which runs over
+// the tree — and the tree is the thing served from cache on a 304. A browser holding
+// the v12 index has already sorted every existing file into `media` or `files` under
+// the old pattern, and a clip that was ignored then stays ignored forever, however
+// many times the page is reloaded. The one place the extension list is applied is the
+// one place that never runs again.
+const V = 'v13';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

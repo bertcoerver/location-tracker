@@ -859,6 +859,93 @@
     pointer-events: auto;
   }
   #pin[hidden] { display: none; }
+
+  /* The controls laid over a PINNED photograph: ⤢ to see it properly, ‹ and › to
+     walk the run's other pictures. Only the pinned card has them — the hover
+     tooltip ignores the pointer outright, so a button on it could be seen and
+     never pressed. See `makeTooltip`.
+
+     Dark discs with white glyphs, matching the caption's scrim rather than the
+     card's skin, because like the caption they sit on an unknown photograph and
+     `--surface-1` over a snowfield is a button you cannot find. The blur is what
+     keeps them legible over a busy frame without making them opaque enough to
+     hide the picture they're on. */
+  .tip .mb {
+    position: absolute;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    color: #fff;
+    font: inherit;
+    font-size: 17px;
+    /* The figure sets `line-height: 0` to kill the image's descender gap, and a
+       glyph inherits it straight into a collapsed box. */
+    line-height: 1;
+    cursor: pointer;
+  }
+  .tip .mb:hover:not(:disabled) { background: rgba(0, 0, 0, 0.7); }
+  /* The end of the run in that direction. Kept in place rather than removed: a
+     button that vanishes moves the one beside it out from under the cursor that
+     was about to press it. */
+  .tip .mb:disabled { opacity: 0.25; cursor: default; }
+  .tip .expand { top: 8px; right: 8px; font-size: 15px; }
+  /* Above the vertical middle, not on it — the caption's scrim occupies the foot
+     of the picture, and a chevron half in it reads as part of the readings. */
+  .tip .prev { top: 40%; left: 8px; }
+  .tip .next { top: 40%; right: 8px; }
+
+  /* The full-size viewer. Over everything, including the pinned card that opened
+     it, which stays up underneath so closing this puts you back where you were.
+     A flex box rather than a positioned image: centring is the whole layout, and
+     the two max-dimensions are what stop a portrait photo from running off the
+     top of the window and a panorama off the sides. */
+  #shot {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(16px, env(safe-area-inset-top, 0px)) 16px;
+    background: rgba(0, 0, 0, 0.88);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+  }
+  #shot[hidden] { display: none; }
+  #shot img, #shot video {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 6px;
+    /* The field behind is near-black and so is a night photograph. Without this
+       the edges of the picture are a guess. */
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 50px rgba(0, 0, 0, 0.6);
+  }
+  #shot .shot-x {
+    position: absolute;
+    top: max(12px, env(safe-area-inset-top, 0px));
+    right: 12px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font: inherit;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #shot .shot-x:hover { background: rgba(255, 255, 255, 0.24); }
 </style>
 </head>
 <body data-state="loading">
@@ -931,6 +1018,11 @@
 </div>
 <div id="profile-tip" class="tip" hidden></div>
 <div id="pin" class="tip" hidden></div>
+
+<!-- A photograph at full size, opened from the ⤢ on a pinned one. Empty until
+     then, and emptied again on close — a looping clip left in the DOM goes on
+     decoding behind a `display: none`. See shot.js. -->
+<div id="shot" hidden></div>
 
 <script type="module" src="src/main.js"></script>
 </body>

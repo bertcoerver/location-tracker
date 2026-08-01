@@ -29,7 +29,8 @@ export function createMap(container, {
   onCourseHover = () => {},
   onSelect = () => {},
   onScrub = () => {},
-  onBeaconPick = () => {}
+  onBeaconPick = () => {},
+  onExpand = () => {}
 } = {}) {
   let points = [];
   let course = null;
@@ -61,7 +62,7 @@ export function createMap(container, {
   // The pinned point, from a click in either view. While one is held the map's
   // hover tooltip is suspended and the crosshair stops chasing the cursor.
   let selection = null;
-  const pin = createPin();
+  const pin = createPin(undefined, act => pinAction(act));
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
   let fitted = false;
@@ -197,9 +198,19 @@ export function createMap(container, {
     // draggable. Sliding a photograph down the course would be sliding a
     // photograph.
     if (object?.kind === 'media') {
+      // Where it sits in the run's own order — which is `placeMedia`'s: oldest
+      // first, the timeless ones at the end. That is the sequence the `‹` and `›`
+      // buttons walk, and it is also why they are given to `mediaTooltipHtml`
+      // from here rather than worked out there: this is the only place that can
+      // see the other photographs.
+      const at = media.findIndex(poi => poi.name === object.name);
       return {
         view: 'map',
-        html: mediaTooltipHtml(object, originOf(points)),
+        html: mediaTooltipHtml(object, originOf(points), {
+          prev: at > 0,
+          next: at >= 0 && at < media.length - 1
+        }),
+        media: object.name,
         lat: object.lat,
         lon: object.lon,
         along: null
@@ -242,6 +253,47 @@ export function createMap(container, {
   function atAlong(along) {
     const at = interpolateAt(points, course, along, forecast);
     return { view: 'map', html: hoverTooltipHtml(at), lat: at.lat, lon: at.lon, along };
+  }
+
+  /**
+   * A button inside the pinned card was pressed.
+   *
+   * Only a photograph's card has any, so all three cases are about the currently
+   * pinned photograph — found by NAME rather than held in a variable, because
+   * `media` is replaced wholesale on every paint and a captured object would go
+   * stale the moment the atlas or the course landed.
+   *
+   * @param {string} act the button's `data-act`, from layers.js.
+   */
+  function pinAction(act) {
+    const poi = media.find(m => m.name === selection?.media);
+    if (!poi) return;
+    if (act === 'expand') return onExpand(poi);
+    if (act === 'prev' || act === 'next') stepMedia(act === 'next' ? 1 : -1);
+  }
+
+  /**
+   * Move the pin to the photograph before or after this one, and go and look at
+   * it.
+   *
+   * The step goes out through `onSelect` rather than straight into
+   * `setSelection`, so main.js stays the one place that knows what is pinned and
+   * the height strip is told about the move too — the same door a click uses,
+   * which is what keeps a stepped-to photograph indistinguishable from a clicked
+   * one.
+   *
+   * Then `reveal`, which a map click never needs: what you clicked was on screen
+   * by definition, and the next photograph along may be a valley away. Guarded on
+   * the selection having actually landed, because `select` treats a repeat as a
+   * dismissal and it is not this function's place to assume it didn't.
+   */
+  function stepMedia(delta) {
+    const at = media.findIndex(poi => poi.name === selection?.media);
+    const next = at < 0 ? null : media[at + delta];
+    if (!next) return;
+
+    onSelect(describe({ object: next }));
+    if (selection?.media === next.name) reveal(selection, true);
   }
 
   /**

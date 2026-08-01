@@ -81,6 +81,7 @@ const SHELL_URLS = [
   './src/route.js',
   './src/schedule.js',
   './src/settings.js',
+  './src/shot.js',
   './src/snap.js',
   './src/stats.js',
   './src/sun.js',

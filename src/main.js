@@ -20,6 +20,7 @@ import { sunPois } from './sun.js';
 import { createMap } from './map.js';
 import { createProfile } from './profile.js';
 import { same } from './pin.js';
+import { createShot } from './shot.js';
 import { createUi } from './ui.js';
 import { pinnedRun, pushRun } from './route.js';
 import { registerSw } from './sw-register.js';
@@ -72,8 +73,16 @@ const map = createMap(document.getElementById('map'), {
   onScrub: scrub,
   // Clicking another run's dot is the second way to change run, and it goes
   // through exactly the same door as the dropdown.
-  onBeaconPick: name => openRun(name)
+  onBeaconPick: name => openRun(name),
+  // The ⤢ on a pinned photograph. The map knows which picture; it does not know,
+  // and should not, that there is somewhere else on the page to put one.
+  onExpand: poi => shot.show(poi)
 });
+
+// The full-size viewer the ⤢ opens into. Wired here rather than inside map.js
+// because it is not part of the map: it covers the whole window, it has no
+// coordinate, and closing it leaves the map exactly as it was.
+const shot = createShot(document.getElementById('shot'));
 
 const profile = createProfile(document.getElementById('profile'), {
   onHover: along => map.setHover(along),
@@ -120,8 +129,15 @@ function scrub(next) {
 
 // The keyboard way out, for when the thing you'd have to click is under the
 // tooltip you're trying to dismiss.
+//
+// One layer per press, outermost first. Escaping out of a full-size photograph
+// means going back to the card it was opened from — that is what "back" means
+// here — and clearing both at once would leave you on bare map with no memory of
+// which mark you had been reading.
 addEventListener('keydown', event => {
-  if (event.key === 'Escape' && selection) select(null);
+  if (event.key !== 'Escape') return;
+  if (shot.close()) return;
+  if (selection) select(null);
 });
 
 // The one thing on screen that a person wrote. It owns its own height, which

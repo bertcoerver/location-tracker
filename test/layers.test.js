@@ -987,6 +987,42 @@ test('a photo does not offer to open itself somewhere else', () => {
   assert.doesNotMatch(mediaTooltipHtml(mediaPoi(), GUN), /maps\.google\.com/);
 });
 
+test('a hovered photo has no controls, because none of them could be pressed', () => {
+  // The hover tooltip ignores the pointer outright — see the `pointerEvents`
+  // tests above — so a button drawn on it could be seen and never pressed.
+  assert.doesNotMatch(mediaTooltipHtml(mediaPoi(), GUN), /<button/);
+});
+
+test('a pinned photo can be opened, and walked through the run', () => {
+  const html = mediaTooltipHtml(mediaPoi(), GUN, { prev: true, next: true });
+  // `data-act` is the whole interface between this file and map.js: one knows
+  // what the buttons are, the other what they do.
+  assert.match(html, /data-act="expand"/, html);
+  assert.match(html, /data-act="prev"/, html);
+  assert.match(html, /data-act="next"/, html);
+  assert.doesNotMatch(html, /disabled/, html);
+  // Over the picture, inside the figure — there is no room on this card that is
+  // not photograph.
+  assert.match(html, /^<figure class="ph">.*<button/s, html);
+});
+
+test('the ends of the run disable a step rather than removing it', () => {
+  // A button that vanishes moves the one beside it out from under the cursor that
+  // was about to press it, and "nothing further this way" stops being tellable
+  // from "this viewer has no such control".
+  const first = mediaTooltipHtml(mediaPoi(), GUN, { prev: false, next: true });
+  assert.match(first, /data-act="prev"[^>]*disabled/, first);
+  assert.doesNotMatch(first, /data-act="next"[^>]*disabled/, first);
+
+  const last = mediaTooltipHtml(mediaPoi(), GUN, { prev: true, next: false });
+  assert.match(last, /data-act="next"[^>]*disabled/, last);
+  assert.doesNotMatch(last, /data-act="prev"[^>]*disabled/, last);
+
+  // The one that is always available: a photograph can be opened whether or not
+  // it has neighbours.
+  assert.doesNotMatch(last, /data-act="expand"[^>]*disabled/, last);
+});
+
 test('a clip is a player and a gif is not', () => {
   // A GIF animates perfectly well as an image, and wrapping it in a player would
   // give it controls it has no use for.
@@ -998,6 +1034,12 @@ test('a clip is a player and a gif is not', () => {
   const gif = mediaTooltipHtml(mediaPoi({ name: 'a.gif', animated: true }), GUN);
   assert.match(gif, /<img class="media"/, gif);
   assert.doesNotMatch(gif, /<video/);
+
+  // And every container a phone actually records in, not only the one a browser
+  // is guaranteed to play — see `MEDIA_RE`.
+  for (const name of ['a.mp4', 'a.m4v', 'a.MOV']) {
+    assert.match(mediaTooltipHtml(mediaPoi({ name, animated: true }), GUN), /<video class="media"/, name);
+  }
 });
 
 test('the caption says nothing about where the position came from', () => {

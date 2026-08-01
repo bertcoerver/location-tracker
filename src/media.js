@@ -32,8 +32,27 @@ import { traceAt } from './stats.js';
 import { parseTime } from './util.js';
 
 /** What counts as media in a run folder. Read by `buildIndex`, which is the one
- *  place a filename decides what a file IS. */
-export const MEDIA_RE = /\.(jpe?g|png|gif|webm)$/i;
+ *  place a filename decides what a file IS.
+ *
+ *  The video half of this list is longer than a web page would normally want.
+ *  WebM is the format a browser is guaranteed to play and the one format a phone
+ *  will not give you: iOS records `.mov` (QuickTime, H.264/HEVC) and Android
+ *  records `.mp4`, and nothing in either camera app offers a choice. Insisting on
+ *  WebM means transcoding every clip before it can be dropped in a folder, which
+ *  is not a workflow anybody keeps up during a race.
+ *
+ *  So the containers people actually have are admitted, and the risk is accepted:
+ *  `.mov` in particular is a container a browser MAY refuse — Safari plays them,
+ *  Chrome and Firefox play the H.264 ones and not the HEVC ones. A clip that
+ *  cannot be decoded degrades rather than breaks — see `firstFrame`, whose
+ *  timeout exists for exactly this, and which leaves such a file with an anchor
+ *  dot and no thumbnail rather than hanging the atlas. */
+export const MEDIA_RE = /\.(jpe?g|png|gif|webm|mp4|m4v|mov)$/i;
+
+/** The containers `<video>` handles, as against the pictures `<img>` does. GIF is
+ *  deliberately NOT here: it animates perfectly well as an image, and a player
+ *  would give it controls it has no use for. */
+const VIDEO = new Set(['webm', 'mp4', 'm4v', 'mov']);
 
 /** Side of a thumbnail marker, in screen pixels. Shared with `mediaLayers`, so
  *  the atlas cells and the icons drawn from them can't disagree about size. */
@@ -49,16 +68,23 @@ export const THUMB_PX = 44;
 export function mediaKind(name) {
   const ext = /\.([a-z0-9]+)$/i.exec(name || '')?.[1]?.toLowerCase();
   if (ext === 'jpg' || ext === 'jpeg') return 'jpeg';
-  if (ext === 'png' || ext === 'gif' || ext === 'webm') return ext;
+  if (ext === 'png' || ext === 'gif' || VIDEO.has(ext)) return ext;
   return null;
+}
+
+/** Whether this wants a `<video>` around it rather than an `<img>`. The one test
+ *  every caller that has to choose an element goes through, so a format added to
+ *  `VIDEO` is playable everywhere at once rather than in the three places
+ *  somebody remembered. */
+export function isVideo(name) {
+  return VIDEO.has(mediaKind(name));
 }
 
 /** Whether the marker needs a ▶ badge: a still frame is all a WebGL texture can
  *  hold, so the badge is how a marker admits there is more to it than the map
  *  can show. */
 export function isAnimated(name) {
-  const kind = mediaKind(name);
-  return kind === 'gif' || kind === 'webm';
+  return mediaKind(name) === 'gif' || isVideo(name);
 }
 
 /** The whole of a media basename, when the whole of it is a timestamp. */
@@ -409,9 +435,13 @@ function place(record, points, course) {
  * the full bytes are wanted moments later regardless, so it buys a second request
  * rather than a smaller one.
  *
- * Only JPEG is opened at all. PNG, GIF and WebM all have somewhere in their spec
- * to put a timestamp and a coordinate, and phones essentially never do — so those
- * three cost NO request here, and rest on their filename.
+ * Only JPEG is opened at all. PNG, GIF and every video container have somewhere
+ * in their spec to put a timestamp and a coordinate — QuickTime's `©xyz` atom is
+ * the one a phone genuinely does fill in — but reading them means a second and
+ * third parser with no test data behind either, and a `.mov`'s metadata sits in a
+ * `moov` atom that may be at the END of the file. So they cost NO request here
+ * and rest on their filename, which is the authority on time regardless and is
+ * what everything in this folder is named by anyway.
  *
  * @param {string} url from `rawUrl` — sha-suffixed.
  * @returns {Promise<object|null>} null when the name isn't media at all.
@@ -432,13 +462,14 @@ export async function resolveMedia(url, name, sha) {
 }
 
 /**
- * The first frame of a WebM, as something a texture can be built from.
+ * The first frame of a clip, as something a texture can be built from.
  *
  * Every step of this is event-driven and codec-dependent, and a container the
  * browser cannot decode fires NO event at all — not `error`, not `loadeddata` —
  * so the timeout is the load-bearing part rather than a precaution. Without it a
  * single unplayable clip leaves the atlas build pending forever and the map never
- * gets its thumbnails.
+ * gets its thumbnails. That case stopped being hypothetical when `.mov` was
+ * admitted: an iPhone shooting HEVC writes a file Chrome will not open.
  */
 function firstFrame(blob) {
   return new Promise(resolve => {
@@ -485,7 +516,7 @@ async function thumbnail(poi) {
     const blob = await res.blob();
     // A GIF needs none of the video dance — `createImageBitmap` hands back frame
     // one, which is exactly what a still marker wants.
-    return mediaKind(poi.name) === 'webm' ? await firstFrame(blob) : await createImageBitmap(blob);
+    return isVideo(poi.name) ? await firstFrame(blob) : await createImageBitmap(blob);
   } catch {
     return null;
   }
