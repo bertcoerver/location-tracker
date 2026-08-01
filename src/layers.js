@@ -1418,6 +1418,28 @@ export function fmtDistance(m) {
  * enough to reach: deck only listens for pointer events on its own canvas, so
  * once the cursor is over the tooltip div deck never learns it left the object.
  *
+ * That override is also a trap, and `tip` below is built around the two halves of
+ * it. deck positions the tooltip with `transform: translate(x, y)` at the raw
+ * pointer coordinate — the card's top-left CORNER lands on the cursor, with no
+ * offset — so a card that accepts pointer events is a card sitting under the
+ * pointer that is keeping it open. For the tooltips with a link in them that is
+ * the bargain: the corner is 9 px of padding, the cursor is already moving away
+ * from it, and being able to click the link is worth it. For a photograph it is
+ * not a bargain at all — there is nothing to click, and the corner is 340 px of
+ * opaque picture laid over the very thumbnail deck is picking. The canvas stops
+ * seeing the pointer, the pick comes back empty, the tooltip hides, the canvas
+ * sees the pointer again, and the whole thing runs at pointer-event rate.
+ *
+ * The second half is `same`. deck calls this on EVERY pointer move and
+ * `setTooltip` assigns `innerHTML` unconditionally, so a stationary tooltip has
+ * its whole subtree destroyed and rebuilt dozens of times a second. Mostly that
+ * is invisible waste; with media in it, it is not. A fresh `<img>` element
+ * repaints, and a fresh `<video autoplay>` seeks back to zero — a clip could
+ * never play more than one pointer-move's worth of itself. Omitting the `html`
+ * key entirely is what stops it: deck's own `e.html && (...innerHTML = e.html)`
+ * leaves the DOM alone and moves the card it already has. #pin guards its own
+ * writes the same way, for the same reason.
+ *
  * @param {() => boolean} isSuppressed whether there should be no hover tooltip at
  *   all right now. Two things say so, and map.js owns both: a point is pinned —
  *   a hover tooltip beside the pinned one is two answers to a question the user
@@ -1429,7 +1451,18 @@ export function fmtDistance(m) {
 export function makeTooltip(
   getPoints, getCourse = () => null, isSuppressed = () => false, getForecast = () => null
 ) {
-  const tip = html => (html ? { html, className: 'tip', style: { pointerEvents: 'auto' } } : null);
+  // What the tooltip element is currently showing, so an unchanged card can be
+  // moved rather than rebuilt. Not reset when the tooltip hides: deck keeps one
+  // element and hiding it is `display: none`, so its subtree is still there and
+  // still correct when the same thing is hovered again.
+  let shown = null;
+
+  const tip = (html, pointerEvents = 'auto') => {
+    if (!html) return null;
+    const same = html === shown;
+    shown = html;
+    return { ...(same ? {} : { html }), className: 'tip', style: { pointerEvents } };
+  };
 
   return ({ object, layer, coordinate }) => {
     if (isSuppressed()) return null;
@@ -1454,7 +1487,14 @@ export function makeTooltip(
     // And a photograph carries one too — plus, when it recorded its own
     // coordinates, everything else a fix has, because it IS one. It still wants
     // its own tooltip: what makes it worth pointing at is the picture.
-    if (object.kind === 'media') return tip(mediaTooltipHtml(object, originOf(getPoints())));
+    //
+    // The one tooltip deck's default `pointer-events: none` is right for. There
+    // is nothing in it to click — the Maps link went when the picture took the
+    // whole card — so nothing is lost, and what is gained is that the card cannot
+    // cover the thumbnail holding it open. See the note above `makeTooltip`.
+    if (object.kind === 'media') {
+      return tip(mediaTooltipHtml(object, originOf(getPoints())), 'none');
+    }
 
     const points = getPoints();
     const latest = latestOf(points);

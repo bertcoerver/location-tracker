@@ -735,6 +735,35 @@ test('every tooltip opts out of deck.gl\'s pointer-events: none', () => {
   assert.equal(out.style.pointerEvents, 'auto');
 });
 
+test('a photograph opts back IN, because it has nothing to click', () => {
+  // deck lands the card's top-left corner on the cursor. A 340 px opaque picture
+  // that accepts pointer events covers the very thumbnail deck is picking, the
+  // pick comes back empty, the card hides, the pick succeeds again — a flicker at
+  // pointer-event rate. Nothing in this one is reachable, so nothing is lost.
+  const tooltip = makeTooltip(() => []);
+  const out = tooltip({ object: mediaPoi(), layer: { id: 'media' } });
+
+  assert.equal(out.style.pointerEvents, 'none');
+});
+
+test('an unchanged tooltip is moved, not rebuilt', () => {
+  // deck asks on every pointer move and assigns innerHTML whenever it is given
+  // any, so the same card was being destroyed and recreated dozens of times a
+  // second. A fresh <img> repaints and a fresh <video autoplay> seeks to zero.
+  const tooltip = makeTooltip(() => []);
+  const info = { object: mediaPoi(), layer: { id: 'media' } };
+
+  const first = tooltip(info);
+  assert.ok(first.html, 'the first hover has to supply the markup');
+
+  const second = tooltip(info);
+  assert.ok(!('html' in second), 'rewrote identical markup deck already has');
+  assert.equal(second.className, 'tip', 'still has to claim the class every time');
+
+  // A different object writes again, or the card would never change.
+  assert.ok(tooltip({ object: mediaPoi({ sha: 'm2', t: null }), layer: { id: 'media' } }).html);
+});
+
 test('hover produces no tooltip at all while a point is pinned', () => {
   // The user has said which point they want to read. A second tooltip chasing
   // the cursor beside the pinned one is two answers to a settled question.
