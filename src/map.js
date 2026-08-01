@@ -335,10 +335,22 @@ export function createMap(container, {
       // Hands on the map means the user wants to look somewhere specific.
       if (touched) setFollow(false);
 
-      // Mid-flight, deck owns the camera — just record where it is. Echoing the
-      // interpolated state back as a new controlled value would cancel the flight.
+      // Mid-flight deck owns the camera, but a CONTROLLED view state is not one
+      // deck applies to itself — see `Deck._onViewStateChange`, which skips its
+      // own viewManager update whenever `props.viewState` is set. It interpolates
+      // the arc and reports every frame of it; DRAWING those frames is ours to do,
+      // and without this line the flight runs invisibly for a second and the map
+      // cuts to the destination when it ends. That cut was the whole symptom.
+      //
+      // Handing it straight back is safe only because it is VERBATIM and
+      // synchronous: deck's `_isUpdateDueToCurrentTransition` compares what comes
+      // back against the frame it has just reported and ignores a match, which is
+      // exactly how a controlled camera is meant to be flown. A camera even one
+      // frame stale fails that comparison and RETARGETS the flight to it — the
+      // halfway freeze `render()` exists to prevent.
       if (flying && !touched) {
         viewState = { ...viewState, ...next };
+        deckgl.setProps({ viewState });
         return;
       }
 
@@ -439,12 +451,17 @@ export function createMap(container, {
   /**
    * Redraw because the DATA changed.
    *
-   * Mid-flight the camera belongs to deck, and handing a view state back — even
-   * the interpolated one deck itself just reported — ENDS the transition where it
-   * stands. That is a subtle bug with a very visible symptom: a run switch flies
-   * out, and then the next `render()` along (the new points, the forecast, the
-   * other runs' dots — three of them arrive within a few milliseconds) freezes it
-   * halfway, so the camera lands roughly over the new course and never zooms in.
+   * Mid-flight the camera belongs to deck, and this is not the place that knows
+   * where it currently is. `onViewStateChange` is — it echoes each interpolated
+   * frame back as deck reports it, and deck recognises its own frame and flies
+   * on. A view state from anywhere ELSE is a frame or more stale by the time it
+   * lands, and deck reads a stale camera not as a redraw but as a NEW destination:
+   * the flight retargets to a point on its own arc and stops there.
+   *
+   * That is a subtle bug with a very visible symptom: a run switch flies out, and
+   * then the next `render()` along (the new points, the forecast, the other runs'
+   * dots — three of them arrive within a few milliseconds) freezes it halfway, so
+   * the camera lands roughly over the new course and never zooms in.
    *
    * `tick()` has always updated layers alone for the same reason.
    */
@@ -610,11 +627,20 @@ export function createMap(container, {
         fitted = true;
         // `'far'` for a switch: the two runs can be anywhere, so the flight has to
         // be sized from the distance rather than crammed into 900 ms.
-        if (fit) return setViewState(fit, flyOnFit && 'far');
+        const fly = flyOnFit;
+        // Spent, not saved up: it belongs to the switch that asked for it, and
+        // left standing it would make some later first-fit fly for no reason.
+        flyOnFit = false;
+        if (fit) return setViewState(fit, fly && 'far');
         render();
       // Keyed on the drawn position, not just the filename: when a course lands
       // and the newest ping jumps onto it, the camera should go with it.
-      } else if (follow && String([lon, lat]) !== previousAt) {
+      //
+      // Not while a flight is running, though. During a switch the pings arrive
+      // mid-arc, and a fixed 900 ms hop to the newest one would cut across the
+      // journey to land on a single dot — when the flight already in progress is
+      // heading for this run's whole course, which is the better destination.
+      } else if (follow && !flying && String([lon, lat]) !== previousAt) {
         setViewState({ ...viewState, longitude: lon, latitude: lat }, true);
       } else {
         render();
