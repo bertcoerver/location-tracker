@@ -385,28 +385,6 @@
   }
   #error:empty { display: none; }
 
-  /* "A new version is ready." Its own line rather than `setError`'s, for the same
-     reason `#viewer-note` is: the poll loop rewrites that one every pass, and a
-     notice that flickers out within the minute is worse than none. Accent-coloured
-     because it is the one thing in this panel that is asking to be clicked. */
-  #update {
-    margin-top: 7px;
-    padding-top: 7px;
-    border-top: 1px solid var(--border);
-    font-size: 11px;
-    color: var(--text-secondary);
-  }
-  #update:empty { display: none; }
-  #update button {
-    font: inherit;
-    color: var(--accent);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-    text-decoration: underline;
-  }
-
   /* --- the height profile ------------------------------------------------ */
   /* An overlay, so the map keeps its full height and a run without a course
      looks exactly as it did before this existed. */
@@ -838,7 +816,6 @@
   </div>
   <div id="viewer-note"></div>
   <div id="error"></div>
-  <div id="update"></div>
 </div>
 
 <!-- Between the height strip and the map, and an overlay on both. Two copies of

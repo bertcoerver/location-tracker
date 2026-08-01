@@ -11,11 +11,21 @@
 const CHECK_MS = 30 * 60 * 1000;
 
 /**
- * @param {object} opts
- * @param {(reload: () => void) => void} opts.onUpdateReady called when a new
- *   version is installed and waiting. The argument applies it and reloads.
+ * There is no update callback and nothing here reloads the page.
+ *
+ * There used to be: a "new version is ready" line with a Reload beside it. It went
+ * because of two things measured on a phone. The worker serves index.html and
+ * src/ network-first now, so an online launch is ALREADY current and there was
+ * nothing left for the reload to fetch. And reloading a standalone web app on iOS
+ * makes it lose `viewport-fit=cover` — the viewport shrinks by the height of the
+ * status bar but stays pinned to the top, leaving a band of screen along the
+ * bottom that is outside the layout viewport and that no stylesheet can paint.
+ * The button offering to fix the app was the thing breaking it.
+ *
+ * The new worker takes over on the next cold start, which is the standard
+ * lifecycle and needs no help.
  */
-export function registerSw({ onUpdateReady }) {
+export function registerSw() {
   // `isSecureContext` covers localhost as well as https, so the dev server gets
   // the worker too — worth knowing when a change to src/ seems not to land.
   if (!('serviceWorker' in navigator) || !globalThis.isSecureContext) return;
@@ -29,37 +39,6 @@ export function registerSw({ onUpdateReady }) {
     } catch {
       return;
     }
-
-    // Set only when the reload is one we asked for. `controllerchange` also fires
-    // the first time a worker claims the page, and reloading there would bounce
-    // every first-time visitor for no reason.
-    let applying = false;
-
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (applying) location.reload();
-    });
-
-    const offer = worker => onUpdateReady(() => {
-      applying = true;
-      worker.postMessage('SKIP_WAITING');
-    });
-
-    // Already waiting when the page opened — a version installed during an earlier
-    // visit that was never applied.
-    if (reg.waiting) offer(reg.waiting);
-
-    reg.addEventListener('updatefound', () => {
-      const worker = reg.installing;
-      if (!worker) return;
-      worker.addEventListener('statechange', () => {
-        // `installed` with a controller already in place means an update. Without
-        // one it is the first install, which is not something to interrupt anyone
-        // about: it is already doing its job.
-        if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-          offer(worker);
-        }
-      });
-    });
 
     // A tab left open on a race weekend would otherwise never notice a deploy.
     let checked = Date.now();

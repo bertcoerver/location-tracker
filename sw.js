@@ -4,6 +4,12 @@
 // The whole design is one rule applied four times — cache what cannot change, and
 // never cache what must be fresh:
 //
+//   index.html, src/*.js    network-first with a short timeout, cache as the
+//                           fallback. These are the files that change, they are
+//                           small, and serving them stale is what turned a
+//                           one-line CSS fix into four rounds of "did it land?".
+//                           Online you are always current; offline you still open.
+//   vendor/, icons/         cache-first. Big, and their names change when they do.
 //   api.github.com          network only. This is the listing, fetched with an
 //                           ETag and `cache: 'no-store'`, and it is the ONLY
 //                           thing that says a new ping exists. A stale one here
@@ -17,10 +23,12 @@
 //                           the tiles you are standing on.
 //   same origin             cache-first off the precache. The app shell.
 //
-// Updating: this worker never calls skipWaiting on its own. The page spots the
-// waiting worker and offers a reload, because a tracker that reloads itself out
-// from under someone reading it is worse than one that is a version behind. See
-// src/sw-register.js.
+// Updating: there is no update prompt and nothing ever calls `location.reload()`.
+// Because the code above is network-first, an online launch is already current, so
+// the only thing left to swap is this worker — and the standard lifecycle does
+// that on the next cold start with no reload at all. That matters more than it
+// sounds on iOS: reloading a standalone web app makes it lose `viewport-fit=cover`
+// and leaves a band of dead screen along the bottom that no CSS can paint.
 
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
@@ -58,6 +66,7 @@ const SHELL_URLS = [
   './src/colors.js',
   './src/config.js',
   './src/course.js',
+  './src/diag.js',
   './src/geo.js',
   './src/github.js',
   './src/gpx.js',
@@ -97,10 +106,6 @@ self.addEventListener('activate', event => {
   })());
 });
 
-self.addEventListener('message', event => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
-});
-
 self.addEventListener('fetch', event => {
   const req = event.request;
 
@@ -122,6 +127,13 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Deliberately before the same-origin branch: this is the app's own code, and
+  // it is the one thing here that must never be a deploy behind.
+  if (url.origin === self.location.origin && url.pathname.includes('/src/')) {
+    event.respondWith(fresh(req));
+    return;
+  }
+
   if (url.hostname === 'api.github.com') return;
 
   if (url.hostname === 'raw.githubusercontent.com') {
@@ -138,14 +150,51 @@ self.addEventListener('fetch', event => {
   if (url.origin === self.location.origin) event.respondWith(asset(req));
 });
 
+/** How long the network gets before the cache answers instead. */
+const NET_TIMEOUT = 3000;
+
+/** `promise`, but rejecting if it has not settled within `ms`. */
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms);
+    promise.then(
+      value => { clearTimeout(timer); resolve(value); },
+      error => { clearTimeout(timer); reject(error); }
+    );
+  });
+}
+
 /**
- * The app shell for any navigation. `ignoreSearch` because every deep link into
- * this app is the same document with a different `?run=` on it.
+ * The app shell. Network-first, so an online launch is never a deploy behind, with
+ * the precached copy behind a 3 s timeout so a bad connection costs three seconds
+ * rather than the whole page. `ignoreSearch` because every deep link into this app
+ * is the same document with a different `?run=` on it.
  */
 async function shell() {
-  const cached = await caches.match('./', { cacheName: SHELL, ignoreSearch: true });
-  if (cached) return cached;
-  return fetch('./');
+  const cache = await caches.open(SHELL);
+  try {
+    const res = await withTimeout(fetch('./', { cache: 'no-store' }), NET_TIMEOUT);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    cache.put('./', res.clone()).catch(() => {});
+    return res;
+  } catch {
+    const cached = await cache.match('./', { ignoreSearch: true });
+    return cached || Response.error();
+  }
+}
+
+/** One of the app's own modules, on the same terms as the shell. */
+async function fresh(req) {
+  const cache = await caches.open(SHELL);
+  try {
+    const res = await withTimeout(fetch(req, { cache: 'no-store' }), NET_TIMEOUT);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    cache.put(req, res.clone()).catch(() => {});
+    return res;
+  } catch {
+    const cached = await cache.match(req);
+    return cached || Response.error();
+  }
 }
 
 /** A precached file, with the network as the fallback for anything not in it. */

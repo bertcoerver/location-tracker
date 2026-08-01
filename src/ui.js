@@ -212,7 +212,6 @@ export function createUi({ onRecenter, onRunPick }) {
   const finishTimeEl  = el('finish-time');
   const finishRangeEl = el('finish-range');
   const viewerNoteEl = el('viewer-note');
-  const updateEl = el('update');
 
   let points = [];
   // The ping the phone marked as its last, when there is one. Derived rather
@@ -609,23 +608,6 @@ export function createUi({ onRecenter, onRunPick }) {
       errorEl.textContent = message || '';
     },
 
-    /**
-     * A new version of the app has been installed and is waiting. Offered rather
-     * than applied: this page may be the only thing someone is looking at while
-     * their runner is between checkpoints, and reloading it out from under them
-     * to pick up a CSS change is not a trade worth making. They take it when
-     * they are ready. See src/sw-register.js.
-     *
-     * @param {() => void} apply swaps the new version in and reloads.
-     */
-    setUpdateReady(apply) {
-      updateEl.textContent = 'A new version is ready. ';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = 'Reload';
-      button.addEventListener('click', apply);
-      updateEl.append(button);
-    },
 
     setFollowPressed(on) {
       tickerEl.setAttribute('aria-pressed', String(on));
