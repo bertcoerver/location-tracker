@@ -26,6 +26,28 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 
+<!-- THROWAWAY, with src/diag.js. iOS fixes the viewport at launch — a query string
+     never arrives (start_url is `.`), and rewriting the meta afterwards does
+     nothing, so the only way to test a head variant is to have it already in place
+     when the app starts. This reads a number left in localStorage by the diag
+     overlay and edits the two metas above before the body is parsed.
+     Variant 0 is the shipping configuration and costs one localStorage read. -->
+<script>
+(function () {
+  var v = Number(localStorage.getItem('vpVariant') || 0);
+  if (!v) return;
+  var vp = document.querySelector('meta[name="viewport"]');
+  var bar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+  var plain = 'width=device-width, initial-scale=1';
+  // 1: no status-bar style. 2: the opaque one. 3: no viewport-fit=cover.
+  // 4: neither — the conservative layout, which should have no dead space at all.
+  if (v === 1) bar.remove();
+  if (v === 2) bar.setAttribute('content', 'default');
+  if (v === 3) vp.setAttribute('content', plain);
+  if (v === 4) { vp.setAttribute('content', plain); bar.remove(); }
+})();
+</script>
+
 <!-- Vendored rather than pulled from unpkg. It is 1.6 MB and it is the one thing
      between opening the page and seeing a map, so it has to be precacheable — and
      a cross-origin script comes back opaque, which a Cache cannot store. -->

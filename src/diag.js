@@ -67,7 +67,17 @@ function render() {
     .find(m => matchMedia(`(display-mode: ${m})`).matches) || 'unknown';
   const dead = screen.height - innerHeight;
 
+  const variant = Number(localStorage.getItem('vpVariant') || 0);
+  const VARIANTS = [
+    '0 cover + translucent (shipping)',
+    '1 cover, no status-bar style',
+    '2 cover + opaque status bar',
+    '3 no cover, translucent',
+    '4 no cover, no status-bar style',
+  ];
+
   const rows = [
+    ['VARIANT', VARIANTS[variant] || variant],
     ['load # this launch', loads === 1 ? '1 (fresh launch)' : `${loads} (after reload)`],
     ['display-mode', mode],
     ['safe-area top', inset.paddingTop],
@@ -78,7 +88,7 @@ function render() {
     ['--profile-h', getComputedStyle(document.documentElement)
       .getPropertyValue('--profile-h').trim() || '(unset)'],
     ['#profile bottom', profileBottom()],
-    ['', 'TAP HERE TO NUDGE'],
+    ['', 'TAP: NEXT VARIANT, THEN FORCE-QUIT'],
   ];
 
   const box = document.createElement('div');
@@ -94,20 +104,12 @@ function render() {
       : `<div style="margin-top:6px;padding-top:6px;border-top:1px solid #555;
            text-align:center;color:#7ab8ff">${v}</div>`))
     .join('');
-  // The candidate runtime fix, on the overlay itself so one screenshot can answer
-  // whether it works. Rewriting the viewport meta forces iOS to evaluate it again;
-  // if DEAD SPACE falls to 0 and the orange bar reaches the bottom of the screen,
-  // this repairs the damage whatever is causing it.
+  // Advance to the next head variant. It cannot take effect now — iOS fixes the
+  // viewport at launch, which is the whole reason the nudge that used to be on this
+  // line did nothing — so this only writes the number and says what to do next.
   box.addEventListener('click', () => {
-    const vp = document.querySelector('meta[name="viewport"]');
-    const base = vp.getAttribute('content');
-    vp.setAttribute('content', base.replace('viewport-fit=cover', 'viewport-fit=contain'));
-    requestAnimationFrame(() => {
-      vp.setAttribute('content', base);
-      // Two frames plus a beat: one for the meta to take, one for the layout it
-      // causes, and the timeout because iOS resizes the viewport asynchronously.
-      requestAnimationFrame(() => setTimeout(render, 250));
-    });
+    localStorage.setItem('vpVariant', String((variant + 1) % VARIANTS.length));
+    render();
   });
   document.body.append(box);
 
