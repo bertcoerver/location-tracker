@@ -32,6 +32,23 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 
+<!-- THROWAWAY, with src/diag.js. iOS fixes the viewport at launch, so a head
+     variant has to be in place before the body is parsed. This reads a number the
+     diag overlay leaves in localStorage. 0 is what ships and costs one read; 1-3
+     ask for the edge-to-edge top back three different ways, to find out whether
+     any of them avoids the dead band along the bottom that cover caused. -->
+<script>
+(function () {
+  var v = Number(localStorage.getItem('vpVariant') || 0);
+  if (!v) return;
+  var vp = document.querySelector('meta[name="viewport"]');
+  var bar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+  vp.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+  if (v === 2) bar.remove();
+  if (v === 3) bar.setAttribute('content', 'default');
+})();
+</script>
+
 <!-- Vendored rather than pulled from unpkg. It is 1.6 MB and it is the one thing
      between opening the page and seeing a map, so it has to be precacheable — and
      a cross-origin script comes back opaque, which a Cache cannot store. -->

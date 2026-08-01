@@ -33,7 +33,7 @@
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '4';
+const VERSION = '5';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes
@@ -66,6 +66,7 @@ const SHELL_URLS = [
   './src/colors.js',
   './src/config.js',
   './src/course.js',
+  './src/diag.js',
   './src/geo.js',
   './src/github.js',
   './src/gpx.js',
