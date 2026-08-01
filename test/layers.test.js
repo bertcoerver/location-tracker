@@ -937,16 +937,25 @@ function mediaPoi(over = {}) {
   };
 }
 
-test('a photo leads with the picture, then says when and how far in', () => {
+test('a photo IS the tooltip, with its readings laid over the picture', () => {
   const poi = mediaPoi();
   const html = mediaTooltipHtml(poi, GUN);
 
-  assert.match(html, /<img class="media" src="[^"]+\.jpeg\?m1" alt="">/, html);
+  // The picture first and inside nothing but the figure, because the stylesheet
+  // drops the card's padding for exactly this shape — see `.tip:has(.ph)`.
+  assert.match(html, /^<figure class="ph"><img class="media" src="[^"]+\.jpeg\?m1" alt="">/, html);
+  assert.match(html, /<figcaption class="cap">/, html);
+
   assert.match(text(html), new RegExp(fmtClock(poi.t)));
   assert.match(text(html), /53m/);
   assert.match(text(html), /8\.8 km/);
   assert.match(text(html), /1,204 m/);
-  assert.match(html, /href="https:\/\/maps\.google\.com\/\?q=/);
+});
+
+test('a photo does not offer to open itself somewhere else', () => {
+  // The marker is already ON the map, at the place in question. A Maps link is the
+  // answer to "where is this", and pointing at it was the question.
+  assert.doesNotMatch(mediaTooltipHtml(mediaPoi(), GUN), /maps\.google\.com/);
 });
 
 test('a clip is a player and a gif is not', () => {
@@ -962,14 +971,19 @@ test('a clip is a player and a gif is not', () => {
   assert.doesNotMatch(gif, /<video/);
 });
 
-test('a photo says whether its position was recorded or worked out', () => {
-  assert.match(text(mediaTooltipHtml(mediaPoi({ source: 'exif' }), GUN)), /placed from the photo/);
-  assert.match(text(mediaTooltipHtml(mediaPoi(), GUN)), /interpolated from its filename/);
+test('the caption says nothing about where the position came from', () => {
+  // That fact moved onto the map itself: the dot under the picture is the accent
+  // when the photo recorded its own coordinates and the course purple when it was
+  // placed between the pings either side. See `mediaLayers`.
+  for (const source of ['exif', 'trace']) {
+    const html = text(mediaTooltipHtml(mediaPoi({ source }), GUN));
+    assert.doesNotMatch(html, /placed from|interpolated from/, source);
+  }
 });
 
 test('a photo whose zone nobody recorded says so too', () => {
-  assert.match(text(mediaTooltipHtml(mediaPoi({ assumedUtc: true }), GUN)), /time zone assumed/);
-  assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /time zone assumed/);
+  assert.match(text(mediaTooltipHtml(mediaPoi({ assumedUtc: true }), GUN)), /zone\?/);
+  assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /zone\?/);
 });
 
 test('a photo with no moment is titled like a place', () => {
@@ -989,9 +1003,11 @@ test('a photo before the gun has no race clock rather than a negative one', () =
   assert.doesNotMatch(html, /\u{1F552}/u, html);
 });
 
-test('a photo placed across a long silence says it was interpolated', () => {
-  assert.match(text(mediaTooltipHtml(mediaPoi({ gap: 100 * 60000 }), GUN)),
-    /interpolated across 1h 40m/);
+test('a photo placed across a long silence marks its distance approximate', () => {
+  // The caption has room for an annotation and none for a sentence, so the caveat
+  // is a `~` on the figure it qualifies rather than a line underneath it.
+  assert.match(text(mediaTooltipHtml(mediaPoi({ gap: 100 * 60000 }), GUN)), /~8\.8 km/);
+  assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /~8\.8 km/);
 });
 
 test('a filename cannot break out of the attributes it is written into', () => {

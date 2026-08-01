@@ -854,64 +854,77 @@ export function sunTooltipHtml(poi, origin = null) {
 }
 
 /**
+ * One figure in the caption bar: a glyph and a number, side by side.
+ *
+ * Deliberately not `reading()`. That is a three-column grid built so a COLUMN of
+ * readings lines its answers up, and there is no column here — the caption is one
+ * line laid over a picture, and the thing that has to fit is the picture.
+ */
+function capStat(icon, value) {
+  return `<span class="cv"><span class="i" aria-hidden="true">${icon}</span>${value}</span>`;
+}
+
+/**
  * Tooltip markup for a photograph or a clip.
  *
- * Built like the sun's, because it is the same kind of thing — a moment and a
- * place — with one addition and one subtraction. The addition is the picture,
- * first under the title, because it is the entire reason anybody clicked. The
- * subtraction is certainty: a sunrise is calculated and a ping is measured, while
- * a photo is half of one and half of the other, and the page has to say which
- * half is which.
+ * The one tooltip on this page that is not a card with a picture in it. It is the
+ * picture, edge to edge — the stylesheet drops the card's padding for it — with
+ * the readings laid over the foot of the image the way a phone's photo viewer
+ * lays them over a frame. Everything here follows from that: whoever clicked a
+ * thumbnail wants to see the photograph, and a 44 px marker is not seeing it.
  *
- * Hence the provenance line. A photo that recorded its own coordinates is a
- * measurement and says so; one placed between two pings is an inference and says
- * that instead. This is the same admission the `interpolated across` caveat makes
- * on the row above it, made about the position as a whole rather than about the
- * gap it came out of.
+ * So the caption carries only what a caption can carry without becoming a list —
+ * the clock, then the elapsed, the distance and the height. No Maps link: the
+ * marker is already ON the map, at the place in question, which is the one context
+ * where "open this somewhere else" answers nothing. No provenance line either;
+ * that fact now lives in the colour of the dot the picture floats above — accent
+ * for a photo that recorded its own coordinates, course purple for one placed
+ * between the pings either side. See `mediaLayers`.
  *
- * A file whose name carries no time has no moment to put in a title, so its
- * filename goes there instead and the clock rows drop away — the waypoint
+ * Two admissions survive, because dropping them would be dropping facts rather
+ * than dropping furniture, and both fit in the space an annotation takes:
+ *   - a distance interpolated across a long blackout is prefixed `~`, where the
+ *     old row said `interpolated across 2h 5m` underneath itself;
+ *   - a time read off a camera clock that named no zone gets `zone?` beside it,
+ *     in the same raised, quietened style as the day tag. Rare by construction —
+ *     `placeMedia` only trusts an EXIF clock when the filename had no timestamp.
+ *
+ * A file whose name carries no time has no moment to put in the caption, so its
+ * filename goes there instead and the elapsed drops away — the waypoint
  * treatment, for a thing that has become a place.
  *
  * @param {object} poi from [`placeMedia`](media.js).
  * @param {number|null} [origin] the moment the run's clock counts from.
  */
 export function mediaTooltipHtml(poi, origin = null) {
-  const day = poi.t === null ? '' : dayTag(poi.t, origin);
-  const rows = [titleHtml(poi.t === null
-    ? escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, ''))
-    : `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}`)];
-
   // A `<video>` rather than an `<img>` only where one is needed. A GIF animates
   // perfectly well as an image, and wrapping it in a player would give it
   // controls it has no use for.
   const src = encodeURI(poi.url || '');
-  rows.push(mediaKind(poi.name) === 'webm'
+  const frame = mediaKind(poi.name) === 'webm'
     ? `<video class="media" src="${src}" autoplay loop muted playsinline></video>`
-    : `<img class="media" src="${src}" alt="">`);
+    : `<img class="media" src="${src}" alt="">`;
 
+  const day = poi.t === null ? '' : dayTag(poi.t, origin);
+  const title = poi.t === null
+    ? escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, ''))
+    : `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}` +
+      `${poi.assumedUtc ? '<span class="d">zone?</span>' : ''}`;
+
+  const stats = [];
   if (origin !== null && poi.t !== null && poi.t >= origin) {
-    rows.push(reading(ICON.time, fmtDuration(poi.t - origin), null, true));
+    stats.push(capStat(ICON.time, fmtDuration(poi.t - origin)));
   }
-
   if (poi.along !== null && poi.along !== undefined) {
-    rows.push(reading(ICON.dist, fmtDistance(poi.along),
-      poi.gap > CONFIG.maxPingMs ? `interpolated across ${fmtDuration(poi.gap)}` : null, true));
+    const about = poi.gap > CONFIG.maxPingMs ? '~' : '';
+    stats.push(capStat(ICON.dist, `${about}${fmtDistance(poi.along)}`));
   }
-  if (poi.ele !== null && poi.ele !== undefined) rows.push(reading(ICON.ele, metres(poi.ele)));
+  if (poi.ele !== null && poi.ele !== undefined) stats.push(capStat(ICON.ele, metres(poi.ele)));
 
-  // Where this mark came from, in the tooltip's quietest voice. Two facts can be
-  // wrong about a photograph and neither is visible from the map: that its
-  // position was worked out rather than recorded, and that its time was read off
-  // a clock nobody said the zone of.
-  const notes = [
-    poi.source === 'exif' ? 'placed from the photo' : 'interpolated from its filename',
-    poi.assumedUtc ? 'time zone assumed' : null
-  ].filter(Boolean);
-  rows.push(`<div class="m">${notes.join(' · ')}</div>`);
-
-  rows.push(mapsLink(poi.lat, poi.lon, poi.name));
-  return rows.join('');
+  return `<figure class="ph">${frame}<figcaption class="cap">` +
+    `<span class="ct">${title}</span>` +
+    (stats.length ? `<span class="cs">${stats.join('')}</span>` : '') +
+    '</figcaption></figure>';
 }
 
 /**

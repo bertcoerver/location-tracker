@@ -747,13 +747,77 @@
      decoded, and without it the card grows under the cursor and the pin jumps. */
   .tip .media {
     display: block;
-    margin-top: 6px;
+    margin: 0;
     width: 100%;
-    max-width: min(320px, 70vw);
     height: auto;
-    border-radius: 6px;
     background: var(--surface-2);
   }
+
+  /* A photograph's tooltip IS the photograph, so the card gives up its padding and
+     lets the picture reach all four edges. `:has()` rather than a variant class on
+     the root, because there are two roots: deck.gl builds the hover tooltip and
+     sets the class itself, while the pinned card is a static `#pin` in the markup
+     that only ever receives innerHTML. One selector reaches both, and a browser
+     without `:has()` falls back to a padded card with a picture in it — the old
+     look, not a broken one.
+
+     Wider than the 260px the other tooltips cap at, and capped against the
+     VIEWPORT too so a portrait photo can't push the card off the side of a phone. */
+  .tip:has(.ph) {
+    padding: 0 !important;
+    overflow: hidden;
+    max-width: min(340px, 78vw);
+  }
+  .tip .ph {
+    position: relative;
+    display: block;
+    margin: 0;
+    /* Kills the descender gap under the image, which with no padding left to hide
+       in would show as a strip of card along the bottom edge. */
+    line-height: 0;
+  }
+
+  /* The readings, laid over the foot of the picture the way a phone's photo viewer
+     lays them over a frame.
+
+     The gradient is the whole reason this is legible. White text on an unknown
+     photograph is a coin toss — a snowfield and a night forest are both possible in
+     the same run — so the scrim supplies the contrast rather than hoping the image
+     does, ramping to near-black at the bottom edge where the text sits and to
+     nothing a third of the way up, where it reads as depth rather than as a bar.
+     The text-shadow is the belt to that braces: it survives the one case the
+     gradient can't cover, a blown-out sky bright enough to show through it. */
+  .tip .cap {
+    position: absolute;
+    inset: auto 0 0 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1px 10px;
+    padding: 20px 11px 8px;
+    line-height: 1.35;
+    color: #fff;
+    background: linear-gradient(to top,
+      rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0.55) 45%, transparent 100%);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  }
+  .tip .ct {
+    font-weight: 600;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tip .cs {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .tip .cv { display: inline-flex; align-items: baseline; gap: 4px; }
+  /* The day tag and the zone caveat are annotations here as everywhere else, but
+     `--text-muted` is a colour for a card and this line is over a photograph. */
+  .tip .cap .d { color: rgba(255, 255, 255, 0.75); }
   /* The one thing in a tooltip you can click. Both tooltips have to opt out of
      `pointer-events: none` for this to be reachable — deck.gl's default style
      sets it, and #profile-tip used to. */
