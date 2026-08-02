@@ -226,6 +226,37 @@ test('no leg implies a speed the runner could not have run', () => {
   }
 });
 
+test('a bad FIRST fix costs nothing but itself', () => {
+  // The weakest ping in a run, because it is the only one with no earlier evidence
+  // to contradict it. Both ways of being wrong are here: a fix that is ON the
+  // course but four kilometres from where the run then demonstrably starts, and a
+  // fix that is nowhere near it. Each is rightly rejected, and neither may cost
+  // the run anything beyond itself.
+  //
+  // What made this subtle is that rejecting a fix is not the same as forgetting
+  // it. The off-course state carries the last position forward for the next ping
+  // to be measured from, and while a REJECTED fix was left in that role, the chord
+  // from it to the first good fix was the width of the mistake — so rejoining the
+  // course near the start came out dearer than staying off it. On a real 165 km
+  // race a single bad opening fix silently dropped the next sixty pings, twenty
+  // kilometres of them, every one within metres of the route.
+  const good = pings([[100, 10], [600, 10], [1100, 10], [1600, 10]]);
+  const clean = snapsOf(LONG, good);
+
+  for (const [label, stray] of [
+    ['on the course, far ahead', [5000, 10]],
+    ['nowhere near the course', [4000, CONFIG.snapMeters + 900]]
+  ]) {
+    const opened = [{ name: 'bad.json', t: good[0].t - 300000, ...toLatLon(stray) }, ...good];
+    const after = snapsOf(LONG, opened);
+
+    assert.equal(after['bad.json'], null, `${label}: the run says where it started`);
+    for (const p of good) {
+      assert.deepEqual(after[p.name], clean[p.name], `${label}: ${p.name} was disturbed`);
+    }
+  }
+});
+
 test('a later ping can change an EARLIER snap', () => {
   // The guarantee a greedy matcher cannot offer at any price, and the one the
   // whole rewrite is for. This fix is 240 m off the route: believable while it is

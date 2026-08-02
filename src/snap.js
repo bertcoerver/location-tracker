@@ -141,6 +141,13 @@ function viterbi(course, points, candidates, vmax) {
   const trellis = [];
   let prev = null;
 
+  // What it costs to JOIN the course, with no believed position to come from. A
+  // loop's junction offers two candidates that geometry cannot separate, and the
+  // only thing that distinguishes them is that one of them is the start; a faint
+  // preference for a low `along` is enough to say so. It is the last surviving
+  // trace of the old forward bias.
+  const seed = cand => 0.02 * cand.along;
+
   for (let i = 0; i < points.length; i++) {
     // `null` is the off-course state. It goes last so that on an exact tie a real
     // place on the course wins, and it is withheld entirely from a forced finish,
@@ -156,17 +163,14 @@ function viterbi(course, points, candidates, vmax) {
     const layer = states.map(cand => {
       const emit = cand ? cand.perp : CONFIG.snapOffCourseCost;
 
-      // The first ping has no history, so a loop's junction is decided by the only
-      // thing that distinguishes its two candidates: one of them is the start. A
-      // faint preference for a low `along` is enough, and it is the last surviving
-      // trace of the old forward bias.
       if (!prev) {
         return {
           cand,
           along: cand ? cand.along : 0,
-          cost: emit + (cand ? 0.02 * cand.along : 0),
+          cost: emit + (cand ? seed(cand) : 0),
           from: -1,
-          src: points[i],
+          // A first ping that is off the course anchors NOTHING. See below.
+          src: cand ? points[i] : null,
           t: points[i].t
         };
       }
@@ -177,9 +181,15 @@ function viterbi(course, points, candidates, vmax) {
         if (!Number.isFinite(prev[j].cost)) continue;
         let step = 0;
         if (cand) {
-          const chord = Math.hypot(px - proj.x(prev[j].src.lon), py - proj.y(prev[j].src.lat));
-          const dt = Math.max(1, (points[i].t - prev[j].t) / 1000);
-          step = transition(cand.along - prev[j].along, chord, dt, vmax, loop);
+          if (prev[j].src) {
+            const chord = Math.hypot(px - proj.x(prev[j].src.lon), py - proj.y(prev[j].src.lat));
+            const dt = Math.max(1, (points[i].t - prev[j].t) / 1000);
+            step = transition(cand.along - prev[j].along, chord, dt, vmax, loop);
+          } else {
+            // Nothing has been believed yet, so this is the first ping that counts
+            // and it is seeded rather than stepped into.
+            step = seed(cand);
+          }
         }
         const total = prev[j].cost + step;
         if (total < best) {
@@ -195,6 +205,14 @@ function viterbi(course, points, candidates, vmax) {
         from,
         // An off-course ping is not evidence of anything, so it hands the previous
         // ping's position AND its clock straight through.
+        //
+        // Which means a REJECTED fix must not leave its coordinate behind as the
+        // thing the next ping is measured from. If the run opens with a bad fix,
+        // the chord from it to the first good one is the width of the mistake, and
+        // charging that made rejoining the course near the start dearer than
+        // staying off it — so a single bad first fix silently cost the next sixty
+        // pings on a real race. A null `src` says "no position is believed yet",
+        // and the next candidate is seeded instead of stepped into.
         src: cand ? points[i] : prev[from].src,
         t: cand ? points[i].t : prev[from].t
       };
