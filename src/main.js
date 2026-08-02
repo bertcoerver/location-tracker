@@ -223,7 +223,7 @@ function show(cache) {
   const fixes = placed.filter(p => p.point);
 
   // A photo that recorded where it was taken is a fix like any other: it goes in
-  // the array, it is snapped by the same 500 m rule, and it counts towards
+  // the array, it is snapped by the same `snapMeters` rule, and it counts towards
   // distance and climb. What it is NOT is the run's latest ping, its finish, or
   // an orange dot — see `fixesOf` for each of those.
   const points = fixes.length
@@ -236,9 +236,12 @@ function show(cache) {
   // been asked for, and they have to paint against the right start.
   const start = settings[run]?.start ?? null;
 
+  // Read from the same place and for the same reason as the gun above.
+  const maxSpeed = settings[run]?.maxSpeed ?? CONFIG.snapMaxSpeedKmh;
+
   if (course) {
     const key = keysFor(run).snap;
-    const { cache: snaps, snapped } = snapAll(course, points, storage.get(key), { start });
+    const { cache: snaps, snapped } = snapAll(course, points, storage.get(key), { start, maxSpeed });
     if (snapped) storage.set(key, snaps);
     applySnaps(points, snaps);
   }

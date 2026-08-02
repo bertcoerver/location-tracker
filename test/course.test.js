@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/config.js';
 import {
-  buildCourse, courseBounds, courseHoverAt, gainAt, nearestOnCourse, pathsBetween, pointAt
+  buildCourse, courseBounds, courseCandidates, courseHoverAt, gainAt, nearestOnCourse,
+  pathsBetween, pointAt
 } from '../src/course.js';
 import { elevationAt } from '../src/profile.js';
 
@@ -397,4 +398,57 @@ test('courseHoverAt takes the nearest branch, with no history to weigh', () => {
   const along = courseHoverAt(course, at(500, 2).lon, at(500, 2).lat);
 
   assert.ok(Math.abs(along - 500) < 10, `took the far branch: ${along}`);
+});
+
+// --- reducing the candidates to the ones that differ -------------------------
+
+test('courseCandidates keeps one candidate per branch, not one per segment', () => {
+  // A dogleg traced in 20 m steps offers a candidate per segment, all of them the
+  // same answer. What the snapper needs is how many DIFFERENT places this could
+  // be, and beside a single pass that is one.
+  const dense = [];
+  for (let e = 0; e <= 1000; e += 20) dense.push([e, 0]);
+  const course = courseFrom(dense);
+
+  const all = nearestOnCourse(course, at(500, 10).lon, at(500, 10).lat);
+  const kept = courseCandidates(course, at(500, 10).lon, at(500, 10).lat);
+
+  assert.ok(all.length > 10, `the raw projection should be verbose, got ${all.length}`);
+  assert.equal(kept.length, 1, `got ${kept.map(c => c.along.toFixed(0)).join(', ')}`);
+  assert.ok(Math.abs(kept[0].along - 500) < 5);
+});
+
+test('courseCandidates keeps BOTH branches where a course doubles back', () => {
+  // The case the whole thing exists to preserve. Losing one of these is how a
+  // runner on the return leg gets placed on the outbound one.
+  const course = courseFrom([[0, 0], [1000, 0], [1000, 80], [0, 80]]);
+  const kept = courseCandidates(course, at(500, 40).lon, at(500, 40).lat);
+
+  assert.equal(kept.length, 2);
+  const alongs = kept.map(c => c.along).sort((a, b) => a - b);
+  assert.ok(Math.abs(alongs[0] - 500) < 20, `outbound ${alongs[0]}`);
+  assert.ok(Math.abs(alongs[1] - 1580) < 20, `return ${alongs[1]}`);
+});
+
+test('courseCandidates never returns more than the trellis is sized for', () => {
+  // It is the width of the Viterbi layer and a row of the cache, so it is bounded
+  // however tangled the course gets under one fix.
+  const zigzag = [];
+  for (let i = 0; i < 40; i++) zigzag.push([i % 2 ? 400 : 0, i * 12]);
+  const course = courseFrom(zigzag);
+
+  const kept = courseCandidates(course, at(200, 240).lon, at(200, 240).lat);
+  assert.ok(kept.length <= CONFIG.snapCandidates, `got ${kept.length}`);
+});
+
+test('courseCandidates keeps the closest place of all', () => {
+  // Whatever else it drops, it may never drop the best geometric answer.
+  const course = courseFrom([[0, 0], [1000, 0], [1000, 80], [0, 80]]);
+  const p = at(300, 6);
+
+  const best = nearestOnCourse(course, p.lon, p.lat).reduce((a, b) => (b.perp < a.perp ? b : a));
+  const kept = courseCandidates(course, p.lon, p.lat);
+
+  assert.ok(kept.some(c => Math.abs(c.along - best.along) < 1e-6 && Math.abs(c.perp - best.perp) < 1e-6),
+    `dropped the nearest (${best.along.toFixed(0)} @ ${best.perp.toFixed(0)} m)`);
 });

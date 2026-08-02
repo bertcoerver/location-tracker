@@ -174,3 +174,17 @@ test('a banner is kept whole, markdown and all', () => {
   assert.equal(parseSettings({ news_banner: text }).banner, text);
   assert.equal('banner' in parseSettings({ news_banner: '   ' }), false);
 });
+
+// --- the speed ceiling -------------------------------------------------------
+
+test('a run may state the speed its snapping should believe', () => {
+  // km/h, and the only field here the SNAPPING reads. Absent, CONFIG decides.
+  assert.equal(parseSettings({ max_speed: 35 }).maxSpeed, 35);
+  assert.equal('maxSpeed' in parseSettings({}), false);
+
+  // Read exactly like `distance` above, so the same typo costs the same field
+  // and nothing else.
+  assert.equal('maxSpeed' in parseSettings({ max_speed: '35 km/h' }), false);
+  assert.equal('maxSpeed' in parseSettings({ max_speed: 0 }), false);
+  assert.equal('maxSpeed' in parseSettings({ max_speed: -10 }), false);
+});

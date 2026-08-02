@@ -111,13 +111,56 @@ export const CONFIG = {
   mediaFrameMs: 3000,
 
   // --- snapping pings onto a run's course, when it has a .gpx ---------------
-  snapMeters: 500,     // further than this from the course and a ping is left where it is
-  // Both of these are metres of cost per metre of movement, so they're directly
-  // comparable to how far off-course a fix is. Backwards is all but forbidden;
-  // forwards is only nudged — enough to break a circular course's start/finish
-  // tie, not enough to fight real progress. See snap.js for the reasoning.
-  snapBackPenalty: 1,
-  snapForwardBias: 0.02,
+  // Further than this from the course and a ping is left where it is. Was 500,
+  // which is not a threshold so much as an invitation: half a kilometre of slack
+  // let a fix sitting 4 m from the route lose to one 460 m away, because at that
+  // range the geometry stops being the loudest term in the cost. Measured across
+  // the runs in this repo, the worst LEGITIMATE fix is 243 m off — a switchback
+  // where the route doubles back inside the GPS's own error — and the outliers
+  // that wrecked `test_run` were 251 m and beyond. The line goes between them.
+  snapMeters: 250,
+  // --- the Viterbi cost function (see snap.js) ------------------------------
+  // Every one of these is METRES OF COST, so they add up honestly against how far
+  // off-course a fix is. That was true of the old two-term cost as well; what was
+  // not true was that its terms described anything physical.
+  //
+  // How far a fix may sit from where the straight line between two pings says it
+  // should be, before the transition cost starts charging for it. GPS error plus
+  // the wobble of a traced route: two fixes 100 m apart may honestly be 220 m
+  // apart along the ground, and nothing should be inferred from that.
+  snapSigmaM: 60,
+  // A ceiling on implied speed, in km/h, overridable per run by `max_speed` in
+  // course_settings.json. NOT a statement about how fast anybody runs — it is the
+  // outer bound of what a leg can imply before the leg itself is in doubt. It sits
+  // well above trail-running pace on purpose: `along` is progress along the PLANNED
+  // route, and a runner who cuts out a loop of it because the path did not exist
+  // advances along the plan faster than they ever moved. Penalising that as if it
+  // were teleportation would throw away good fixes to defend an assumption the
+  // course file got wrong.
+  snapMaxSpeedKmh: 22,
+  // And hence soft: a quarter of a metre of cost per metre of excess, so exceeding
+  // the ceiling is an argument against a candidate rather than a veto. The term
+  // that actually forbids teleporting is the straight-line one, which is charged
+  // at full rate because it is a fact about two GPS fixes rather than a guess
+  // about a runner.
+  snapSpeedPenalty: 0.25,
+  // Backwards is now barely discouraged — a tie-breaker, no more. It used to be 1,
+  // fifty times the forward bias, and that asymmetry was the whole bug: on a course
+  // whose last kilometres overlap its first, jumping 25 km FORWARD to the wrong lap
+  // cost less than stepping 1.2 km back to the right one. Real progress is now
+  // established by the straight-line term, which needs no thumb on the scale.
+  snapBackPenalty: 0.05,
+  // What it costs to give up and declare a ping off-course. The escape hatch that
+  // makes a single bad fix survivable: a lone outlier pays this once and the pings
+  // after it carry on from where the last good one left them, instead of being
+  // scored against a position the runner was never in. Just above `snapMeters`, so
+  // any candidate inside the threshold is preferred and anything beyond it isn't.
+  snapOffCourseCost: 350,
+  // States per ping in the trellis, and rows in the cache. See `courseCandidates`.
+  snapCandidates: 8,
+  // How far apart in `along` two candidates must be to count as different parts of
+  // the course rather than two views of the same one.
+  snapBranchMeters: 200,
   loopMeters: 250,     // start and finish this close means the course is circular
   // Metres of elevation change that have to accumulate before a rise or a fall
   // counts towards the course's ascent. GPX elevations wobble by a metre or two
@@ -346,7 +389,15 @@ export const CONFIG = {
 // the old pattern, and a clip that was ignored then stays ignored forever, however
 // many times the page is reloaded. The one place the extension list is applied is the
 // one place that never runs again.
-const V = 'v13';
+//
+// v14: `lt.snap` changed SHAPE, not merely values. `byName` used to hold each ping's
+// chosen place on the course; it now holds the candidate places it could occupy, and
+// the choosing happens on every load. A v13 entry read by this code is not a stale
+// answer that the staleness tuple would catch — it is a `{along, lon, lat, ele, off}`
+// where a list belongs, which is not wrong so much as unreadable. The tuple guards
+// against caches computed under different ASSUMPTIONS; this is a different format,
+// and only the namespace can catch it.
+const V = 'v14';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

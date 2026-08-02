@@ -129,5 +129,15 @@ export function parseSettings(raw) {
   const totalAscent = positive(raw.total_ascent);
   if (totalAscent !== undefined) out.totalAscent = totalAscent;
 
+  // km/h, and the only field here that the SNAPPING reads. How fast a leg of this
+  // particular run may imply the runner went before the snapper starts doubting
+  // the fix rather than believing it. A stated fact like the two above, and for
+  // the same reason: `along` measures progress along the PLANNED route, so a
+  // course whose paths turned out not to exist on the ground is one where cutting
+  // the plan short is normal and the ceiling has to be loose enough to allow it.
+  // Absent, `CONFIG.snapMaxSpeedKmh` applies.
+  const maxSpeed = positive(raw.max_speed);
+  if (maxSpeed !== undefined) out.maxSpeed = maxSpeed;
+
   return out;
 }

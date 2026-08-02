@@ -758,7 +758,8 @@ With a course present, three things change:
 
 - **The route is drawn**, with its waypoints as named markers — the name is drawn beside the marker
   on the map and above its tick on the height strip, and hovering one gives its elevation too.
-- **Pings snap to it.** A fix within 500 m of the course is drawn where it belongs on the route, and
+- **Pings snap to it.** A fix within `snapMeters` (250 m) of the course is drawn where it belongs on
+  the route, and
   its real position stays visible underneath at low opacity, joined to it by a dashed line — so you
   can always see how far the snap moved things, and which fix moved where. A fix further away than
   that is left exactly where it is.
@@ -908,26 +909,56 @@ array lookups and a subtraction.
 
 ### Circular courses
 
-Where a course starts and finishes in the same place, a fix at that junction is metres from two
-points on the route that are a whole lap apart. Geometry cannot choose between them — both are
-equally close. So snapping runs in time order and scores each ping against how far the *previous*
-one got: moving backwards along the course is heavily penalised, jumping forwards mildly. Starting
-from zero, the first ping therefore lands at the start line and a late one at the finish, from
-identical coordinates.
+Where a course starts and finishes in the same place — or, just as often, where its last few
+kilometres retrace its first — a fix is metres from two points on the route that are most of a lap
+apart. Geometry cannot choose between them; both are equally close. What separates them is the rest
+of the run.
 
-A ping marked `is_finish` skips all of that and is pinned to the **last vertex of the course**, so
-the run's total distance reads the full course length. This is where the flag earns the most: the
-last ping of a lap is exactly the case the cost function has the least margin on, and an explicit
-finish settles it outright rather than arguing about it.
+So snapping is a **Viterbi pass over the whole sequence**, not a decision taken one ping at a time.
+Every candidate place for every ping goes into a trellis, and the cheapest path through all of them
+at once is the answer. Three costs, all in metres so they add up honestly:
 
-The 500 m threshold does **not** apply to a finish. For an ordinary ping, being that far off is
-evidence the phone is not on the course, and leaving the fix where it is says so honestly; a finish
-is not evidence but an assertion by the device, so it is pinned whatever the geometry says. The
-"snapped 640 m" figure in its tooltip, and the dashed line back to the raw fix, are then what tell
-you how far away it actually was.
+| term | what it says |
+| --- | --- |
+| how far the fix is from the course | the geometric fit, straight from the projection |
+| how far the course says the runner went, against how far the raw fixes moved | the route between two points cannot be shorter than the straight line between them |
+| the speed that implies | and it cannot be one nobody could run — `snapMaxSpeedKmh`, or the run's own `max_speed` |
 
-The tuning lives in [`src/config.js`](src/config.js) (`snapMeters`, `snapBackPenalty`,
-`snapForwardBias`, `loopMeters`). Two consequences worth knowing:
+Each ping also gets an **off-course state**, which carries the previous position forward unchanged
+for a flat cost. That is the escape hatch: a lone bad fix pays it once, and the pings after it are
+still measured from the last fix that was actually believed.
+
+This replaced a greedy matcher that scored each ping against wherever the previous one landed. The
+trouble with greedy is that it has no way back. One bad fix moves progress somewhere the runner
+never was, every later ping is then judged against the error, and the ping that would have exposed
+it is judged by it too — so it cannot be tuned out. On a real 28 km loop a single 251 m outlier put
+the runner 25 km ahead, and forty minutes of good fixes, several within 5 m of the route, were
+dragged along behind it at up to 300 km/h.
+
+The practical consequence is that **a snap is a reading of the run, not a fact about a ping**. Past
+snaps are re-derived every time new pings arrive, so a fix that looked plausible when it was the
+newest thing known is revised once the run makes clear it wasn't. On a closed course, distance is
+measured the short way round the junction, so a second lap is a step forward through the start line
+rather than a lap's worth of impossible speed backwards.
+
+A ping marked `is_finish` enters the trellis as its ping's **only** candidate, pinned to the last
+vertex of the course, so the run's total distance reads the full course length and the pings around
+it are reconciled with that rather than allowed to ignore it. This is where the flag earns the most:
+the last ping of a lap is exactly the case the cost function has the least margin on, and an
+explicit finish settles it outright rather than arguing about it.
+
+The `snapMeters` threshold does **not** apply to a finish, and neither does the off-course state.
+For an ordinary ping, being that far off is evidence the phone is not on the course, and leaving the
+fix where it is says so honestly; a finish is not evidence but an assertion by the device, so it is
+pinned whatever the geometry says. The "snapped 640 m" figure in its tooltip, and the dashed line
+back to the raw fix, are then what tell you how far away it actually was.
+
+The tuning lives in [`src/config.js`](src/config.js) (`snapMeters`, `snapSigmaM`,
+`snapMaxSpeedKmh`, `snapSpeedPenalty`, `snapBackPenalty`, `snapOffCourseCost`, `snapCandidates`,
+`loopMeters`). A run can raise its own ceiling with `max_speed` in `course_settings.json`, which is
+worth doing when the planned route turned out not to exist on the ground: `along` measures progress
+along the *plan*, so cutting out a stretch of it advances the plan faster than the runner ever
+moved. Two consequences worth knowing:
 
 - `along` is a position **on the course**, not a race odometer. On a second lap a ping snaps back to
   where it was the first time round, because that is genuinely where it is. Laps aren't modelled.
@@ -937,12 +968,24 @@ The tuning lives in [`src/config.js`](src/config.js) (`snapMeters`, `snapBackPen
 ### Cost
 
 A course is discovered in the tree listing the page already fetches, and downloaded from the CDN, so
-**it costs zero API requests**. Snapping is done once per ping, ever: results are keyed by filename
-in `localStorage`, so a reload paints the snapped positions before the GPX has even arrived. The
-whole cache is recomputed only if the course file changes, the threshold changes, or a ping appears
-that is older than one already snapped — a backfill, which was never scored against the pings before
-it. The parsed course itself is deliberately *not* cached; a long route would dwarf everything else
-in storage, and the browser's HTTP cache makes refetching it free.
+**it costs zero API requests**. The work then splits in two, and only one half is expensive.
+
+*Projecting* a fix onto the course is the costly part, and it is done **once per ping, ever**: the
+candidate places are keyed by filename in `localStorage`, so a reload paints before the GPX has even
+arrived. Those candidates are pure geometry — they don't depend on anything else in the run — which
+is what makes caching them safe. They are reduced to one per branch of the route before storage, so
+a ping that projects onto seventy nearby segments stores the two or three answers that actually
+differ.
+
+*Choosing* among them is the Viterbi pass, and it is redone from scratch on every load. That is the
+point rather than a cost: it is how an old snap gets revised. A 531-ping run is a few milliseconds
+and about 160 KB of cache.
+
+The stored geometry is thrown away only if the course file changes, the threshold changes, or the
+scheduled start moves. A backfilled ping no longer invalidates anything — it takes its place in the
+trellis in time order and the path is refound around it, for the price of the one projection it
+needs. The parsed course itself is deliberately *not* cached; a long route would dwarf everything
+else in storage, and the browser's HTTP cache makes refetching it free.
 
 A run's [`course_settings.json`](#course_settingsjson) is free on exactly the same terms, and for
 every run at once: the listing already names each one and carries its sha, and the bodies are a few
@@ -1081,7 +1124,7 @@ Four cases follow from those two lines:
 | --- | --- |
 | a filename stamp, nothing else | interpolated between the pings either side of it |
 | a filename stamp *and* an EXIF time | same, and the **filename** is the time used |
-| EXIF coordinates | drawn where the camera says, and treated as a fix — it snaps to the course by the same 500 m rule, and it counts towards distance and climb |
+| EXIF coordinates | drawn where the camera says, and treated as a fix — it snaps to the course by the same `snapMeters` rule, and it counts towards distance and climb |
 | coordinates and no timestamp anywhere | a place rather than a moment, in the idiom of a GPX waypoint |
 
 Interpolation only, never extrapolation: a moment before the first ping or after the last has no
@@ -1791,7 +1834,7 @@ The finish is tested at each place it is read. That it survives the round trip t
 schedule from ever disagreeing; that a finished run polls at the cap whatever its age or
 battery, and predicts no next ping; and that its tooltip says "finish" in place of "latest".
 The snapping tests state the two claims worth stating out loud — that a finish is pinned to
-the course end even from **beyond** the 500 m threshold, where the identical fix without the
+the course end even from **beyond** the `snapMeters` threshold, where the identical fix without the
 flag snaps nowhere at all, and that on a closed loop it resolves to the end rather than the
 start, which is the ambiguity the whole cost function exists to fight.
 

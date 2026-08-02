@@ -390,6 +390,41 @@ export function nearestOnCourse(course, lon, lat, maxPerp = CONFIG.snapMeters) {
   return out;
 }
 
+/**
+ * The same places, reduced to the handful that are genuinely DIFFERENT ANSWERS.
+ *
+ * `nearestOnCourse` returns one candidate per nearby segment, which on a real
+ * course means seventy-odd for a single fix — and seventy of them are the same
+ * answer, because a run of adjacent segments the runner is walking beside yields
+ * a candidate each, all within metres of one another. What matters is one per
+ * BRANCH: the pass the runner is on, and the other pass a loop brings back
+ * through the same wood half a lap later.
+ *
+ * So: walk them in `along` order, cut the list wherever it jumps further than
+ * `CONFIG.snapBranchMeters` — a jump being the only evidence available that the
+ * course went away and came back — and keep the closest candidate from each run.
+ * That is one answer per branch by construction. Then the best
+ * `CONFIG.snapCandidates` of those by `perp`, so the trellis stays bounded
+ * however tangled the route is under one fix.
+ *
+ * This exists because [snap.js](snap.js) runs a Viterbi pass whose cost is
+ * quadratic in the candidates per ping and whose cache stores every one of them,
+ * so seventy near-duplicates are paid for twice over and answer nothing that
+ * seven don't. Measured on `locations/test_run`: 78 per ping down to about 3.
+ */
+export function courseCandidates(course, lon, lat, maxPerp = CONFIG.snapMeters) {
+  const all = nearestOnCourse(course, lon, lat, maxPerp).sort((a, b) => a.along - b.along);
+
+  const best = [];
+  for (let i = 0; i < all.length; i++) {
+    const prev = all[i - 1];
+    if (!prev || all[i].along - prev.along > CONFIG.snapBranchMeters) best.push(all[i]);
+    else if (all[i].perp < best[best.length - 1].perp) best[best.length - 1] = all[i];
+  }
+
+  return best.sort((a, b) => a.perp - b.perp).slice(0, CONFIG.snapCandidates);
+}
+
 function clamp01(v) {
   return v < 0 ? 0 : v > 1 ? 1 : v;
 }
