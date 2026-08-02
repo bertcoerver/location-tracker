@@ -1116,3 +1116,35 @@ test('the two sun glyphs are one character each and not the same one', () => {
   assert.equal([...rise].length, 1, `${rise} is not one character`);
   assert.equal([...set].length, 1, `${set} is not one character`);
 });
+
+// --- standing still -----------------------------------------------------------
+
+test('a ping the runner stood still for says "paused" rather than dropping the row', () => {
+  // The row used to vanish, which reads as an omission: the tooltip simply had
+  // less to say than the one before it, and nothing said why. On a trail run the
+  // stops are half the story.
+  const { pace, ...noPace } = rich.stats;
+  const html = tooltipHtml({ ...rich, stats: { ...noPace, dist: 7, paused: true } }, false);
+  const out = text(html);
+
+  assert.match(out, /paused/);
+  assert.ok(!out.includes('min/km'), 'and it must not quote a pace it refused to compute');
+  assert.ok(!out.includes('km/h'), out);
+});
+
+test('a pause and a pace are never both drawn', () => {
+  const out = text(tooltipHtml({ ...rich, stats: { ...rich.stats, paused: true } }, false));
+
+  assert.match(out, /min\/km/, 'a real pace wins');
+  assert.ok(!out.includes('paused'), out);
+});
+
+test('a ping with nothing to say about pace stays silent', () => {
+  // No pace and no pause — the first fix of a run, or one that missed the course.
+  // Inventing a stop it does not describe would be worse than saying nothing.
+  const { pace, ...noPace } = rich.stats;
+  const out = text(tooltipHtml({ ...rich, stats: noPace }, false));
+
+  assert.ok(!out.includes('paused'), out);
+  assert.ok(!out.includes('min/km'), out);
+});

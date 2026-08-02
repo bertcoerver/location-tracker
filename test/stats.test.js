@@ -506,3 +506,49 @@ test('traceAt reports the gap it interpolated across', () => {
   // what lets the tooltip say how much of a guess it is.
   assert.equal(traceAt(points, course, 60 * MINUTE).gap, 120 * MINUTE);
 });
+
+// --- standing still ----------------------------------------------------------
+
+test('a leg too short to divide is marked as a pause, not left silent', () => {
+  // A missing pace row reads as an omission — the tooltip has less to say than the
+  // one before it and nothing says why. Time passed and the runner got nowhere is
+  // a reading in its own right.
+  const points = deriveStats([ping('a', 0, 1000), ping('b', 5, 1024)], slope());
+
+  assert.equal(points[1].stats.pace, undefined);
+  assert.equal(points[1].stats.paused, true);
+});
+
+test('a runner who has not moved at all is paused', () => {
+  const points = deriveStats([ping('a', 0, 1000), ping('b', 10, 1000)], slope());
+
+  assert.equal(points[1].stats.paused, true);
+});
+
+test('having no previous leg is NOT a pause', () => {
+  // Two different silences. The first snapped ping of a run has no stretch behind
+  // it to have been slow over, and neither has one sharing a timestamp with its
+  // predecessor — saying "paused" about either would invent a stop that the data
+  // does not describe.
+  const first = deriveStats([ping('a', 0, 0), ping('b', 10, 2000)], slope());
+  assert.equal(first[0].stats.paused, undefined);
+
+  const sameTime = deriveStats([ping('a', 5, 0), ping('b', 5, 1000)], slope());
+  assert.equal(sameTime[1].stats.paused, undefined);
+});
+
+test('a leg that earns a pace is not also called a pause', () => {
+  const points = deriveStats([ping('a', 0, 1000), ping('b', 20, 2000)], slope());
+
+  assert.equal(points[1].stats.pace, 20 * MINUTE);
+  assert.equal(points[1].stats.paused, undefined);
+});
+
+test('a ping that missed the course is not a pause either', () => {
+  // It has no place on the route, so it has no stretch and no stop — the snapper
+  // declined to say where it was at all.
+  const points = deriveStats(
+    [ping('a', 0, 1000), { ...ping('b', 5, 1200), snap: undefined }], slope());
+
+  assert.equal(points[1].stats.paused, undefined);
+});

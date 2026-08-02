@@ -359,10 +359,21 @@ export function mediaLayers(pois, atlas) {
  * pushed further down the stack by alpha alone: faint enough to read as a smudge
  * behind the reading, there the moment you look for it.
  *
+ * A ping the snapper TURNED DOWN is drawn the same way as a raw position, because
+ * that is exactly what it is: a fix with no place on the course. It used to be
+ * indistinguishable from a snapped one — same size, same solid orange — which
+ * made the map assert something the snapper had explicitly declined to say, and
+ * put the eye on the least trustworthy marks on the page. Faint, they read as
+ * what they are: the phone was here, and the route was somewhere else.
+ *
+ * That only means anything when there is a course to be off. Without one nothing
+ * is snapped and every ping is simply a ping, drawn solid.
+ *
  * @param {Array} points sorted oldest-first, each maybe carrying `snap`
  * @param {number} pulse 0..1, drives the halo on the newest fix
+ * @param {object|null} course the run's route, when it has one
  */
-export function pointLayers(all, pulse) {
+export function pointLayers(all, pulse, course = null) {
   // Media that carried its own coordinates rides in the points array so that it
   // snaps and counts, but it is not drawn here: it has a thumbnail of its own,
   // and a dot under that thumbnail is one mark claimed by two layers — with two
@@ -376,6 +387,12 @@ export function pointLayers(all, pulse) {
   // Only the ones that actually moved. For an unsnapped ping the two positions
   // are the same, so there is nothing to draw faintly and nothing to join up.
   const moved = points.filter(p => p.snap);
+
+  // Fixes the snapper declined to place, and the ones it placed. Split only when
+  // there is a course: `rejected` has to be empty on a run without one, or every
+  // ping on it would be drawn as a refusal.
+  const rejected = course ? points.filter(p => !p.snap) : [];
+  const placed = course ? moved : points;
   const audit = moved.length ? [
     // Which faint dot belongs to which snapped one. Dashed rather than solid so
     // it reads as an annotation and can't be mistaken for a leg of the route.
@@ -408,6 +425,24 @@ export function pointLayers(all, pulse) {
   return [
     ...audit,
 
+    // The turned-down fixes, drawn exactly as `raw` above draws a snapped ping's
+    // real position — same size, same alpha — because they are the same kind of
+    // mark. Deliberately NOT inside `audit`: that stack is gated on something
+    // having snapped, and a run where nothing has yet is precisely when these are
+    // the only pings there are.
+    //
+    // Still picked by `points-hit` below, so a faint dot keeps its full tooltip.
+    // Quiet is not the same as unavailable, and "why is this one off the course?"
+    // is a question the map should keep answering.
+    new deck.ScatterplotLayer({
+      id: 'rejected',
+      data: rejected,
+      radiusUnits: 'pixels',
+      getPosition: p => [p.lon, p.lat],
+      getRadius: 3,
+      getFillColor: [...fill, 45]
+    }),
+
     // What you actually point at. Invisible, wider than any dot, and above the
     // course's own hit band so that a tap near a fix gets the fix — see
     // `pointHitPx`. Picking renders geometry regardless of fill alpha, which is
@@ -424,7 +459,9 @@ export function pointLayers(all, pulse) {
 
     new deck.ScatterplotLayer({
       id: 'trail',
-      data: points,
+      // The placed fixes only. A rejected one is drawn faintly above instead, and
+      // drawing it here as well would put a solid dot back on top of it.
+      data: placed,
       // Not pickable: `points-hit` above is, over the same objects, and two
       // pickable layers over one mark are two answers to one question.
       radiusUnits: 'meters',
@@ -770,9 +807,15 @@ export function tooltipHtml(point, isLatest, origin = null) {
   // One row, in the shape every other row already has: the reading, then the same
   // reading said differently, quietly, in the column the legs live in. Two rows
   // claimed two measurements, and there is only one.
+  //
+  // And when the runner stood still, the row says so instead of disappearing. A
+  // tooltip that is silent about pace is indistinguishable from one whose pace
+  // could not be worked out, and on a trail run the stops are half the story.
   if (stats?.pace !== undefined) {
     rows.push(reading(ICON.pace, `${fmtPace(stats.pace)}&thinsp;min/km`,
       `${fmtSpeed(stats.pace)}&thinsp;km/h`));
+  } else if (stats?.paused) {
+    rows.push(reading(ICON.pace, '&ndash;&thinsp;paused'));
   }
   // Climb, when the course has elevation and this fix landed on it. Two rows rather
   // than the single four-figure line this replaces: up and down are two different

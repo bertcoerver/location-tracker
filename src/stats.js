@@ -87,6 +87,18 @@ export function deriveStats(points, course, start = null) {
       const legMs = previousSnapped ? point.t - previousSnapped.t : 0;
       if (stats.dist >= CONFIG.paceMinMeters && legMs > 0) {
         stats.pace = legMs / (stats.dist / 1000);
+      } else if (legMs > 0) {
+        // Time passed and the runner did not get anywhere: an aid station, a photo
+        // stop, a wrong turn walked back. A missing pace row read as an omission —
+        // the tooltip simply had less to say than the one before it, and nothing
+        // said why — so the standing-still case is stated rather than left blank.
+        //
+        // Deliberately NOT set when `legMs` is 0, which is a different silence:
+        // the first snapped ping of a run has no previous leg to have been slow
+        // over, and neither has one sharing a timestamp with its predecessor.
+        // Those have no pace because there is no stretch yet, not because the
+        // stretch went nowhere.
+        stats.paused = true;
       }
 
       if (climbable) {

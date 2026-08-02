@@ -114,7 +114,7 @@ export function createMap(container, {
       // went quiet for a while and the band slid over the newest fix — hiding the
       // one mark on the map that is actually known, behind the one that isn't.
       ...forecastLayers(course, marker),
-      ...pointLayers(points, pulse),
+      ...pointLayers(points, pulse, course),
       // Above the pings, which took a measurement to get right: deck picks the
       // TOPMOST pickable layer, `points-hit` is a 16 px disc around every fix, and
       // a sun mark is interpolated between two pings five minutes apart — so
