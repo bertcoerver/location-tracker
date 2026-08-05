@@ -954,6 +954,7 @@ function mediaPoi(over = {}) {
     url: 'https://raw.githubusercontent.com/o/r/main/locations/run/2026-08-22T20_53_00+02_00.jpeg?m1',
     animated: false,
     assumedUtc: false,
+    caption: null,
     t: GUN + 53 * 60000,
     lat: 42.79,
     lon: 0.14,
@@ -1067,6 +1068,41 @@ test('a photo with no moment is titled like a place', () => {
 
   assert.match(text(html), /summit/);
   assert.doesNotMatch(html, /\u{1F552}/u, 'gave a race clock to a mark with no time');
+});
+
+test('a caption somebody wrote is shown with the photograph', () => {
+  const html = mediaTooltipHtml(mediaPoi({ caption: 'A road with tree 😍🌳' }), GUN);
+  assert.match(text(html), /A road with tree 😍🌳/, html);
+  // Above the readings, not after them: the words are what the picture is about
+  // and the clock is the annotation on them.
+  assert.ok(html.indexOf('class="cq"') < html.indexOf('class="ct"'), html);
+  // And it does not cost the photo its clock or its distance.
+  assert.match(text(html), /8\.8 km/);
+});
+
+test('a caption replaces the filename it would otherwise sit beside', () => {
+  // Rule four with words on it. The filename is what goes in the title when
+  // nothing better is known, and a caption is something better — showing both
+  // would be two labels for one picture, one of them meaningless.
+  const html = mediaTooltipHtml(mediaPoi({
+    name: 'IMG_4021.jpg', t: null, along: null, source: 'exif', caption: 'The col at last'
+  }), GUN);
+
+  assert.match(text(html), /The col at last/);
+  assert.doesNotMatch(text(html), /IMG_4021/, html);
+});
+
+test('a caption is text, and cannot become markup', () => {
+  // It comes out of a file anybody can commit, and it is the only string on this
+  // card that a person typed freely.
+  const html = mediaTooltipHtml(mediaPoi({ caption: '<img src=x onerror=alert(1)>' }), GUN);
+  assert.doesNotMatch(html, /<img src=x/, html);
+  assert.match(html, /&lt;img src=x/, html);
+});
+
+test('a photo with no caption grows no empty line for one', () => {
+  assert.doesNotMatch(mediaTooltipHtml(mediaPoi(), GUN), /class="cq"/);
+  assert.doesNotMatch(mediaTooltipHtml(mediaPoi({ caption: '' }), GUN), /class="cq"/);
 });
 
 test('a photo before the gun has no race clock rather than a negative one', () => {

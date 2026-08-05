@@ -122,6 +122,7 @@ export function mediaTime(name) {
 export const EXIF_BYTES = 65536;
 
 const TAG = {
+  imageDescription:   0x010e,
   dateTime:           0x0132,
   exifIfd:            0x8769,
   gpsIfd:             0x8825,
@@ -139,6 +140,11 @@ const TAG = {
  *  read, and its entry is skipped rather than guessed at. */
 const TYPE_BYTES = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
 
+/** How much of a caption is kept. A line or two is a note about a photograph;
+ *  anything longer is something else pasted into the field, and it would push the
+ *  picture off a card that is mostly picture by design. */
+const CAPTION_CHARS = 280;
+
 /**
  * What a JPEG says about itself: when it was taken and, if the camera had a fix,
  * where.
@@ -153,9 +159,9 @@ const TYPE_BYTES = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8
  * @param {ArrayBuffer} buffer the head of the file. `EXIF_BYTES` is enough; the
  *   whole file works too, and a buffer cut off mid-image is expected — the walk
  *   stops when it runs out of bytes.
- * @returns {{t: number|null, assumedUtc: boolean, lat: number|null,
- *            lon: number|null, ele: number|null}|null} null when there is no
- *   readable EXIF at all.
+ * @returns {{t: number|null, caption: string|null, assumedUtc: boolean,
+ *            lat: number|null, lon: number|null, ele: number|null}|null} null
+ *   when there is no readable EXIF at all.
  */
 export function parseExif(buffer) {
   try {
@@ -252,6 +258,30 @@ function readTiff(view, tiff) {
     return s;
   };
 
+  /**
+   * The same field, read as writing rather than as a machine token.
+   *
+   * TIFF calls type 2 "ASCII" and every phone ignores that: the caption this was
+   * built for is `A road with tree 😍🌳`, four bytes of which are one emoji. So
+   * these bytes go through a UTF-8 decoder rather than one `String.fromCharCode`
+   * at a time, which would have turned each of those four into its own mojibake
+   * character. `ascii` above stays as it is on purpose — it reads timestamps and
+   * `N`/`S`/`E`/`W` refs, where a byte really is a character and a decoder would
+   * be ceremony.
+   *
+   * Not fatal on bad bytes: a caption a camera mangled should come back with a
+   * replacement character in it, not take the whole photograph off the map.
+   */
+  const text = f => {
+    if (!f || f.type !== 2) return null;
+    let n = 0;
+    while (n < f.count && view.getUint8(f.at + n)) n++;
+    if (!n) return null;
+    const bytes = new Uint8Array(view.buffer, view.byteOffset + f.at, n);
+    const s = new TextDecoder().decode(bytes).trim().slice(0, CAPTION_CHARS);
+    return s || null;
+  };
+
   const ratio = (f, i) => {
     const a = f.at + i * 8;
     const den = f.type === 10 ? i32(a + 4) : u32(a + 4);
@@ -299,10 +329,23 @@ function readTiff(view, tiff) {
   if (ele !== null && scalar(gps.get(TAG.gpsAltRef)) === 1) ele = -ele;   // below sea level
   const height = Number.isFinite(ele) && Math.abs(ele) <= 10000 ? ele : null;
 
-  if (when === null && !placed) return null;    // a TIFF block that said nothing useful
+  // What somebody typed about the picture. `ImageDescription` in IFD0 is where
+  // Photos, Lightroom and the iOS share sheet all put a caption, and it is the
+  // one this reader can have for free — it is a tag in an IFD already walked.
+  //
+  // The same words are usually written a second time into an IPTC block inside a
+  // Photoshop APP13 segment, and that is deliberately not read: it is a third
+  // container with a third set of rules, for a string already in hand.
+  const caption = text(zero.get(TAG.imageDescription));
+
+  // A TIFF block that said nothing useful. A caption counts as useful even with
+  // no time and no place attached — the file may still be placed by its NAME, and
+  // dropping the record here would throw away the words along with the nothing.
+  if (when === null && !placed && caption === null) return null;
 
   return {
     t: when,
+    caption,
     // True when the time is a reading of a clock whose zone nobody recorded. See
     // `stampToMs`.
     assumedUtc: when !== null && !hasZone(offset),
@@ -354,7 +397,7 @@ function stampToMs(stamp, offset) {
  * @param {object|null} course when the run has one — with it, an interpolated
  *   photo sits ON the route rather than on a chord across it.
  * @returns {Array} oldest-first, timeless ones last. Each is
- *   `{kind: 'media', name, sha, url, animated, t, lat, lon, along, ele, gap,
+ *   `{kind: 'media', name, sha, url, animated, caption, t, lat, lon, along, ele, gap,
  *     source, point}` — the sun POI's shape plus what it takes to draw a picture.
  *   `kind` is `'media'`, which is what the tooltips dispatch on; `point` marks the
  *   ones that are fixes in their own right and belong in the points array.
@@ -385,6 +428,10 @@ function place(record, points, course) {
     url: record.url,
     animated: isAnimated(record.name),
     assumedUtc: timed ? false : !!record.assumedUtc,
+    // The only thing on a POI that came from a person rather than from a sensor
+    // or an arithmetic. It rides along untouched: nothing about where a photo
+    // ends up can change what somebody wrote on it.
+    caption: record.caption || null,
     t
   };
 
@@ -494,7 +541,10 @@ export async function resolveMedia(url, name, sha) {
   const kind = mediaKind(name);
   if (!kind) return null;
 
-  const record = { name, sha, url, kind, t: null, assumedUtc: false, lat: null, lon: null, ele: null };
+  const record = {
+    name, sha, url, kind,
+    t: null, caption: null, assumedUtc: false, lat: null, lon: null, ele: null
+  };
   if (kind !== 'jpeg') return record;
 
   const res = await fetch(url, { cache: 'force-cache' });

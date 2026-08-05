@@ -369,15 +369,21 @@ export function mediaLayers(pois, atlas) {
  * That only means anything when there is a course to be off. Without one nothing
  * is snapped and every ping is simply a ping, drawn solid.
  *
+ * A photograph that carried its own GPS gets the audit trail and nothing else from
+ * this function — its faint raw dot and its dashed leash, with the thumbnail from
+ * `mediaLayers` standing in for the solid dot at the far end. It earns the trail on
+ * the same terms a ping does: it is a reading the snapper moved, and how far it
+ * moved is not a thing the map should keep to itself.
+ *
  * @param {Array} points sorted oldest-first, each maybe carrying `snap`
  * @param {number} pulse 0..1, drives the halo on the newest fix
  * @param {object|null} course the run's route, when it has one
  */
 export function pointLayers(all, pulse, course = null) {
   // Media that carried its own coordinates rides in the points array so that it
-  // snaps and counts, but it is not drawn here: it has a thumbnail of its own,
-  // and a dot under that thumbnail is one mark claimed by two layers — with two
-  // tooltips to match. See `mediaLayers`.
+  // snaps and counts, but it gets no dot, no hit disc and no halo here: it has a
+  // thumbnail of its own, and a dot under that thumbnail is one mark claimed by
+  // two layers — with two tooltips to match. See `mediaLayers`.
   const points = fixesOf(all);
   const latest = latestOf(points);
   const latestData = latest ? [latest] : [];
@@ -386,13 +392,22 @@ export function pointLayers(all, pulse, course = null) {
 
   // Only the ones that actually moved. For an unsnapped ping the two positions
   // are the same, so there is nothing to draw faintly and nothing to join up.
-  const moved = points.filter(p => p.snap);
+  //
+  // Media IS included, and this is the one place it is. What the audit trail shows
+  // is how far the snapper moved a reading, and that question is asked of a
+  // photograph for exactly the reasons it is asked of a ping — more so, since a
+  // thumbnail sits 30 px above its anchor and the eye has further to travel to
+  // check it. Excluding media here would have made the map quieter about the marks
+  // it had corrected most recently.
+  const moved = all.filter(p => p.snap);
 
-  // Fixes the snapper declined to place, and the ones it placed. Split only when
-  // there is a course: `rejected` has to be empty on a run without one, or every
-  // ping on it would be drawn as a refusal.
+  // Fixes the snapper declined to place, and the ones it placed. Both pings only:
+  // a turned-down photograph already draws its own anchor at the raw position, and
+  // a snapped one draws it on the course. Split only when there is a course —
+  // `rejected` has to be empty on a run without one, or every ping on it would be
+  // drawn as a refusal.
   const rejected = course ? points.filter(p => !p.snap) : [];
-  const placed = course ? moved : points;
+  const placed = course ? points.filter(p => p.snap) : points;
   const audit = moved.length ? [
     // Which faint dot belongs to which snapped one. Dashed rather than solid so
     // it reads as an annotation and can't be mistaken for a leg of the route.
@@ -414,7 +429,8 @@ export function pointLayers(all, pulse, course = null) {
     new deck.ScatterplotLayer({
       id: 'raw',
       data: moved,
-      // Not pickable: the snapped dot sitting on top of it owns the tooltip.
+      // Not pickable: whatever sits at the far end of the leash owns the tooltip —
+      // the snapped dot for a ping, the thumbnail for a photograph.
       radiusUnits: 'pixels',
       getPosition: p => [p.lon, p.lat],
       getRadius: 3,
@@ -953,7 +969,12 @@ function mediaButton(act, glyph, label, enabled = true) {
  *
  * A file whose name carries no time has no moment to put in the caption, so its
  * filename goes there instead and the elapsed drops away — the waypoint
- * treatment, for a thing that has become a place.
+ * treatment, for a thing that has become a place. Unless it carries a caption of
+ * its own, in which case that is plainly the better label and the filename goes.
+ *
+ * A caption — `ImageDescription`, what the phone's share sheet calls a caption —
+ * is the one line here that a person wrote rather than a sensor recorded, and it
+ * sits above the readings for that reason.
  *
  * @param {object} poi from [`placeMedia`](media.js).
  * @param {number|null} [origin] the moment the run's clock counts from.
@@ -982,9 +1003,19 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
     mediaButton('prev', '‹', 'Previous photo', controls.prev) +
     mediaButton('next', '›', 'Next photo', controls.next);
 
+  // What somebody typed about the picture, if they typed anything — and the only
+  // line on this card that isn't a measurement. It goes ABOVE the readings rather
+  // than after them: the words are what the photograph is about, and the clock and
+  // the distance are the annotation on it, which is the order every other tooltip
+  // on this page puts a fact and its caveats in.
+  const said = poi.caption ? `<span class="cq">${escapeHtml(poi.caption)}</span>` : '';
+
   const day = poi.t === null ? '' : dayTag(poi.t, origin);
+  // A filename is what goes in the title when nothing better is known. A caption is
+  // something better, so `IMG_4021` is dropped rather than set beside it — two
+  // labels for one picture, one of them meaningless.
   const title = poi.t === null
-    ? escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, ''))
+    ? (poi.caption ? '' : escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, '')))
     : `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}` +
       `${poi.assumedUtc ? '<span class="d">zone?</span>' : ''}`;
 
@@ -998,8 +1029,8 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   }
   if (poi.ele !== null && poi.ele !== undefined) stats.push(capStat(ICON.ele, metres(poi.ele)));
 
-  return `<figure class="ph">${frame}${buttons}<figcaption class="cap">` +
-    `<span class="ct">${title}</span>` +
+  return `<figure class="ph">${frame}${buttons}<figcaption class="cap">` + said +
+    (title ? `<span class="ct">${title}</span>` : '') +
     (stats.length ? `<span class="cs">${stats.join('')}</span>` : '') +
     '</figcaption></figure>';
 }

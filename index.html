@@ -807,6 +807,25 @@
     font-size: 14px;
     font-variant-numeric: tabular-nums;
   }
+  /* The caption, on a line of its own above the readings — `flex-basis: 100%` in a
+     wrapping row, so it takes the whole width and pushes the clock and the stats
+     down together rather than squeezing them.
+
+     Three lines at most, and `line-clamp` rather than a hard truncation in the
+     markup: an ellipsis appears only when there is genuinely more, and the words
+     that fit are the words that were written. `overflow-wrap` is for the one input
+     that would otherwise push the card wide — a URL, or a word nobody spaced. */
+  .tip .cq {
+    flex: 0 0 100%;
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+  }
   .tip .cs {
     display: flex;
     gap: 10px;
@@ -921,7 +940,33 @@
     backdrop-filter: blur(6px);
   }
   #shot[hidden] { display: none; }
+  /* The picture and its caption as one column, no wider than the picture — the
+     figure shrinks to its contents, so a caption under a portrait photo is the
+     width of that photo rather than the width of the window. `min-height: 0` is
+     what lets the image give up height to the caption instead of overflowing:
+     a flex item's default floor is its content size, and an image's content size
+     is its natural pixels. */
+  #shot .shot-fig {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    min-height: 0;
+    max-height: 100%;
+  }
+  /* Wide enough to read at, and never wider than the picture it belongs to. */
+  #shot .shot-cap {
+    flex: 0 0 auto;
+    max-width: 60ch;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 15px;
+    line-height: 1.45;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
   #shot img, #shot video {
+    min-height: 0;
     max-width: 100%;
     max-height: 100%;
     border-radius: 6px;

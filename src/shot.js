@@ -27,11 +27,16 @@ import { escapeHtml } from './util.js';
 export function createShot(element = document.getElementById('shot')) {
   // Everything that dismisses it: the ✕, and the field around the picture. The
   // backdrop is a dismiss target rather than inert because the picture fills most
-  // of the window and hunting for a 30 px button is not what anyone does — but the
-  // picture ITSELF is not, or a click meant to hold a video still would close the
-  // whole thing.
+  // of the window and hunting for a 30 px button is not what anyone does.
+  //
+  // Stated as what does NOT dismiss, rather than as "the backdrop element itself".
+  // Two things have to survive a click — the picture, or a click meant to pause a
+  // clip would close the whole viewer, and the caption, or the one piece of prose
+  // on the page would vanish the moment you tried to select it. Everything else is
+  // field, including the figure's own margins, and field closes.
   element.addEventListener('click', event => {
-    if (event.target === element || event.target.closest('[data-close]')) close();
+    if (event.target.closest('[data-close]')) return close();
+    if (!event.target.closest('img, video, .shot-cap')) close();
   });
 
   function close() {
@@ -55,6 +60,15 @@ export function createShot(element = document.getElementById('shot')) {
      * seconds is the difference between watching something and having it played
      * at you.
      *
+     * The caption comes along, in full. The card clamps it to three lines because
+     * it is a label with a picture's worth of space to spend; here there is room,
+     * and a caption cut short under the full-size version of the photograph it
+     * describes would be the wrong thing to have run out of.
+     *
+     * The caption is NOT a dismiss target. It sits inside the field the backdrop
+     * click uses, so without a stop it would be the one piece of text on the page
+     * that closes what you are reading when you try to select it.
+     *
      * @param {object} poi from [`placeMedia`](media.js).
      */
     show(poi) {
@@ -62,11 +76,16 @@ export function createShot(element = document.getElementById('shot')) {
       if (!src) return;
 
       const alt = escapeHtml(String(poi.name || ''));
+      const said = poi.caption
+        ? `<figcaption class="shot-cap">${escapeHtml(poi.caption)}</figcaption>`
+        : '';
       element.innerHTML =
         '<button type="button" class="shot-x" data-close title="Close" aria-label="Close">&times;</button>' +
+        '<figure class="shot-fig">' +
         (isVideo(poi.name)
           ? `<video src="${src}" autoplay loop muted playsinline controls></video>`
-          : `<img src="${src}" alt="${alt}">`);
+          : `<img src="${src}" alt="${alt}">`) +
+        said + '</figure>';
       element.hidden = false;
     },
 

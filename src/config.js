@@ -397,7 +397,14 @@ export const CONFIG = {
 // where a list belongs, which is not wrong so much as unreadable. The tuple guards
 // against caches computed under different ASSUMPTIONS; this is a different format,
 // and only the namespace can catch it.
-const V = 'v14';
+//
+// v15: `parseExif` reads a caption, and `lt.media` is the cache that would hide it.
+// That cache is diffed on BLOB SHA — a photograph is opened and parsed once ever per
+// browser, which is the whole point of it — so a file whose bytes have not changed is
+// never read again, however much the reader has learnt to look for since. The caption
+// lives in bytes that were already downloaded and simply not looked at, and only a new
+// namespace makes anything look.
+const V = 'v15';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

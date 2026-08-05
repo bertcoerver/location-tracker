@@ -92,6 +92,20 @@ test('a real iPhone photo gives up its time, its place and its height', () => {
   assert.ok(Math.abs(exif.ele - 1169.3) < 0.1, `ele was ${exif.ele}`);
 });
 
+test('a caption written on a phone comes back with its emoji intact', () => {
+  // The head of a real iPhone photo out of `locations/Lac`, captioned through the
+  // iOS share sheet. TIFF calls this field ASCII and the phone wrote UTF-8 into it
+  // anyway — four bytes of emoji at the end — which is exactly the case a
+  // charCode-per-byte reader turns into eight characters of mojibake.
+  const exif = parseExif(fixture('exif-caption.jpg'));
+  assert.equal(exif.caption, 'A road with tree 😍🌳');
+  assert.equal(exif.t, Date.UTC(2026, 7, 5, 9, 37, 38));
+});
+
+test('a photo nobody captioned says so, rather than saying nothing much', () => {
+  assert.equal(parseExif(fixture('exif-gps.jpg')).caption, null);
+});
+
 test('a photo from the same camera with no GPS gives a time and no place', () => {
   const exif = parseExif(fixture('exif-plain.jpg'));
   assert.equal(exif.t, Date.UTC(2024, 8, 27, 7, 28, 15));
@@ -312,6 +326,35 @@ test('a jpeg with no EXIF at all reads as no EXIF, not as an error', () => {
 
 test('an EXIF block that said nothing useful is the same as none', () => {
   assert.equal(parseExif(buildJpeg({ tags: [] })), null);
+});
+
+/** A string as the UTF-8 bytes a camera would actually write, NUL-terminated. */
+const utf8 = s => [...new TextEncoder().encode(s)].concat(0);
+
+test('a caption is enough on its own to keep a file worth reading', () => {
+  // No time and no place in the block at all — but the file may still be placed by
+  // its NAME, and returning null here would throw the words away with the nothing.
+  const exif = parseExif(buildJpeg({ tags: [[0, 0x010e, 2, utf8('Halfway up')]] }));
+  assert.equal(exif.caption, 'Halfway up');
+  assert.equal(exif.t, null);
+  assert.equal(exif.lat, null);
+});
+
+test('a caption field with nothing in it is no caption', () => {
+  for (const written of ['', '   ', '\n']) {
+    const exif = parseExif(buildJpeg({
+      tags: [
+        ['exif', 0x9003, 2, ascii('2026:07:30 18:15:02')],
+        [0, 0x010e, 2, utf8(written)]
+      ]
+    }));
+    assert.equal(exif.caption, null, `"${written}" should read as no caption`);
+  }
+});
+
+test('a caption longer than a caption is cut rather than allowed to eat the card', () => {
+  const exif = parseExif(buildJpeg({ tags: [[0, 0x010e, 2, utf8('x'.repeat(500))]] }));
+  assert.equal(exif.caption.length, 280);
 });
 
 // --- placing ------------------------------------------------------------------

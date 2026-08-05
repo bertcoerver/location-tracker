@@ -1137,9 +1137,32 @@ snapper *turned down* keeps its raw position, which is the same answer a rejecte
 from the route to claim a place on it. Its dot stays accent orange either way — snapping moves a
 reading, it does not turn it into a guess.
 
+And it gets the **audit trail** with it: the faint dot where the camera actually was, and the dashed
+leash from there up to the course, drawn by the same two layers that draw a ping's. That is the only
+thing `pointLayers` gives a photograph — no solid dot, no hit disc, no halo, because the thumbnail is
+its marker and a dot underneath would be one mark claimed twice. It earns the trail on a ping's exact
+terms: it is a reading the snapper moved, and how far it moved is not something the map should keep to
+itself. If anything the case is stronger, since a thumbnail floats 30 px above its anchor and the eye
+has further to go to check the claim.
+
 Interpolation only, never extrapolation: a moment before the first ping or after the last has no
 position this page can honestly claim, so such a file is not drawn at all. A file with neither a time
 nor a coordinate is dropped for the same reason.
+
+A photo can also carry **words**. `ImageDescription` is where the iOS share sheet, Photos and
+Lightroom all write a caption, and it is read for free — it is a tag in an IFD the parser already
+walks — and shown above the readings on the card, and again in full under the picture when you open
+it with ⤢. The words are what the photograph is about; the clock and the distance are the annotation
+on them, which is why they sit in that order. A caption also *replaces* the filename on a photo that
+has no timestamp: the filename is what goes in the title when nothing better is known, and `The col
+at last` is plainly better than `IMG_4021`.
+
+Two notes on reading it. TIFF calls that field ASCII and no phone believes it — the caption this was
+built for is `A road with tree 😍🌳`, where the last four bytes are one emoji — so it goes through a
+UTF-8 decoder rather than a byte at a time, which would have turned each emoji into a run of
+mojibake. And the same words are usually written a *second* time, into an IPTC block inside a
+Photoshop APP13 segment; that copy is deliberately not read, being a third container with a third set
+of rules for a string already in hand.
 
 A file named `IMG_4021.jpg` has no timestamp — the shape is checked, not merely parsed, because
 `Date.parse('IMG:4021')` is not an error, it is a date in the year 4021.
