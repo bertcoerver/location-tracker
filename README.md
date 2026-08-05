@@ -713,6 +713,27 @@ see the route, the height profile and how long there is to wait. Track segments 
 preferred; a file with only a route (`<rte>`) works too. If a run somehow has several `.gpx` files the
 first alphabetically wins — arbitrary, but stable, which is what matters for the cache.
 
+### A run with no course gets a line through its own pings
+
+Without a `.gpx` the map used to show a constellation: a dot every few minutes, saying where the
+runner was but not which way they went — and on a switchback, reading in the wrong order. So a run
+with no course draws a line through its pings instead, in the course's colour, at the course's
+weight, in the course's place in the stack. **Dashed**, which is the one thing a course isn't:
+nobody surveyed the ground between two fixes, and the line is the map's guess at it — the same
+admission, and the same dash, the leash from a raw fix to its snapped position makes.
+
+It is a curve rather than a chain of chords — a centripetal Catmull-Rom spline, twelve pieces per
+span, in [`tracePath`](src/points.js). Two properties earn it: it passes **through** every ping, so
+the curve never invents a position where one was measured, and centripetal parameterisation is what
+stops it looping or cusping when a stop at an aid station puts three fixes inside twenty metres and
+the next one a kilometre off. Repeated coordinates from a phone that didn't move are dropped first —
+they say nothing about where the runner went, and the spline divides by the gap between them.
+
+Nothing about it is pickable. The course's 34 px hover band earns its width by having a distance
+along, a height and a prediction to report, all of which come out of the GPX; here there is nothing
+behind the line the two pings at its ends don't say better, and a band that answered a hover with
+nothing would swallow the hovers meant for the dots.
+
 ### When the race starts
 
 `start_datetime` in the run's [`course_settings.json`](#course_settingsjson) is the gun:

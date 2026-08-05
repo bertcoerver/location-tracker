@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  boundsOf, buildPoints, finishOf, fixesOf, latestOf, posOf, unionBounds
+  boundsOf, buildPoints, finishOf, fixesOf, latestOf, posOf, tracePath, unionBounds
 } from '../src/points.js';
 
 const cache = {
@@ -95,4 +95,80 @@ test('fixesOf keeps the photographs out of the four places they break things', (
   // array comes back untouched rather than copied.
   const plain = [points[0], points[2]];
   assert.equal(fixesOf(plain), plain);
+});
+
+// --- the line through the pings, for a run with no course ---------------------
+
+/** Pings from lon/lat pairs, in the order given. */
+const pings = coords => coords.map(([lon, lat], i) => ({ name: `${i}.json`, t: i * 1000, lon, lat }));
+
+/** Is `p` one of the coordinates in `path`, to within a rounding error? */
+const onPath = (path, p) =>
+  path.some(q => Math.abs(q[0] - p[0]) < 1e-9 && Math.abs(q[1] - p[1]) < 1e-9);
+
+test('tracePath has nothing to draw through fewer than two places', () => {
+  assert.deepEqual(tracePath([]), []);
+  assert.deepEqual(tracePath(pings([[6.1, 45.8]])), []);
+  // Two pings from a phone that hasn't moved are one place, not two.
+  assert.deepEqual(tracePath(pings([[6.1, 45.8], [6.1, 45.8]])), []);
+});
+
+test('tracePath runs through every ping, in order, and ends on the last one', () => {
+  const points = pings([[6.10, 45.80], [6.12, 45.81], [6.13, 45.83], [6.16, 45.82]]);
+  const path = tracePath(points);
+
+  // The whole point of an interpolating spline: these are measurements, and a
+  // curve that passed NEAR them would be inventing positions the run didn't have.
+  for (const p of points) assert.ok(onPath(path, [p.lon, p.lat]), `${p.lon},${p.lat}`);
+  assert.deepEqual(path[0], [6.10, 45.80]);
+  assert.deepEqual(path[path.length - 1], [6.16, 45.82]);
+  // Smoothed, so there is a good deal more line than there are pings.
+  assert.ok(path.length > points.length * 5, path.length);
+});
+
+test('tracePath draws a straight run straight', () => {
+  // Four collinear fixes. A spline that wandered off the line between them would
+  // be drawing a course nobody ran.
+  const path = tracePath(pings([[6, 45], [6.01, 45.01], [6.02, 45.02], [6.03, 45.03]]));
+
+  for (const [lon, lat] of path) assert.ok(Math.abs((lon - 6) - (lat - 45)) < 1e-9, `${lon},${lat}`);
+});
+
+test('tracePath keeps the curve inside the ground the run covered', () => {
+  // A hairpin, which is where an unguarded spline overshoots: two fixes close
+  // together and the next one far away. Centripetal parameterisation is what
+  // bounds this — a little rounding of the corner is the whole idea, a loop out
+  // into the next valley is not.
+  const points = pings([[6.000, 45.000], [6.001, 45.010], [6.002, 45.000], [6.020, 45.001]]);
+  const path = tracePath(points);
+  const slack = 0.004;
+
+  for (const [lon, lat] of path) {
+    assert.ok(lon > 6.000 - slack && lon < 6.020 + slack, `lon ${lon}`);
+    assert.ok(lat > 45.000 - slack && lat < 45.010 + slack, `lat ${lat}`);
+  }
+});
+
+test('tracePath ignores a phone that pinged twice from the same spot', () => {
+  const moved = pings([[6.10, 45.80], [6.12, 45.81], [6.13, 45.83]]);
+  const stalled = pings([
+    [6.10, 45.80], [6.12, 45.81], [6.12, 45.81], [6.12, 45.81], [6.13, 45.83]
+  ]);
+
+  // Not merely "doesn't crash on the divide by zero": the repeats say nothing
+  // about where the runner went, so they must not bend the line either.
+  assert.deepEqual(tracePath(stalled), tracePath(moved));
+});
+
+test('tracePath follows a point to wherever it is drawn', () => {
+  // `posOf`, so the line joins the dots the map actually shows. Moot for the runs
+  // this draws for — nothing snaps without a course — but a line that disagreed
+  // with the marks at its ends would be a bug waiting for the day one does.
+  const path = tracePath([
+    { t: 1, lon: 6.10, lat: 45.80 },
+    { t: 2, lon: 0, lat: 0, snap: { lon: 6.12, lat: 45.81 } }
+  ]);
+
+  assert.deepEqual(path[path.length - 1], [6.12, 45.81]);
+  assert.ok(!path.some(([lon, lat]) => lon === 0 && lat === 0));
 });

@@ -12,7 +12,7 @@ import { isDaylight, moonPhase } from './sun.js';
 import {
   ago, dayTag, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtPace, mapsUrl
 } from './util.js';
-import { fixesOf, latestOf, posOf } from './points.js';
+import { fixesOf, latestOf, posOf, tracePath } from './points.js';
 import { isVideo, THUMB_PX } from './media.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
@@ -139,6 +139,79 @@ export function courseLayers(course) {
   }
 
   return layers;
+}
+
+/**
+ * The line through the pings, drawn only for a run with no course of its own.
+ *
+ * Same colour and weight as a course, because it occupies the same place in the
+ * picture: it is the shape of the run, under the readings. Dashed, because it is
+ * the one thing a course isn't — nobody surveyed this. A course is a line
+ * somebody drew and the phone was measured against; this is joined-up dots, and
+ * between any two of them the runner went wherever they went. The dash is the
+ * same admission the snap leashes make with the same extension.
+ *
+ * Not pickable, and there is no hit band under it either. `course-hit` earns its
+ * width by having something to say — a distance along, a height, a prediction —
+ * all of which come from the GPX. Here there is nothing behind the line that the
+ * two pings at its ends don't already say better, and a 34 px band that answers a
+ * hover with nothing would be a target that swallows the dots' own hovers.
+ *
+ * @param {Array} points sorted oldest-first, as from `buildPoints`.
+ * @param {object|null} course the run's route. Present means this doesn't draw.
+ */
+export function traceLayers(points, course = null) {
+  if (course) return [];
+
+  // The pings, matching the dots `pointLayers` draws — a photograph gets its own
+  // thumbnail and is not a mark this line should be seen to join.
+  const data = tracedPath(fixesOf(points));
+  if (!data.length) return [];
+
+  return [new deck.PathLayer({
+    id: 'trace',
+    // One path, in a wrapper the memo owns: a fresh `[path]` every frame would
+    // put a new `data` in front of deck sixty times a second and undo the point
+    // of caching the path at all.
+    data,
+    getPath: p => p,
+    widthUnits: 'pixels',
+    getWidth: 3,
+    widthMinPixels: 2,
+    capRounded: true,
+    jointRounded: true,
+    getColor: [...courseColor(), 180],
+    extensions: [new deck.PathStyleExtension({ dash: true })],
+    // Longer than the snap leashes' [4, 3]: those are 1 px hairlines a few pixels
+    // long, and the same dash on a 3 px line reads as a dotted smudge.
+    getDashArray: [8, 5],
+    dashJustified: true
+  })];
+}
+
+/** The last path built, as deck's one-element `data`, and what it came from. */
+let traceMemo = { from: null, data: [] };
+
+/**
+ * `tracePath`, computed once per set of pings rather than once per frame.
+ *
+ * This stack is rebuilt at animation rate to drive the newest ping's pulse, and
+ * the trace is the only thing in it doing real arithmetic — a spline over every
+ * fix of the run, sixty times a second, for an answer that changes when the phone
+ * pings. Keyed on the array's IDENTITY, which map.js replaces exactly when new
+ * points arrive, so a stale path is not a thing that can happen.
+ *
+ * Holding the result also holds `data` steady between frames, which is what lets
+ * deck skip re-uploading the geometry it just drew.
+ */
+function tracedPath(points) {
+  if (points !== traceMemo.from) {
+    const path = tracePath(points);
+    // Empty rather than `[[]]` when there is nothing to join: `traceLayers` reads
+    // the length of this to decide whether to draw at all.
+    traceMemo = { from: points, data: path.length ? [path] : [] };
+  }
+  return traceMemo.data;
 }
 
 /** A waypoint's display name, or '' when it hasn't got one worth drawing. */

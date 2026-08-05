@@ -6,7 +6,7 @@ import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
   makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers, sunLayers, sunTooltipHtml,
-  tooltipHtml, viewerLayers, waypointTooltipHtml
+  tooltipHtml, traceLayers, viewerLayers, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, fixesOf, latestOf, posOf, unionBounds } from './points.js';
@@ -108,6 +108,12 @@ export function createMap(container, {
       // the edge of one, and the race is what the page is for.
       ...viewerLayers(viewer, pulse),
       ...courseLayers(course),
+      // The stand-in for a run that has no GPX: a dashed line through its own
+      // pings, in the course's place in the stack because it is playing the
+      // course's part. Draws nothing when there IS a course — the two would be
+      // saying the same thing twice, and disagreeing wherever a snap had moved a
+      // fix.
+      ...traceLayers(points, course),
       // Above the course and under the pings, which is the same order the height
       // strip draws these two in. The band is a guess about the course; a ping is
       // a measurement. Drawn last it covered the pulsing dot whenever the phone
