@@ -209,6 +209,12 @@ if (geo.supported()) {
 function show(cache) {
   const pings = buildPoints(cache);
 
+  // Who else this run says is out there with a camera. Read off the SETTINGS cache
+  // for the same reason `start` and `maxSpeed` below are: it is what arrives first
+  // and what survives in localStorage, so the cached photographs paint against the
+  // right list rather than being briefly mistaken for the runner's own.
+  const crew = settings[run]?.crew ?? [];
+
   // Photographs, placed against the PINGS alone — never against an array that
   // already has media in it, or one photo's position could be interpolated off
   // another's and the answer would depend on what order the folder listed them.
@@ -219,7 +225,11 @@ function show(cache) {
   // the one whose interpolated positions are worth keeping — by then the pings
   // either side have places on the course, so a photo between them lands on the
   // route rather than on a chord across it.
-  const placed = placeMedia(Object.values(media), pings, course);
+  const placed = placeMedia(Object.values(media), pings, course, crew);
+  // Never a crew photograph: `place` marks those `point: false` whatever they
+  // carried, which is what keeps somebody else's position out of the runner's
+  // points array — and so out of the snapper, the distance, the climb, and the
+  // reckoning of which fix is the latest.
   const fixes = placed.filter(p => p.point);
 
   // A photo that recorded where it was taken is a fix like any other: it goes in
@@ -267,7 +277,7 @@ function show(cache) {
   // does the same for the ones that carried their own GPS, by copying back what the
   // snapper decided about the copy of them sitting in `points`. Between the two,
   // every photograph is drawn where the run actually went, exactly as a ping is.
-  const pois = applyMediaSnaps(placeMedia(Object.values(media), pings, course), points);
+  const pois = applyMediaSnaps(placeMedia(Object.values(media), pings, course, crew), points);
 
   // The newest PING, not the newest thing in the array. This drives
   // `nextPollMs`, which reads the phone's battery off it, and a photograph does

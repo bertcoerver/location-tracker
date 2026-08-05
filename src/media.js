@@ -21,6 +21,12 @@
 // a place and no time is a place — a POI in the idiom of a GPX waypoint, with no
 // moment to put in a title.
 //
+// All of which assumes the photograph is EVIDENCE ABOUT THE RUNNER, and one kind
+// of file isn't: a picture off a crew member's phone, marked by their name in
+// capitals at the front of it. That file is held to a stricter rule — coordinates
+// and a time or it is not drawn at all — and is placed where it says it was and
+// nowhere else. See `crewOf`.
+//
 // The file splits in half. Everything above `resolveMedia` is pure and is what
 // the tests exercise; everything below needs a DOM, a network, or both, and is
 // never reached from node. That is the same discipline `sunAtlas` follows in
@@ -87,6 +93,37 @@ export function isAnimated(name) {
   return mediaKind(name) === 'gif' || isVideo(name);
 }
 
+/**
+ * Whose camera this came off, when it wasn't the runner's.
+ *
+ * A run's settings may name CREW — the people driving to the aid stations — and a
+ * photograph of theirs is marked by putting their name, in capitals, in front of
+ * whatever the file was already called: `MARIAM_IMG_4021.jpg`.
+ *
+ * That mark changes what the photograph MEANS, and it is worth being plain about
+ * why. Every other rule in this file assumes a photograph is evidence about the
+ * runner: one with coordinates is a fix and snaps like a ping, and one with only a
+ * time is interpolated between the pings either side of it. A crew photograph is
+ * evidence about somebody standing still three kilometres down the mountain
+ * waiting for him. Interpolating it onto the course would draw the runner where he
+ * demonstrably was not, and it would look exactly like the marks that are true.
+ *
+ * The capitals are the whole test, and they are load-bearing rather than
+ * stylistic: `Mariam_and_me.jpg` is an ordinary filename that an ordinary person
+ * types, and a case-insensitive match would quietly seize it. Shouting is
+ * something you have to mean.
+ *
+ * @param {string} name the media filename.
+ * @param {Array<string>} crew from [`parseSettings`](settings.js), in the casing a
+ *   person wrote — which is what comes back, because it is what gets displayed.
+ * @returns {string|null}
+ */
+export function crewOf(name, crew) {
+  const prefix = String(name || '').split('_')[0];
+  if (!prefix || !crew?.length) return null;
+  return crew.find(member => prefix === member.toUpperCase()) || null;
+}
+
 /** The whole of a media basename, when the whole of it is a timestamp. */
 const STAMPED = /^\d{4}-\d{2}-\d{2}T\d{2}[_:]\d{2}[_:]\d{2}(Z|[+-]\d{2}[_:]?\d{2})?$/;
 
@@ -108,9 +145,17 @@ const STAMPED = /^\d{4}-\d{2}-\d{2}T\d{2}[_:]\d{2}[_:]\d{2}(Z|[+-]\d{2}[_:]?\d{2
  *
  * No stamp is the ORDINARY case, not an error: such a file is still placeable if
  * it carries its own coordinates, and the rules below are written around the NaN.
+ *
+ * @param {string} name the media filename.
+ * @param {string|null} [crew] the crew name in front of it, from `crewOf`. Taken
+ *   off before the shape test, so the filename keeps its authority over the clock
+ *   past somebody's name: `MARIAM_2026-08-05T12_41_01+02_00.jpg` is stamped, and
+ *   `MARIAM_IMG_4021.jpg` is as unstamped as `IMG_4021.jpg` — which is exactly the
+ *   guard above, still doing its work one prefix further in.
  */
-export function mediaTime(name) {
-  const stamp = String(name || '').replace(MEDIA_RE, '');
+export function mediaTime(name, crew = null) {
+  let stamp = String(name || '').replace(MEDIA_RE, '');
+  if (crew) stamp = stamp.slice(crew.length + 1);
   return STAMPED.test(stamp) ? parseTime(stamp) : NaN;
 }
 
@@ -396,16 +441,19 @@ function stampToMs(stamp, offset) {
  *   order the folder happened to list, and chains a guess off a guess.
  * @param {object|null} course when the run has one — with it, an interpolated
  *   photo sits ON the route rather than on a chord across it.
+ * @param {Array<string>} [crew] the run's crew, from [`parseSettings`](settings.js).
+ *   Empty by default, which is every run that has never named one and is why no
+ *   existing caller had to change.
  * @returns {Array} oldest-first, timeless ones last. Each is
- *   `{kind: 'media', name, sha, url, animated, caption, t, lat, lon, along, ele, gap,
- *     source, point}` — the sun POI's shape plus what it takes to draw a picture.
- *   `kind` is `'media'`, which is what the tooltips dispatch on; `point` marks the
- *   ones that are fixes in their own right and belong in the points array.
+ *   `{kind: 'media', name, sha, url, animated, caption, crew, t, lat, lon, along,
+ *     ele, gap, source, point}` — the sun POI's shape plus what it takes to draw a
+ *   picture. `kind` is `'media'`, which is what the tooltips dispatch on; `point`
+ *   marks the ones that are fixes in their own right and belong in the points array.
  */
-export function placeMedia(records, points, course = null) {
+export function placeMedia(records, points, course = null, crew = []) {
   const out = [];
   for (const record of records || []) {
-    const poi = record && place(record, points, course);
+    const poi = record && place(record, points, course, crew);
     if (poi) out.push(poi);
   }
   // Timeless POIs have nothing to sort BY, so they go to the end in the order
@@ -413,8 +461,9 @@ export function placeMedia(records, points, course = null) {
   return out.sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
 }
 
-function place(record, points, course) {
-  const named = mediaTime(record.name);
+function place(record, points, course, crew = []) {
+  const who = crewOf(record.name, crew);
+  const named = mediaTime(record.name, who);
   const timed = Number.isFinite(named);
 
   // The filename wins outright, and takes its certainty with it: a stamp somebody
@@ -432,8 +481,47 @@ function place(record, points, course) {
     // or an arithmetic. It rides along untouched: nothing about where a photo
     // ends up can change what somebody wrote on it.
     caption: record.caption || null,
+    // Null on the overwhelming majority of photographs, and present on all of them
+    // so that everything downstream can ask the question without knowing whether
+    // this run has a crew at all.
+    crew: who,
     t
   };
+
+  // A crew photograph, and the one branch here that REFUSES more than it places.
+  //
+  // Both halves have to be present. Coordinates, because the alternative is
+  // `traceAt`, and putting a crew member on the runner's course is precisely the
+  // false claim this whole branch exists to prevent — a photograph of somebody
+  // waiting at an aid station would be drawn as the runner passing through it. And
+  // a moment, because a picture with no time is a picture nobody can place in the
+  // story of the run; for the runner's own photographs that is tolerable, since a
+  // waypoint with a coordinate is still a fact about the route, but a crew member's
+  // undated position on a road somewhere is not a fact about the run at all.
+  //
+  // `point: false` is the load-bearing field. It is what keeps this out of the
+  // points array in main.js, and therefore out of the snapper, out of `deriveStats`,
+  // out of the distance and the climb, out of `applyMediaSnaps`, and out of the
+  // reckoning of which fix is the latest. A crew photograph is drawn on the map and
+  // counts towards NOTHING, which is the correct weight for a picture of somebody
+  // who isn't running.
+  //
+  // `along` is null for the same reason: a crew member has no distance along the
+  // runner's course, and a number there would be read as one.
+  if (who) {
+    if (t === null) return null;
+    if (!Number.isFinite(record.lat) || !Number.isFinite(record.lon)) return null;
+    return {
+      ...base,
+      lat: record.lat,
+      lon: record.lon,
+      along: null,
+      ele: Number.isFinite(record.ele) ? record.ele : null,
+      gap: null,
+      source: 'crew',
+      point: false
+    };
+  }
 
   // Its own coordinates beat anything this could work out, however far off the
   // course they land. A photo that knows where it was taken is a measurement, and

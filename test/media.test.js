@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  applyMediaSnaps, isAnimated, isVideo, MEDIA_RE, mediaKind, mediaTime, parseExif, placeMedia
+  applyMediaSnaps, crewOf, isAnimated, isVideo, MEDIA_RE, mediaKind, mediaTime, parseExif,
+  placeMedia
 } from '../src/media.js';
 
 const MINUTE = 60000;
@@ -75,6 +76,42 @@ test('a media filename carries a time the same way a ping filename does', () => 
   // it carries its own coordinates.
   assert.ok(Number.isNaN(mediaTime('sunset.jpg')));
   assert.ok(Number.isNaN(mediaTime('IMG_4021.jpeg')));
+});
+
+test('a crew name in front of a filename is read, and only when it is shouted', () => {
+  const crew = ['Mariam', 'Jo'];
+  assert.equal(crewOf('MARIAM_IMG_4021.jpg', crew), 'Mariam');
+  // The casing that comes back is the casing the settings file wrote, because that
+  // is what ends up on the card.
+  assert.equal(crewOf('JO_IMG_4021.jpg', crew), 'Jo');
+
+  // Capitals are the whole mark. `Mariam_and_me.jpg` is a filename an ordinary
+  // person types about an ordinary photograph, and claiming it would move somebody
+  // else's picture off the course.
+  assert.equal(crewOf('Mariam_and_me.jpg', crew), null);
+  assert.equal(crewOf('mariam_IMG_4021.jpg', crew), null);
+  // Only the FIRST part, and only the whole of it.
+  assert.equal(crewOf('IMG_MARIAM_4021.jpg', crew), null);
+  assert.equal(crewOf('MARIAMS_IMG_4021.jpg', crew), null);
+  assert.equal(crewOf('MARIAM.jpg', crew), null);
+
+  // Nobody named, nothing to match — which is every run in this repo but one.
+  assert.equal(crewOf('MARIAM_IMG_4021.jpg', []), null);
+  assert.equal(crewOf('MARIAM_IMG_4021.jpg', undefined), null);
+  assert.equal(crewOf('', crew), null);
+});
+
+test('a crew photo keeps the filename authority over the clock, past the name', () => {
+  assert.equal(
+    mediaTime('MARIAM_2026-07-30T18_15_02+00_00.jpeg', 'Mariam'),
+    Date.UTC(2026, 6, 30, 18, 15, 2)
+  );
+  // And the shape guard still does its work one prefix further in: `IMG_4021` must
+  // not become the year 4021 just because somebody's name is in front of it.
+  assert.ok(Number.isNaN(mediaTime('MARIAM_IMG_4021.jpeg', 'Mariam')));
+  // Without the prefix stripped, a stamped crew file reads as no stamp at all —
+  // which is exactly what would happen if `place` forgot to pass the name.
+  assert.ok(Number.isNaN(mediaTime('MARIAM_2026-07-30T18_15_02+00_00.jpeg')));
 });
 
 // --- EXIF, against a real camera ----------------------------------------------
@@ -472,6 +509,89 @@ test('placed media is oldest first, with the timeless ones at the end', () => {
     record({ name: '2026-07-30T12_10_00+00_00.jpg', sha: 'c' })
   ], PINGS, null);
   assert.deepEqual(pois.map(p => p.sha), ['c', 'b', 'a']);
+});
+
+// --- crew ---------------------------------------------------------------------
+//
+// The rule these all circle: a crew member's photograph is a measurement of where
+// the CREW MEMBER was, and every other rule in this module is about the runner. The
+// failure being guarded against is not a crash — it is a map that draws somebody
+// waiting at an aid station as the runner passing through it.
+
+const CREW = ['Mariam'];
+const withCrew = (...records) => placeMedia(records, PINGS, null, CREW);
+
+test('a crew photo is placed where it says it was, and is not a point', () => {
+  const [poi] = withCrew(record({
+    name: 'MARIAM_IMG_4021.jpg', t: T0 + 7 * MINUTE, lat: 45.9, lon: 6.3, ele: 1200
+  }));
+  assert.equal(poi.crew, 'Mariam');
+  assert.equal(poi.source, 'crew');
+  assert.equal(poi.lat, 45.9);
+  assert.equal(poi.lon, 6.3);
+  assert.equal(poi.ele, 1200);
+  // The load-bearing assertion in this file. `point: false` is what keeps this out
+  // of the points array, and so out of the snapper, the distance and the climb.
+  assert.equal(poi.point, false);
+  // No distance along the runner's course, because a crew member has none.
+  assert.equal(poi.along, null);
+});
+
+test('a crew photo with only a moment is not drawn at all', () => {
+  // The case the feature exists for. Interpolating this would put the crew member
+  // on the course at 12:07 — a claim about the runner, made out of a photograph of
+  // somebody else.
+  assert.deepEqual(withCrew(record({ name: 'MARIAM_IMG_4021.jpg', t: T0 + 7 * MINUTE })), []);
+  // Including when the moment came from the filename, which everywhere else in this
+  // module is the strongest thing a file can carry.
+  assert.deepEqual(withCrew(record({ name: 'MARIAM_2026-07-30T12_07_30+00_00.jpg' })), []);
+});
+
+test('a crew photo with only a place is not drawn either', () => {
+  // A run photograph with coordinates and no time is a waypoint, and worth keeping.
+  // The same file off a crew member's phone is a road somewhere, with nothing tying
+  // it to the run.
+  assert.deepEqual(withCrew(record({ name: 'MARIAM_IMG_4021.jpg', lat: 45.9, lon: 6.3 })), []);
+});
+
+test('a crew photo is placed outside the pings as readily as inside them', () => {
+  // Its coordinates are a measurement, and the ping span only ever bounded what
+  // could be GUESSED. A crew member photographing the empty finish line an hour
+  // before anyone arrives is a true picture of a real place.
+  const [poi] = withCrew(record({
+    name: 'MARIAM_IMG_4021.jpg', t: T0 - 60 * MINUTE, lat: 45.9, lon: 6.3
+  }));
+  assert.equal(poi.source, 'crew');
+  assert.equal(poi.lon, 6.3);
+});
+
+test('a run that names no crew treats the same file as the runner\'s own', () => {
+  // Which is the pre-existing behaviour, unchanged: the prefix means nothing until
+  // a settings file says it does.
+  const [poi] = only(record({
+    name: 'MARIAM_IMG_4021.jpg', t: T0 + 7 * MINUTE, lat: 45.9, lon: 6.3
+  }));
+  assert.equal(poi.crew, null);
+  assert.equal(poi.source, 'exif');
+  assert.equal(poi.point, true);
+});
+
+test('a crew photo never reaches the snapper, and is never moved by one', () => {
+  const pois = withCrew(record({
+    name: 'MARIAM_IMG_4021.jpg', t: T0 + 7 * MINUTE, lat: 45.9, lon: 6.3
+  }));
+  // `point` is what main.js filters the points array on, so nothing here can be
+  // snapped, counted, or mistaken for the latest fix.
+  assert.deepEqual(pois.filter(p => p.point), []);
+
+  // And if a snap for that name somehow existed, `applyMediaSnaps` still declines to
+  // apply it — the same `point` gate, one module further on.
+  applyMediaSnaps(pois, [
+    { kind: 'media', name: 'MARIAM_IMG_4021.jpg', snap: { lat: 45.8, lon: 6.15, along: 4000 } }
+  ]);
+  assert.equal(pois[0].lat, 45.9);
+  assert.equal(pois[0].lon, 6.3);
+  assert.equal(pois[0].along, null);
 });
 
 test('one photo is never interpolated off another', () => {

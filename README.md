@@ -722,12 +722,33 @@ weight, in the course's place in the stack. **Dashed**, which is the one thing a
 nobody surveyed the ground between two fixes, and the line is the map's guess at it — the same
 admission, and the same dash, the leash from a raw fix to its snapped position makes.
 
+The dash is `PathStyleExtension` with **`highPrecisionDash` on and `dashJustified` off**, and both
+halves are forced by the smoothing. A dash pattern is measured along a *segment*, and a smoothed
+span is twelve segments of a few metres each. Justified mode fits a whole number of dashes into each
+segment — `unitLength / round(pathLength / unitLength)` — so as soon as a segment is shorter than one
+dash the divisor rounds to zero and the fragments all come out solid; and since the shader measures
+that length in line widths, it happens the moment you zoom out far enough to see the run. Unjustified,
+each segment takes its phase from its distance along the whole path instead, and that distance only
+exists as an attribute when `highPrecisionDash` is set — without it the phase is zero everywhere, all
+twelve segments restart the pattern, and the line goes solid again by the other road. `getDashArray`
+is in multiples of the line width, not pixels: `[4, 3]` on a 3 px line is 12 px of ink and 9 px of gap.
+
 It is a curve rather than a chain of chords — a centripetal Catmull-Rom spline, twelve pieces per
 span, in [`tracePath`](src/points.js). Two properties earn it: it passes **through** every ping, so
 the curve never invents a position where one was measured, and centripetal parameterisation is what
 stops it looping or cusping when a stop at an aid station puts three fixes inside twenty metres and
 the next one a kilometre off. Repeated coordinates from a phone that didn't move are dropped first —
 they say nothing about where the runner went, and the spline divides by the gap between them.
+
+**It visits the photographs too.** A picture that recorded its own coordinates and its own moment is
+a fix like any other — it is in the points array, it counts towards the distance, and it is drawn
+with an orange dot for exactly that reason — so the line goes through it rather than past it. This is
+the one caller that hands `tracePath` the whole array instead of [`fixesOf`](src/points.js): the four
+things `fixesOf` protects are all about a photograph being the wrong kind of answer (the latest fix,
+the finish, the camera fit, a duplicate dot), and none of them is "where did the run go". A photo
+placed by *interpolation* never reaches that array and must not — its position was read off the
+pings either side, so making it a knot would only drag the curve back onto the chord it came from.
+Nor does a crew member's photograph, which is a picture of somebody who isn't running.
 
 Nothing about it is pickable. The course's 34 px hover band earns its width by having a distance
 along, a height and a prediction to report, all of which come out of the GPX; here there is nothing

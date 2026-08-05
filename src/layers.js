@@ -3,7 +3,8 @@
 
 import { CONFIG } from './config.js';
 import {
-  accent, course as courseColor, surface, viewer as viewerColor, prefersDark
+  accent, course as courseColor, crew as crewColor, surface, viewer as viewerColor,
+  prefersDark
 } from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
@@ -142,7 +143,11 @@ export function courseLayers(course) {
 }
 
 /**
- * The line through the pings, drawn only for a run with no course of its own.
+ * The line through the run's own readings, drawn only when it has no course.
+ *
+ * Every ping, and every photograph that recorded where and when it was taken —
+ * the marks this map draws in the accent. See below for why that is `points` and
+ * not `fixesOf(points)`.
  *
  * Same colour and weight as a course, because it occupies the same place in the
  * picture: it is the shape of the run, under the readings. Dashed, because it is
@@ -163,9 +168,25 @@ export function courseLayers(course) {
 export function traceLayers(points, course = null) {
   if (course) return [];
 
-  // The pings, matching the dots `pointLayers` draws — a photograph gets its own
-  // thumbnail and is not a mark this line should be seen to join.
-  const data = tracedPath(fixesOf(points));
+  // Every point, and NOT `fixesOf` — the one place in this file where a
+  // photograph belongs in with the pings rather than held out of them.
+  //
+  // `fixesOf` exists to keep media out of four things it would break, and each of
+  // those is about a photograph being the wrong KIND of answer: the latest fix,
+  // the finish, the camera fit, a second dot under a thumbnail. None of that is
+  // this. What is in the points array at all is a photograph that recorded its own
+  // coordinates and its own moment — `point: true` in `placeMedia` — which is a
+  // measurement of where the runner was, drawn in the accent every other
+  // measurement gets. The run went through it, so the line goes through it. A
+  // photograph placed BY interpolation never reaches this array, and must not: its
+  // position was derived from the pings either side, so making it a knot would
+  // drag the curve back onto the straight line it was read off.
+  //
+  // Neither does a CREW member's photograph, which has coordinates and a moment
+  // and is `point: false` regardless — it is a measurement of where somebody who
+  // isn't running was standing, and it is what would otherwise send this line on a
+  // detour to an aid station.
+  const data = tracedPath(points);
   if (!data.length) return [];
 
   return [new deck.PathLayer({
@@ -181,11 +202,31 @@ export function traceLayers(points, course = null) {
     capRounded: true,
     jointRounded: true,
     getColor: [...courseColor(), 180],
-    extensions: [new deck.PathStyleExtension({ dash: true })],
-    // Longer than the snap leashes' [4, 3]: those are 1 px hairlines a few pixels
-    // long, and the same dash on a 3 px line reads as a dotted smudge.
-    getDashArray: [8, 5],
-    dashJustified: true
+
+    // `highPrecisionDash`, and NOT `dashJustified`. Both matter, and this is the
+    // one place on the page where a smoothed path and a dash pattern meet.
+    //
+    // A dash is measured along a segment, and this line's segments are a twelfth
+    // of a ping-to-ping span each — metres. Justified mode divides a segment into
+    // a whole number of dashes, `unitLength / round(pathLength / unitLength)`, so
+    // the moment a segment is shorter than one dash the divisor rounds to zero and
+    // every fragment comes out solid. That is exactly what zooming out does: it is
+    // the segment's length in LINE WIDTHS that the shader tests, so the dashes
+    // survive up close and merge into a plain line as soon as the run fits on
+    // screen — which is most of the time anyone is looking at it.
+    //
+    // Unjustified, each segment instead takes its phase from where it starts along
+    // the whole path. That distance only exists as an attribute when
+    // `highPrecisionDash` is on; without it the phase is zero for every segment,
+    // so all twelve restart the pattern and the result is solid again by a
+    // different route.
+    extensions: [new deck.PathStyleExtension({ dash: true, highPrecisionDash: true })],
+
+    // In multiples of the line width, not pixels — so this is 12 px of ink and
+    // 9 px of gap on a 3 px line, three times the snap leashes' 4-and-3 on their
+    // 1 px hairlines. Which is about right: those are a few pixels long and this
+    // crosses the screen.
+    getDashArray: [4, 3]
   })];
 }
 
@@ -371,6 +412,14 @@ function sunAtlas() {
  * tells you anything new about the runner. Reserving the accent for real readings
  * is what stops an interpolation from looking like evidence.
  *
+ * The third colour answers a different question from the other two. Those say how
+ * well the map knows where a photograph was taken; magenta says the photograph is
+ * not about the runner at all — it came off a CREW member's phone, and the person
+ * in front of that camera was standing somewhere the runner wasn't. It is the one
+ * mark on the media layer whose position is exactly as measured as an accent dot
+ * and still tells you nothing about the race, which is why it cannot share a
+ * colour with either of them. See `crewOf` in [media.js](media.js).
+ *
  * @param {Array} pois from [`placeMedia`](media.js).
  * @param {{atlas, mapping}|null} atlas from `buildMediaAtlas`, once its images
  *   have decoded. Null until then, and null forever for a run whose files all
@@ -383,6 +432,11 @@ export function mediaLayers(pois, atlas) {
   const ring = surface();
   const measured = accent();
   const inferred = courseColor();
+  const theirs = crewColor();
+
+  const fill = poi =>
+    poi.source === 'exif' ? measured :
+    poi.source === 'crew' ? theirs : inferred;
 
   return [
     new deck.ScatterplotLayer({
@@ -397,7 +451,7 @@ export function mediaLayers(pois, atlas) {
       lineWidthUnits: 'pixels',
       getLineWidth: 2,
       getLineColor: [...ring, 255],
-      getFillColor: p => [...(p.source === 'exif' ? measured : inferred), 255]
+      getFillColor: p => [...fill(p), 255]
     }),
 
     ...(atlas ? [new deck.IconLayer({
@@ -1032,6 +1086,11 @@ function mediaButton(act, glyph, label, enabled = true) {
  * for a photo that recorded its own coordinates, course purple for one placed
  * between the pings either side. See `mediaLayers`.
  *
+ * With ONE exception, and it is an exception because it is not provenance: a crew
+ * member's name. That the runner is not in this photograph and was not standing
+ * where it was taken is the only thing on this card a reader could get badly
+ * wrong, and "badly wrong" is the test for what earns words rather than a colour.
+ *
  * Two admissions survive, because dropping them would be dropping facts rather
  * than dropping furniture, and both fit in the space an annotation takes:
  *   - a distance interpolated across a long blackout is prefixed `~`, where the
@@ -1084,13 +1143,29 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   const said = poi.caption ? `<span class="cq">${escapeHtml(poi.caption)}</span>` : '';
 
   const day = poi.t === null ? '' : dayTag(poi.t, origin);
+
+  // Whose camera, when it wasn't the runner's. A tag beside the clock rather than a
+  // line of its own, in the raised, quietened style the day and the `zone?` caveat
+  // already use — it belongs with the title because it is a fact about where this
+  // picture CAME FROM, which is the same kind of fact as when it was taken and the
+  // opposite kind from the caption above.
+  //
+  // Worth having in words as well as in the colour of the dot: the tag is what says
+  // that the position on this card is the photographer's and not the runner's, and a
+  // magenta dot alone can only say "different" to somebody already looking for it.
+  //
+  // Only ever on the timed branch below, and not by accident — `place` drops a crew
+  // photograph that carries no moment, so there is no timeless card this could
+  // appear on.
+  const by = poi.crew ? `<span class="d">${escapeHtml(poi.crew)}</span>` : '';
+
   // A filename is what goes in the title when nothing better is known. A caption is
   // something better, so `IMG_4021` is dropped rather than set beside it — two
   // labels for one picture, one of them meaningless.
   const title = poi.t === null
     ? (poi.caption ? '' : escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, '')))
     : `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}` +
-      `${poi.assumedUtc ? '<span class="d">zone?</span>' : ''}`;
+      `${poi.assumedUtc ? '<span class="d">zone?</span>' : ''}${by}`;
 
   const stats = [];
   if (origin !== null && poi.t !== null && poi.t >= origin) {

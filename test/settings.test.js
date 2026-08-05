@@ -188,3 +188,30 @@ test('a run may state the speed its snapping should believe', () => {
   assert.equal('maxSpeed' in parseSettings({ max_speed: 0 }), false);
   assert.equal('maxSpeed' in parseSettings({ max_speed: -10 }), false);
 });
+
+// --- the crew ----------------------------------------------------------------
+
+test('a run may name the people who are out there with cameras', () => {
+  // Casing preserved, because this string is shown to a reader on the photograph's
+  // card. The ALL-CAPS rule belongs to the filename — see `crewOf` in media.js.
+  assert.deepEqual(parseSettings({ crew: ['Mariam', 'Jo'] }).crew, ['Mariam', 'Jo']);
+  assert.deepEqual(parseSettings({ crew: ['  Mariam  '] }).crew, ['Mariam']);
+  assert.equal('crew' in parseSettings({}), false);
+});
+
+test('a malformed crew costs the crew and nothing else', () => {
+  assert.equal('crew' in parseSettings({ crew: 'Mariam' }), false);
+  assert.equal('crew' in parseSettings({ crew: [] }), false);
+  assert.equal('crew' in parseSettings({ crew: ['   '] }), false);
+  assert.equal('crew' in parseSettings({ crew: null }), false);
+
+  const both = parseSettings({ crew: 'Mariam', label: 'Lac' });
+  assert.equal(both.label, 'Lac');
+});
+
+test('one unusable name does not take the rest of the crew with it', () => {
+  // Unlike `ping_frequency`, which is all-or-nothing because four numbers are one
+  // curve. A list of people with a blank in it is still a list of people, and
+  // dropping it whole would put every crew photograph back on the runner's course.
+  assert.deepEqual(parseSettings({ crew: ['Mariam', '', 7, null, 'Jo'] }).crew, ['Mariam', 'Jo']);
+});

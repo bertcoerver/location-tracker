@@ -3,7 +3,8 @@
 // Everything else the page knows about a run is DERIVED — the pings are measured,
 // the course is measured, and the folder name is whatever somebody typed. This file
 // is the only place a run gets to make a STATEMENT: what it is called, when it
-// starts, what the phone in its pocket is doing, and what it wants to tell you.
+// starts, what the phone in its pocket is doing, who else is out there with a
+// camera, and what it wants to tell you.
 //
 // The whole file is optional, and so is every field in it. A run with no settings
 // behaves exactly as runs did before this existed, and a run naming one field gets
@@ -93,7 +94,7 @@ function parsePing(raw) {
  * another to everything downstream.
  *
  * @param {object} raw the parsed JSON body.
- * @returns {{label?, start?, ping?, banner?, distance?, totalAscent?}}
+ * @returns {{label?, start?, ping?, banner?, distance?, totalAscent?, maxSpeed?, crew?}}
  */
 export function parseSettings(raw) {
   const out = {};
@@ -103,6 +104,25 @@ export function parseSettings(raw) {
   // measures as width. Empty after trimming is the same as absent: the folder name
   // is a better answer than a blank heading.
   if (typeof raw.label === 'string' && raw.label.trim()) out.label = raw.label.trim();
+
+  // Who else is out there with a camera. See `crewOf` in media.js for what a name
+  // here does: it makes `MARIAM_*.jpg` a photograph of the CREW rather than of the
+  // runner, which changes where it may be drawn and whether it may be drawn at all.
+  //
+  // Casing is preserved rather than normalised, because this string is shown to a
+  // reader on the photograph's card. The ALL-CAPS rule belongs to the filename, and
+  // is applied there — a name is written here the way its owner writes it.
+  //
+  // Members are filtered individually rather than the list being rejected whole,
+  // which is the same bargain every other field here makes and not the one
+  // `parsePing` makes: four numbers are one curve and half of it is nobody's, but a
+  // list of people with one blank in it is still a list of people.
+  if (Array.isArray(raw.crew)) {
+    const crew = raw.crew
+      .filter(name => typeof name === 'string' && name.trim())
+      .map(name => name.trim());
+    if (crew.length) out.crew = crew;
+  }
 
   // `parseStamp` rather than `Date.parse`, and this is not incidental. The convention
   // this repo already uses for times writes the UTC offset as `+02_00`, because a

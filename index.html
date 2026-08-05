@@ -81,6 +81,15 @@
        it alone: see `viewerLayers` for the ring and the halo. */
     --viewer: #1a73e8;
 
+    /* A photograph somebody OTHER than the runner took — the crew, waiting at an
+       aid station somewhere he hasn't reached yet. Magenta rather than another
+       violet, and the gap from `--course` is the whole point of the value: those
+       marks are the runner's position worked out onto the route, and these are a
+       different person's position that has nothing to do with the route. Two
+       purples a few degrees apart would have said "much the same thing" about the
+       two marks on this map that mean the least alike. */
+    --crew: #a83cae;
+
     /* What iOS paints behind the status bar. Without `viewport-fit=cover` the app
        is laid out BELOW the status bar (see the top of this file), and the strip
        left over is filled with the document's background colour — the one thing
@@ -104,8 +113,9 @@
       --course:         #a99af0;
       --shadow:         0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.5);
 
-      /* Same hue, lifted for the dark surface. */
+      /* Same hues, lifted for the dark surface. */
       --viewer:         #4a9eff;
+      --crew:           #d774e0;
 
       /* dark_all is much darker than the dark panel: 64% of its pixels are this. */
       --chrome:         #090909;

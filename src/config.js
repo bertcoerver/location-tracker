@@ -404,7 +404,16 @@ export const CONFIG = {
 // never read again, however much the reader has learnt to look for since. The caption
 // lives in bytes that were already downloaded and simply not looked at, and only a new
 // namespace makes anything look.
-const V = 'v15';
+//
+// v16: `parseSettings` reads `crew`, and `lt.settings` is the cache that would hide
+// it — the same trap as v15 one file over. Settings are diffed on the settings file's
+// BLOB SHA, so a browser holding a v15 parse of a `course_settings.json` that has not
+// been touched since will never fetch it again, and would hold a record with no crew
+// in it forever. The list is already sitting in the file; only a new namespace makes
+// anything read it. Which matters more here than a missing caption did: without it
+// every crew photograph is silently treated as one of the runner's own, interpolated
+// onto the course and counted into his distance.
+const V = 'v16';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

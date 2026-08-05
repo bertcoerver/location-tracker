@@ -1053,6 +1053,29 @@ test('the caption says nothing about where the position came from', () => {
   }
 });
 
+test('a crew member\'s photo is signed, because the colour alone cannot say it', () => {
+  // The exception to the rule above, and not really an exception to it: whose
+  // camera this was is not how well the map knows the position, it is whose
+  // position it is. That the runner was NOT here is the one thing a reader of this
+  // card could get badly wrong, and being badly wrong is what earns words.
+  const html = text(mediaTooltipHtml(mediaPoi({ crew: 'Mariam', source: 'crew' }), GUN));
+  assert.match(html, /Mariam/, html);
+  // Beside the clock, in the raised style the day and the zone caveat already use —
+  // not a row of its own, on a card that is meant to be photograph.
+  assert.match(mediaTooltipHtml(mediaPoi({ crew: 'Mariam' }), GUN), /<span class="d">Mariam<\/span>/);
+
+  assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /Mariam/);
+  assert.doesNotMatch(mediaTooltipHtml(mediaPoi({ crew: null }), GUN), /class="d"/);
+});
+
+test('a photographer\'s name cannot smuggle markup onto the card', () => {
+  // It comes from a hand-written settings file, which is the same provenance as the
+  // caption and gets the same treatment.
+  const html = mediaTooltipHtml(mediaPoi({ crew: '<img src=x onerror=alert(1)>' }), GUN);
+  assert.doesNotMatch(html, /<img src=x/);
+  assert.match(html, /&lt;img src=x/);
+});
+
 test('a photo whose zone nobody recorded says so too', () => {
   assert.match(text(mediaTooltipHtml(mediaPoi({ assumedUtc: true }), GUN)), /zone\?/);
   assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /zone\?/);

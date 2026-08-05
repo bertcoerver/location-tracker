@@ -91,6 +91,11 @@ const SMOOTH_STEPS = 12;
  * gap between knots. The ends get a mirrored phantom point each, so the curve
  * starts and finishes at the first and last ping instead of a step inside them.
  *
+ * Every point given is a knot, photographs included: what reaches the points
+ * array is a picture that recorded its own coordinates and its own moment, which
+ * is a reading of where the runner was and not a guess at it. `traceLayers` says
+ * more about why this is the one caller that doesn't reach for `fixesOf`.
+ *
  * @param {Array} points sorted oldest-first, as from `buildPoints`.
  * @returns {Array<[number, number]>} lon/lat, or [] when there's nothing to join.
  */
