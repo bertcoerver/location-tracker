@@ -418,6 +418,50 @@ function place(record, points, course) {
   return { ...base, ...at, source: 'trace', point: false };
 }
 
+/**
+ * Move the photographs that carried their own GPS onto the course, once the
+ * snapper has said where on it they belong.
+ *
+ * `placeMedia` cannot do this itself, and the reason is an ordering one. A photo
+ * with EXIF coordinates is a fix, so it rides in the points array and is snapped
+ * by exactly the same 500 m rule as a ping — but that happens AFTER the array is
+ * built, which is after the POIs the map draws were made. Without this step the
+ * two copies disagree for the rest of the paint: the point counts its distance
+ * from a place on the route, while the thumbnail floats over the raw reading a
+ * few dozen metres off it, and every other mark on the page has been quietly
+ * corrected except the picture.
+ *
+ * Interpolated files need none of this — `traceAt` already put them on the
+ * course — which is why only the `point` ones are touched.
+ *
+ * A photo the snapper turned down keeps its raw position, and that is the same
+ * answer a rejected ping gets: too far from the route to claim a place on it.
+ *
+ * @param {Array} pois from `placeMedia`.
+ * @param {Array} points the run's points AFTER `applySnaps`, media included.
+ * @returns {Array} the same array, moved in place.
+ */
+export function applyMediaSnaps(pois, points) {
+  const byName = new Map();
+  for (const point of points || []) {
+    if (point?.kind === 'media') byName.set(point.name, point);
+  }
+  if (!byName.size) return pois;
+
+  for (const poi of pois || []) {
+    const snap = poi.point ? byName.get(poi.name)?.snap : null;
+    if (!snap) continue;
+    poi.lat = snap.lat;
+    poi.lon = snap.lon;
+    poi.along = snap.along;
+    // The course's height rather than the camera's. The reading has to describe
+    // the place the picture is now drawn at, and a GPS altitude off a phone is
+    // the weaker of the two measurements anyway.
+    poi.ele = snap.ele ?? poi.ele;
+  }
+  return pois;
+}
+
 // --- everything below here needs a browser ----------------------------------
 
 /**

@@ -9,7 +9,7 @@ import {
 } from './github.js';
 import { createGeo, geoMessage, isDenied, viewerFrom } from './geo.js';
 import { parseGpx } from './gpx.js';
-import { buildMediaAtlas, placeMedia } from './media.js';
+import { applyMediaSnaps, buildMediaAtlas, placeMedia } from './media.js';
 import { createNews } from './news.js';
 import { buildPoints, fixesOf, latestOf } from './points.js';
 import { buildForecast } from './predict.js';
@@ -263,8 +263,11 @@ function show(cache) {
   const sun = sunPois(points, course);
 
   // The second pass. `pings` have their snaps by now, so `traceAt` inside
-  // `placeMedia` places the interpolated files on the course.
-  const pois = placeMedia(Object.values(media), pings, course);
+  // `placeMedia` places the interpolated files on the course — and `applyMediaSnaps`
+  // does the same for the ones that carried their own GPS, by copying back what the
+  // snapper decided about the copy of them sitting in `points`. Between the two,
+  // every photograph is drawn where the run actually went, exactly as a ping is.
+  const pois = applyMediaSnaps(placeMedia(Object.values(media), pings, course), points);
 
   // The newest PING, not the newest thing in the array. This drives
   // `nextPollMs`, which reads the phone's battery off it, and a photograph does

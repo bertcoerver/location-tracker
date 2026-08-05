@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  isAnimated, isVideo, MEDIA_RE, mediaKind, mediaTime, parseExif, placeMedia
+  applyMediaSnaps, isAnimated, isVideo, MEDIA_RE, mediaKind, mediaTime, parseExif, placeMedia
 } from '../src/media.js';
 
 const MINUTE = 60000;
@@ -443,4 +443,56 @@ test('one photo is never interpolated off another', () => {
     record({ name: '2026-07-30T12_02_30+00_00.jpg', sha: 'a' })
   ], PINGS, null);
   assert.deepEqual(forward.map(p => [p.sha, p.lon]), reversed.map(p => [p.sha, p.lon]));
+});
+
+// --- snapping -----------------------------------------------------------------
+
+/** The points array as `main.js` hands it over: pings, plus the media that are fixes. */
+const snapped = snap => [
+  ...PINGS,
+  { name: 'x.jpg', kind: 'media', t: T0 + 2 * MINUTE, lat: 45.81, lon: 6.11, ...(snap ? { snap } : {}) }
+];
+
+const SNAP = { along: 4200, lat: 45.8, lon: 6.104, ele: 1180, off: 31 };
+
+test('a photograph that carried its own GPS is moved onto the course like a ping', () => {
+  // Named like the real thing off a phone — no stamp in the filename, so the time
+  // comes off the camera, exactly as `IMG_0559.jpeg` does.
+  const pois = only(record({ t: T0 + 2 * MINUTE, lat: 45.81, lon: 6.11, ele: 1204 }));
+  applyMediaSnaps(pois, snapped(SNAP));
+
+  assert.equal(pois[0].lat, 45.8);
+  assert.equal(pois[0].lon, 6.104);
+  assert.equal(pois[0].along, 4200);
+  // The course's height, not the camera's: the reading has to describe where the
+  // picture is now drawn.
+  assert.equal(pois[0].ele, 1180);
+  // Still a measured position, whatever the snapper did to it — that is what the
+  // dot's colour says, and snapping doesn't make it an inference.
+  assert.equal(pois[0].source, 'exif');
+});
+
+test('a photograph the snapper turned down stays where the camera put it', () => {
+  const pois = only(record({ t: T0 + 2 * MINUTE, lat: 45.81, lon: 6.11, ele: 1204 }));
+  applyMediaSnaps(pois, snapped(null));
+
+  assert.equal(pois[0].lat, 45.81);
+  assert.equal(pois[0].lon, 6.11);
+  assert.equal(pois[0].along, null);
+  assert.equal(pois[0].ele, 1204);
+});
+
+test('an interpolated photograph is left alone — it was already on the course', () => {
+  // No `point`, so no copy of it in the points array and nothing to copy back.
+  const pois = only(record({ name: '2026-07-30T12_02_30+00_00.jpg' }));
+  const before = { ...pois[0] };
+  applyMediaSnaps(pois, snapped(SNAP));
+  assert.deepEqual(pois[0], before);
+});
+
+test('snapping media survives a run with no media in its points at all', () => {
+  assert.deepEqual(applyMediaSnaps([], PINGS), []);
+  assert.deepEqual(applyMediaSnaps(undefined, PINGS), undefined);
+  const pois = only(record({ t: T0 + 2 * MINUTE, lat: 45.81, lon: 6.11 }));
+  assert.equal(applyMediaSnaps(pois, PINGS)[0].lat, 45.81);
 });

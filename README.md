@@ -1127,6 +1127,16 @@ Four cases follow from those two lines:
 | EXIF coordinates | drawn where the camera says, and treated as a fix — it snaps to the course by the same `snapMeters` rule, and it counts towards distance and climb |
 | coordinates and no timestamp anywhere | a place rather than a moment, in the idiom of a GPX waypoint |
 
+"Treated as a fix" is meant literally, and it took two passes to make true. A photo with EXIF
+coordinates joins the points array and is snapped there, but the thumbnail is drawn from a POI built
+*before* the snapper ran — so for a while the two disagreed, the point measuring its distance from a
+place on the route while the picture floated over the raw reading a few dozen metres off it. Every
+other mark on the page had been quietly corrected except the one you could see. `applyMediaSnaps`
+copies the answer back, so the thumbnail sits on the course exactly as a ping's dot does. A photo the
+snapper *turned down* keeps its raw position, which is the same answer a rejected ping gets: too far
+from the route to claim a place on it. Its dot stays accent orange either way — snapping moves a
+reading, it does not turn it into a guess.
+
 Interpolation only, never extrapolation: a moment before the first ping or after the last has no
 position this page can honestly claim, so such a file is not drawn at all. A file with neither a time
 nor a coordinate is dropped for the same reason.
