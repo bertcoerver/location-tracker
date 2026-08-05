@@ -54,13 +54,24 @@ export const CONFIG = {
   // debugging a schedule that matches neither the file nor the default.
   pingFloorMs: 120000,
 
+  // The phone no longer uploads a fix the moment it takes one: it records the
+  // ping, then commits it a fixed minute later. So a ping's timestamp and the
+  // moment it can possibly be FETCHED are a minute apart, every time, and a
+  // schedule built on `t + interval` alone would look for every ping a minute
+  // before it could exist. Like the four constants above, this mirrors the
+  // phone's script and a mismatch is silent — retune the phone, retune this.
+  //
+  // Not part of `ping_frequency`: a settings file names its phone's curve, and
+  // this lag is the same on every phone writing to this repo.
+  uploadLagMs: 60000,
   pollGuardMs: 30000, // the commit still has to land AND reach the tree API
   maxPollMs: 900000,  // backoff cap, and the floor poll on a long wait
   // How late a ping can be before we stop treating it as jitter. The interval
-  // predicts when the phone WAKES; it then has to take a fix, upload it, and
-  // have the commit reach the API, so a little slippage means nothing. Past
-  // this it has genuinely missed its slot, and since a failed upload is retried
-  // on its NEXT poll rather than on its own, there is nothing to find until then.
+  // plus `uploadLagMs` predicts when the phone COMMITS; the commit still has to
+  // reach the API, and neither leg is to the millisecond, so a little slippage
+  // means nothing. Past this it has genuinely missed its slot, and since a
+  // failed upload is retried on its NEXT poll rather than on its own, there is
+  // nothing to find until then.
   lateJitterMs: 120000,
 
   // --- the other runs, as dots on the map -----------------------------------

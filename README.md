@@ -731,7 +731,10 @@ that length in line widths, it happens the moment you zoom out far enough to see
 each segment takes its phase from its distance along the whole path instead, and that distance only
 exists as an attribute when `highPrecisionDash` is set — without it the phase is zero everywhere, all
 twelve segments restart the pattern, and the line goes solid again by the other road. `getDashArray`
-is in multiples of the line width, not pixels: `[4, 3]` on a 3 px line is 12 px of ink and 9 px of gap.
+is in multiples of the line width, not pixels: `[4, 6]` on a 3 px line is 12 px of ink and 18 px of
+gap. More gap than ink, and firmer ink than the course's — 215 against 180 — because a stroke that is
+off for most of its length reads fainter than a solid one at the same alpha, and the dash is already
+saying everything that needed saying about this line being inferred.
 
 It is a curve rather than a chain of chords — a centripetal Catmull-Rom spline, twelve pieces per
 span, in [`tracePath`](src/points.js). Two properties earn it: it passes **through** every ping, so
@@ -1454,6 +1457,12 @@ Whole minutes, **floored**, because that is what the phone's scheduler does — 
 every prediction up to half a minute after the ping it is predicting. Note the last column: the
 curve approaches 30 minutes without reaching it, so a flat battery pings every 29.
 
+A fix is not sent the moment it is taken: the phone records the ping, then commits it **a fixed
+minute later** (`uploadLagMs`). So the moment a ping can first be *fetched* is `t + interval + 1min`,
+and everything downstream — the sleep, and the countdown in the panel — is built on that rather than
+on `t + interval`. Leaving it out would mean one guaranteed-empty request per ping, per run, forever,
+and a panel reading "overdue" for a minute of every cycle in which nothing was wrong.
+
 Those four constants are the **fallback**. A run whose `course_settings.json` names a
 `ping_frequency` uses its own curve instead, so one repo can hold races tracked by two
 differently-configured phones — see [`course_settings.json`](#course_settingsjson) for the units and
@@ -1468,7 +1477,7 @@ cadence is read within ~30 s of committing rather than an average of two minutes
 phone at 12% is asked about four times an hour instead of fifteen.
 
 > ⚠️ The four constants in [`src/config.js`](src/config.js) — `minPingMs`, `maxPingMs`, `batteryK`,
-> `batteryMid` — **mirror the phone's script, which is the authority.** They are duplicated here
+> `batteryMid` — plus `uploadLagMs` **mirror the phone's script, which is the authority.** They are duplicated here
 > only because `btry` is what the ping carries. A mismatch is *silent*: the map keeps working and
 > just polls at the wrong times. Retune the phone, retune these.
 
@@ -1479,9 +1488,9 @@ Two things stop this being fragile:
   dropped, or with a tab that was asleep for an hour, and it is safe to recompute after *every*
   refresh however that refresh was triggered.
 - **A missed ping is not a failure.** Tunnels, battery saver and dead zones mean expectations get
-  missed routinely. A ping that is only seconds late is treated as jitter — the interval predicts
-  when the phone *wakes*, and it still has to take a fix, upload it and have the commit reach the
-  API — so it gets a cheap look 30 s later rather than a five-minute wait.
+  missed routinely. A ping that is only seconds late is treated as jitter — the expectation predicts
+  when the phone *commits*, and the commit still has to reach the API — so it gets a cheap look 30 s
+  later rather than a five-minute wait.
 
   Past that, the page waits **a whole interval**, because of how the phone handles a failed upload:
   it does not retry on its own, it retries *on its next poll*. So once a ping has properly missed

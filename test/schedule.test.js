@@ -84,10 +84,19 @@ test('pingIntervalMs stays inside the phone`s own bounds', () => {
 
 // --- waiting for a ping that is not due yet ----------------------------------
 
-test('nextPollMs sleeps until the ping is due, plus the guard', () => {
+test('nextPollMs sleeps until the ping is due, plus the upload lag and the guard', () => {
   // Fresh battery, so a 5 minute cadence; the ping landed 1 minute ago.
   const wait = nextPollMs(ping(1, 90), NOW);
-  assert.equal(wait, 4 * MIN + CONFIG.pollGuardMs);
+  assert.equal(wait, 4 * MIN + CONFIG.uploadLagMs + CONFIG.pollGuardMs);
+});
+
+test('nextPollMs waits out the upload lag, because the fix is not sent when it is taken', () => {
+  // The phone records a ping and commits it a fixed minute later. Without this
+  // the page would look for every single ping a minute before it can exist —
+  // one guaranteed-empty request per ping, forever, on every run being watched.
+  const withLag = nextPollMs(ping(1, 90), NOW);
+  const fix = NOW + 4 * MIN; // when the phone takes the next one
+  assert.equal(NOW + withLag, fix + CONFIG.uploadLagMs + CONFIG.pollGuardMs);
 });
 
 test('nextPollMs waits longer for a phone that is pinging less often', () => {
@@ -102,7 +111,7 @@ test('nextPollMs looks again shortly for a ping that is only just late', () => {
   // The phone schedules to the whole minute and a commit takes a moment to
   // reach the API, so a few seconds of slippage is normal — the ping is
   // probably about to appear, and one cheap look is worth it.
-  const justLate = NOW - (5 * MIN + CONFIG.pollGuardMs + 1000);
+  const justLate = NOW - (5 * MIN + CONFIG.uploadLagMs + CONFIG.pollGuardMs + 1000);
   assert.equal(nextPollMs({ t: justLate, btry: 90 }, NOW), CONFIG.minRefreshMs);
 });
 
@@ -110,7 +119,7 @@ test('the waiting branch bottoms out at the guard, which is already above the fl
   // Worth pinning down: a ping that is due this instant still gets pollGuardMs
   // of slack, and that happens to be exactly minRefreshMs. So on the waiting
   // side the floor never binds — it exists for the overdue side above.
-  const dueNow = NOW - 5 * MIN;
+  const dueNow = NOW - (5 * MIN + CONFIG.uploadLagMs);
   assert.equal(nextPollMs({ t: dueNow, btry: 90 }, NOW), CONFIG.pollGuardMs);
   assert.ok(CONFIG.pollGuardMs >= CONFIG.minRefreshMs);
 });
@@ -127,15 +136,15 @@ test('nextPollMs waits a whole interval once a ping has properly missed its slot
   // THE point of this branch. A failed upload is not retried on its own — the
   // phone retries it on its next poll — so between slots there is provably
   // nothing to find, and a request made now would come back empty by
-  // construction. Due at 5 min + guard; at 9 minutes old it is 3.5 late, half
-  // of which is under one interval, so the interval wins.
+  // construction. Due at 5 min + lag + guard; at 9 minutes old it is 2.5 late,
+  // half of which is under one interval, so the interval wins.
   assert.equal(nextPollMs(ping(9, 90), NOW), 5 * MIN);
 });
 
 test('nextPollMs checks at half the age of the problem once the silence is long', () => {
   // Past the point where waiting one interval is enough, a run that has simply
   // ended must not keep costing one request every five minutes forever.
-  const late = 25 * MIN - (5 * MIN + CONFIG.pollGuardMs);
+  const late = 25 * MIN - (5 * MIN + CONFIG.uploadLagMs + CONFIG.pollGuardMs);
   assert.equal(nextPollMs(ping(25, 90), NOW), late / 2);
   assert.ok(late / 2 > 5 * MIN, 'and by now that is longer than an interval');
 });
@@ -160,7 +169,7 @@ test('a long silence costs only a handful of requests', () => {
   // fixed 4-minute timer spends 15 an hour on this forever; this reaches the cap
   // in a few and then settles at four an hour.
   const t = NOW;
-  let at = t + 5 * MIN + CONFIG.pollGuardMs;
+  let at = t + 5 * MIN + CONFIG.uploadLagMs + CONFIG.pollGuardMs;
   let polls = 0;
   while (nextPollMs({ t, btry: 90 }, at) < CONFIG.maxPollMs && polls < 100) {
     at += nextPollMs({ t, btry: 90 }, at);
@@ -179,7 +188,7 @@ test('the phone`s own grid is never checked more than once', () => {
   // closer would be asking twice about a repo that provably cannot have
   // changed in between.
   const t = NOW;
-  let at = t + 5 * MIN + CONFIG.pollGuardMs + CONFIG.lateJitterMs;
+  let at = t + 5 * MIN + CONFIG.uploadLagMs + CONFIG.pollGuardMs + CONFIG.lateJitterMs;
   let previous = at;
   for (let i = 0; i < 6; i++) {
     at += nextPollMs({ t, btry: 90 }, at);
@@ -240,14 +249,24 @@ test('nextPollMs is pure, so calling it from three places cannot drift', () => {
 // --- what the panel says ------------------------------------------------------
 
 test('dueInMs counts down to the next ping and then goes negative', () => {
-  assert.equal(dueInMs(ping(2, 90), NOW), 3 * MIN);
+  assert.equal(dueInMs(ping(2, 90), NOW), 3 * MIN + CONFIG.uploadLagMs);
   assert.ok(dueInMs(ping(9, 90), NOW) < 0, 'a late ping reads as overdue, not as zero');
+});
+
+test('dueInMs counts down to the ping LANDING, upload lag included', () => {
+  // The reader is waiting for a dot to appear, and the phone sends a fix a minute
+  // after it takes it. Counting down to the fix would read "overdue" for a whole
+  // minute of every cycle, with nothing wrong and nothing able to have arrived.
+  assert.equal(dueInMs(ping(0, 90), NOW), pingIntervalMs(90) + CONFIG.uploadLagMs);
+  assert.ok(dueInMs(ping(5, 90), NOW) > 0, 'still coming, not overdue');
 });
 
 test('dueInMs leaves the guard out of what the reader is told', () => {
   // The guard is slack the PAGE gives itself so it does not ask too early. It is
-  // not part of the phone's schedule and has no business in a countdown.
-  assert.equal(dueInMs(ping(0, 90), NOW), pingIntervalMs(90));
+  // not part of the phone's schedule and has no business in a countdown — unlike
+  // the upload lag above, which is the phone's own behaviour.
+  assert.equal(dueInMs(ping(0, 90), NOW) + CONFIG.pollGuardMs,
+    nextPollMs(ping(0, 90), NOW));
 });
 
 test('dueInMs has nothing to say without a battery', () => {
@@ -277,8 +296,8 @@ test('every entry point takes the same curve, so they cannot disagree', () => {
   // and waking at another, and nothing on screen would say which was right.
   const latest = ping(0, 100);
 
-  assert.equal(dueInMs(latest, NOW, FAST), 2 * MIN);
-  assert.equal(nextPollMs(latest, NOW, FAST), 2 * MIN + CONFIG.pollGuardMs);
+  assert.equal(dueInMs(latest, NOW, FAST), 2 * MIN + CONFIG.uploadLagMs);
+  assert.equal(nextPollMs(latest, NOW, FAST), 2 * MIN + CONFIG.uploadLagMs + CONFIG.pollGuardMs);
 });
 
 test('a per-run curve cannot move the page\'s own limits', () => {

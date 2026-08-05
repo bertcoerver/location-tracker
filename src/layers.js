@@ -201,7 +201,11 @@ export function traceLayers(points, course = null) {
     widthMinPixels: 2,
     capRounded: true,
     jointRounded: true,
-    getColor: [...courseColor(), 180],
+    // Firmer ink than the course's 180, which is the compensation a dash needs: a
+    // course is a solid stroke and this one is off for more of its length than it
+    // is on, so at matching alpha it read as the fainter line of the two. The dash
+    // is already carrying the whole "this is inferred" argument on its own.
+    getColor: [...courseColor(), 215],
 
     // `highPrecisionDash`, and NOT `dashJustified`. Both matter, and this is the
     // one place on the page where a smoothed path and a dash pattern meet.
@@ -222,11 +226,11 @@ export function traceLayers(points, course = null) {
     // different route.
     extensions: [new deck.PathStyleExtension({ dash: true, highPrecisionDash: true })],
 
-    // In multiples of the line width, not pixels — so this is 12 px of ink and
-    // 9 px of gap on a 3 px line, three times the snap leashes' 4-and-3 on their
-    // 1 px hairlines. Which is about right: those are a few pixels long and this
-    // crosses the screen.
-    getDashArray: [4, 3]
+    // In multiples of the line width, not pixels — so on a 3 px line this is 12 px
+    // of ink and 18 px of gap. More gap than ink, deliberately: an even dash at
+    // this weight reads as a solid line with a texture on it, and the whole job of
+    // the dash is to be seen NOT to be a course.
+    getDashArray: [4, 6]
   })];
 }
 

@@ -33,7 +33,7 @@
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '8';
+const VERSION = '9';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes

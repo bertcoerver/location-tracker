@@ -102,14 +102,17 @@ export function nextPollMs(latest, now = Date.now(), tuning = CONFIG) {
   if (!latest || !Number.isFinite(latest.btry)) return CONFIG.pollMs;
 
   const interval = pingIntervalMs(latest.btry, tuning);
-  const expected = latest.t + interval + CONFIG.pollGuardMs;
+  // `t + interval` is when the phone TAKES the next fix; `uploadLagMs` is the
+  // fixed minute it then waits before committing it. Both belong to the phone.
+  // The guard on top is the page's own slack for the commit reaching the API.
+  const expected = latest.t + interval + CONFIG.uploadLagMs + CONFIG.pollGuardMs;
   const overdue = now - expected;
 
   const wait = overdue < 0 ? -overdue
-    // Barely late: the interval above predicts when the phone WAKES, and after
-    // that it still has to take a fix, upload it, and have the commit reach the
-    // tree API. So this much slippage is normal and the ping is probably
-    // seconds away — worth one cheap look rather than a five-minute wait.
+    // Barely late: the expectation above predicts when the phone COMMITS, and
+    // after that the commit still has to reach the tree API. So this much
+    // slippage is normal and the ping is probably seconds away — worth one
+    // cheap look rather than a five-minute wait.
     : overdue < CONFIG.lateJitterMs ? CONFIG.minRefreshMs
     : Math.max(interval, overdue / 2);
 
@@ -117,11 +120,16 @@ export function nextPollMs(latest, now = Date.now(), tuning = CONFIG) {
 }
 
 /**
- * When the next ping is expected — for the panel, which says so out loud.
+ * When the next ping is expected to LAND — for the panel, which says so out loud.
  *
  * Null when there's nothing to predict from, and negative once the ping is
  * late, which is the caller's cue to say "overdue" rather than count downwards
  * past zero.
+ *
+ * Includes `uploadLagMs`, because the reader is waiting for a dot to appear and
+ * the phone will not have sent one until a minute after it takes the fix.
+ * Counting down to the fix instead would read "overdue" for a whole minute of
+ * every cycle, in which nothing is wrong and nothing could have arrived.
  *
  * Deliberately WITHOUT `pollGuardMs`: that is slack the page gives itself so it
  * doesn't ask too early, and it has no business being in a number shown to a
@@ -133,5 +141,5 @@ export function nextPollMs(latest, now = Date.now(), tuning = CONFIG) {
 export function dueInMs(latest, now = Date.now(), tuning = CONFIG) {
   // A finished run has no next ping to predict, whatever its battery said.
   if (!latest || latest.is_finish || !Number.isFinite(latest.btry)) return null;
-  return latest.t + pingIntervalMs(latest.btry, tuning) - now;
+  return latest.t + pingIntervalMs(latest.btry, tuning) + CONFIG.uploadLagMs - now;
 }
