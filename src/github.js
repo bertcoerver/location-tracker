@@ -498,11 +498,12 @@ export async function hydrate(run, index) {
  * the cache on sha, read only what's genuinely new.
  *
  * What comes back is METADATA — a time, maybe a coordinate — and never pixels.
- * That is the whole reason this is cached at all: the EXIF read costs a download,
- * and the download is the expensive part, while the images themselves are already
- * held by the HTTP cache under a content-addressed URL. So a photo is fetched and
- * parsed once per browser ever, and a reload places its marker off disk before
- * any network call, exactly as the cached points paint before the GPX lands.
+ * That is the whole reason this is cached at all: reading a photograph's EXIF or a
+ * clip's `moov` costs a download, and the download is the expensive part, while the
+ * files themselves are already held by the HTTP cache under a content-addressed
+ * URL. So a file is fetched and parsed once per browser ever, and a reload places
+ * its marker off disk before any network call, exactly as the cached points paint
+ * before the GPX lands.
  *
  * Capped at `CONFIG.mediaLimit`, newest filename first. The cap is on the FILES,
  * before any of them is opened, because the point of it is the bandwidth — see

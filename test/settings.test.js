@@ -215,3 +215,13 @@ test('one unusable name does not take the rest of the crew with it', () => {
   // dropping it whole would put every crew photograph back on the runner's course.
   assert.deepEqual(parseSettings({ crew: ['Mariam', '', 7, null, 'Jo'] }).crew, ['Mariam', 'Jo']);
 });
+
+test('a run may name its runner, and is under no obligation to', () => {
+  assert.equal(parseSettings({ runners_name: 'Bert' }).runner, 'Bert');
+  assert.equal(parseSettings({ runners_name: '  Bert  ' }).runner, 'Bert');
+  // Absent is the ordinary case and the whole opt-in: no name, no byline on any
+  // photograph in the folder.
+  assert.equal('runner' in parseSettings({}), false);
+  assert.equal('runner' in parseSettings({ runners_name: '   ' }), false);
+  assert.equal('runner' in parseSettings({ runners_name: 42 }), false);
+});

@@ -1058,7 +1058,7 @@ test('a crew member\'s photo is signed, because the colour alone cannot say it',
   // camera this was is not how well the map knows the position, it is whose
   // position it is. That the runner was NOT here is the one thing a reader of this
   // card could get badly wrong, and being badly wrong is what earns words.
-  const html = mediaTooltipHtml(mediaPoi({ crew: 'Mariam', source: 'crew' }), GUN);
+  const html = mediaTooltipHtml(mediaPoi({ by: 'Mariam', crew: 'Mariam', source: 'crew' }), GUN);
   assert.match(text(html), /by Mariam/, html);
 
   // A credit over the corner of the picture, not a tag in the readings — it has to
@@ -1068,13 +1068,13 @@ test('a crew member\'s photo is signed, because the colour alone cannot say it',
   assert.doesNotMatch(html, /<figcaption[^]*class="by"/, html);
 
   assert.doesNotMatch(text(mediaTooltipHtml(mediaPoi(), GUN)), /Mariam/);
-  assert.doesNotMatch(mediaTooltipHtml(mediaPoi({ crew: null }), GUN), /class="by"/);
+  assert.doesNotMatch(mediaTooltipHtml(mediaPoi({ by: null }), GUN), /class="by"/);
 });
 
 test('a photographer\'s name cannot smuggle markup onto the card', () => {
   // It comes from a hand-written settings file, which is the same provenance as the
   // caption and gets the same treatment.
-  const html = mediaTooltipHtml(mediaPoi({ crew: '<img src=x onerror=alert(1)>' }), GUN);
+  const html = mediaTooltipHtml(mediaPoi({ by: '<img src=x onerror=alert(1)>' }), GUN);
   assert.doesNotMatch(html, /<img src=x/);
   assert.match(html, /&lt;img src=x/);
 });

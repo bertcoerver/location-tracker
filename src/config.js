@@ -416,7 +416,8 @@ export const CONFIG = {
 // lives in bytes that were already downloaded and simply not looked at, and only a new
 // namespace makes anything look.
 //
-// v16: `parseSettings` reads `crew`, and `lt.settings` is the cache that would hide
+// v16: `parseSettings` reads `crew` and `runners_name`, and `lt.settings` is the
+// cache that would hide
 // it — the same trap as v15 one file over. Settings are diffed on the settings file's
 // BLOB SHA, so a browser holding a v15 parse of a `course_settings.json` that has not
 // been touched since will never fetch it again, and would hold a record with no crew
@@ -424,7 +425,15 @@ export const CONFIG = {
 // anything read it. Which matters more here than a missing caption did: without it
 // every crew photograph is silently treated as one of the runner's own, interpolated
 // onto the course and counted into his distance.
-const V = 'v16';
+// v17: `resolveMedia` opens clips, and `lt.media` is the cache that would hide it —
+// the same trap as v15, in the same file, one format over. A `.mov` used to be
+// recorded without being downloaded at all: a record with a null time and a null
+// place, cached against its blob sha, correct under the code that wrote it. That sha
+// never changes, so the diff in `hydrateMedia` will not re-read the file however much
+// the reader has learnt since, and every clip already in a folder would stay
+// unplaceable forever — which is the exact symptom that prompted this: a clip
+// carrying its own coordinate and its own timestamp, drawn nowhere.
+const V = 'v17';
 
 /**
  * Each run's caches get their own namespace, so switching runs never evicts the

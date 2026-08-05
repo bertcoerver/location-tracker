@@ -209,11 +209,12 @@ if (geo.supported()) {
 function show(cache) {
   const pings = buildPoints(cache);
 
-  // Who else this run says is out there with a camera. Read off the SETTINGS cache
-  // for the same reason `start` and `maxSpeed` below are: it is what arrives first
-  // and what survives in localStorage, so the cached photographs paint against the
-  // right list rather than being briefly mistaken for the runner's own.
-  const crew = settings[run]?.crew ?? [];
+  // Who this run says is out there with a camera — the crew, and the runner
+  // himself if it named him. Read off the SETTINGS cache for the same reason
+  // `start` and `maxSpeed` below are: it is what arrives first and what survives in
+  // localStorage, so the cached photographs paint against the right list rather
+  // than being briefly mistaken for the runner's own.
+  const people = { crew: settings[run]?.crew ?? [], runner: settings[run]?.runner ?? null };
 
   // Photographs, placed against the PINGS alone — never against an array that
   // already has media in it, or one photo's position could be interpolated off
@@ -225,7 +226,7 @@ function show(cache) {
   // the one whose interpolated positions are worth keeping — by then the pings
   // either side have places on the course, so a photo between them lands on the
   // route rather than on a chord across it.
-  const placed = placeMedia(Object.values(media), pings, course, crew);
+  const placed = placeMedia(Object.values(media), pings, course, people);
   // Never a crew photograph: `place` marks those `point: false` whatever they
   // carried, which is what keeps somebody else's position out of the runner's
   // points array — and so out of the snapper, the distance, the climb, and the
@@ -277,7 +278,7 @@ function show(cache) {
   // does the same for the ones that carried their own GPS, by copying back what the
   // snapper decided about the copy of them sitting in `points`. Between the two,
   // every photograph is drawn where the run actually went, exactly as a ping is.
-  const pois = applyMediaSnaps(placeMedia(Object.values(media), pings, course, crew), points);
+  const pois = applyMediaSnaps(placeMedia(Object.values(media), pings, course, people), points);
 
   // The newest PING, not the newest thing in the array. This drives
   // `nextPollMs`, which reads the phone's battery off it, and a photograph does

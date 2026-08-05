@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  applyMediaSnaps, crewOf, isAnimated, isVideo, MEDIA_RE, mediaKind, mediaTime, parseExif,
-  placeMedia
+  applyMediaSnaps, crewOf, isAnimated, isQuickTime, isVideo, MEDIA_RE, mediaKind, mediaTime,
+  parseExif, parseIso6709, parseQuickTime, placeMedia
 } from '../src/media.js';
 
 const MINUTE = 60000;
@@ -394,6 +394,300 @@ test('a caption longer than a caption is cut rather than allowed to eat the card
   assert.equal(exif.caption.length, 280);
 });
 
+// --- QuickTime, against a real phone ------------------------------------------
+//
+// `quicktime-iphone.mov` is the `ftyp` and `moov` of a clip filmed at Lac on the
+// morning of 5 August 2026, with the `mdat` — 3.4 MB of HEVC — cut out. What is
+// left is every byte this parser reads and none of the bytes it skips, which is
+// what makes a 6 KB fixture a fair test of a file that was three megabytes.
+
+test('a real iPhone clip gives up its time and its place', () => {
+  const meta = parseQuickTime(fixture('quicktime-iphone.mov'));
+
+  // `com.apple.quicktime.creationdate`, which carries its own +02:00 — so there is
+  // no zone to guess at and no caveat to pass on.
+  assert.equal(meta.t, Date.UTC(2026, 7, 5, 9, 46, 38));
+  assert.equal(meta.assumedUtc, false);
+
+  // `com.apple.quicktime.location.ISO6709`: +46.6261-001.1173+000.000/
+  assert.ok(Math.abs(meta.lat - 46.6261) < 1e-9, `lat was ${meta.lat}`);
+  assert.ok(Math.abs(meta.lon - -1.1173) < 1e-9, `lon was ${meta.lon}`);
+  // The altitude the phone wrote is exactly zero, which is what it writes when it
+  // has a fix and no height. Read as absent rather than as sea level.
+  assert.equal(meta.ele, null);
+
+  assert.equal(meta.caption, null);
+});
+
+test('the clip lands where the photographs beside it in the folder do', () => {
+  // The point of the whole exercise, and the one assertion that would have caught
+  // the bug: this clip was filmed between two JPEGs whose own EXIF puts them at
+  // 46.632–46.637 N, 1.135–1.138 W. A parser that read the coordinate backwards,
+  // or as degrees-and-minutes, would still produce a number.
+  const meta = parseQuickTime(fixture('quicktime-iphone.mov'));
+  assert.ok(meta.lat > 46.6 && meta.lat < 46.7, `lat was ${meta.lat}`);
+  assert.ok(meta.lon > -1.2 && meta.lon < -1.0, `lon was ${meta.lon}`);
+});
+
+test('only the containers built out of atoms are worth opening', () => {
+  for (const name of ['a.mov', 'a.MP4', 'a.m4v']) {
+    assert.equal(isQuickTime(name), true, `${name} should be opened`);
+  }
+  // WebM is Matroska and shares none of this, and the stills have their own
+  // parser or no metadata worth a download.
+  for (const name of ['a.webm', 'a.jpg', 'a.png', 'a.gif', 'a.json']) {
+    assert.equal(isQuickTime(name), false, `${name} should not be opened`);
+  }
+});
+
+// --- QuickTime, against files this repo builds --------------------------------
+
+/** Four bytes, big-endian, as an array. */
+const b32 = v => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+const b16 = v => [(v >> 8) & 0xff, v & 0xff];
+/** A box type or a key name, one byte per character. Not a UTF-8 encoder, and the
+ *  difference matters at exactly one place: `©xyz` is a FOUR-byte atom type
+ *  beginning with byte 0xA9, and encoding it as UTF-8 would make it five. */
+const chars = s => [...s].map(c => c.charCodeAt(0));
+
+/** A value somebody wrote, which can hold anything UTF-8 can. */
+const words = s => [...new TextEncoder().encode(s)];
+
+/** One box. `type` is four characters, or a NUMBER — which is what an `ilst` item's
+ *  type is: an index into the `keys` table wearing a box header's clothes. */
+function atom(type, ...parts) {
+  const body = parts.flat();
+  const head = typeof type === 'number' ? b32(type) : chars(type);
+  return [...b32(body.length + 8), ...head, ...body];
+}
+
+/** A `data` box holding UTF-8 — type indicator 1, then a locale nothing reads. */
+const data = value => atom('data', b32(1), b32(0), words(value));
+
+/**
+ * A clip carrying whatever metadata a test wants to put in it.
+ *
+ * @param {object} opts
+ * @param {Array<[string,string]>} opts.keys reverse-DNS name and value, for the
+ *   modern `keys`/`ilst` pair.
+ * @param {boolean} opts.full write `meta` as a FullBox — four bytes of version and
+ *   flags in front of its children — which is the ISO-BMFF spelling an exported
+ *   `.mp4` uses and the QuickTime one does not.
+ * @param {Array<[string,string]>} opts.udta the older `©`-prefixed atoms.
+ * @param {number|null} opts.created `mvhd` creation time, in seconds from 1904.
+ */
+function buildMov({ keys = [], full = false, udta = [], created = null, version = 0 } = {}) {
+  const inner = [];
+
+  if (keys.length) {
+    // A `keys` entry is size + namespace + name, which is exactly a box whose type
+    // is the namespace — so the generic builder writes one without knowing that.
+    const table = atom('keys', b32(0), b32(keys.length),
+      keys.map(([name]) => atom('mdta', chars(name))).flat());
+    // And an `ilst` item is a box whose type is the 1-based index of the key that
+    // names it.
+    const list = atom('ilst', keys.map(([, value], i) => atom(i + 1, data(value))).flat());
+    inner.push(...atom('meta', full ? b32(0) : [], table, list));
+  }
+
+  if (udta.length) {
+    inner.push(...atom('udta', udta.map(([type, value]) => {
+      const written = words(value);
+      return atom(type, b16(written.length), b16(0), written);
+    }).flat()));
+  }
+
+  if (created !== null) {
+    const stamp = version === 1
+      ? [...b32(Math.floor(created / 2 ** 32)), ...b32(created >>> 0)]
+      : b32(created);
+    inner.push(...atom('mvhd', [version, 0, 0, 0], stamp));
+  }
+
+  const bytes = [...atom('ftyp', chars('qt  '), b32(0)), ...atom('moov', inner)];
+  return new Uint8Array(bytes).buffer;
+}
+
+test('the fixture builder agrees with the phone', () => {
+  // Everything below rests on this builder writing what an iPhone writes, so it is
+  // held against the real file once rather than trusted.
+  const built = parseQuickTime(buildMov({
+    keys: [
+      ['com.apple.quicktime.creationdate', '2026-08-05T11:46:38+0200'],
+      ['com.apple.quicktime.location.ISO6709', '+46.6261-001.1173+000.000/']
+    ]
+  }));
+  const real = parseQuickTime(fixture('quicktime-iphone.mov'));
+  assert.equal(built.t, real.t);
+  assert.equal(built.lat, real.lat);
+  assert.equal(built.lon, real.lon);
+});
+
+test('an mp4 hides its metadata four bytes further in, and is followed there', () => {
+  // The one place the two dialects genuinely disagree. A reader that descends into
+  // `meta` the QuickTime way finds nothing at all in an exported `.mp4`, which is
+  // a silently unplaced clip rather than an error.
+  const keys = [['com.apple.quicktime.location.ISO6709', '+46.6261-001.1173/']];
+  const quicktime = parseQuickTime(buildMov({ keys }));
+  const iso = parseQuickTime(buildMov({ keys, full: true }));
+  assert.equal(iso.lat, quicktime.lat);
+  assert.equal(iso.lon, quicktime.lon);
+});
+
+test('an Android clip keeps its coordinate in the older atom, and it is read', () => {
+  // `©xyz`, with the datum name Android appends and this app already assumes.
+  const meta = parseQuickTime(buildMov({
+    udta: [['©xyz', '+46.6261-001.1173/CRSWGS_84']]
+  }));
+  assert.ok(Math.abs(meta.lat - 46.6261) < 1e-9);
+  assert.ok(Math.abs(meta.lon - -1.1173) < 1e-9);
+});
+
+test('the modern atoms win over the older ones, because they know their zone', () => {
+  const meta = parseQuickTime(buildMov({
+    keys: [['com.apple.quicktime.creationdate', '2026-08-05T11:46:38+02:00']],
+    udta: [['©day', '2026-08-05T09:00:00Z']]
+  }));
+  assert.equal(meta.t, Date.UTC(2026, 7, 5, 9, 46, 38));
+  assert.equal(meta.assumedUtc, false);
+});
+
+test('a stamp with no zone on it is read as UTC, and says so', () => {
+  // The same rule EXIF's zoneless `DateTimeOriginal` gets, and for the same reason:
+  // local time is the one reading that changes with who is watching.
+  const meta = parseQuickTime(buildMov({
+    udta: [['©day', '2026-08-05 09:46:38']]
+  }));
+  assert.equal(meta.t, Date.UTC(2026, 7, 5, 9, 46, 38));
+  assert.equal(meta.assumedUtc, true);
+});
+
+test('a clip with nothing but a movie header still gives up a time', () => {
+  // 1904 to 2026-08-05T09:46:38Z. Every file has an `mvhd`; nominally UTC, and
+  // written as local time by enough muxers to be worth the caveat.
+  const secs = 2082844800 + Date.UTC(2026, 7, 5, 9, 46, 38) / 1000;
+  const meta = parseQuickTime(buildMov({ created: secs }));
+  assert.equal(meta.t, Date.UTC(2026, 7, 5, 9, 46, 38));
+  assert.equal(meta.assumedUtc, true);
+  assert.equal(meta.lat, null);
+});
+
+test('the 64-bit movie header reads the same as the 32-bit one', () => {
+  const secs = 2082844800 + Date.UTC(2026, 7, 5, 9, 46, 38) / 1000;
+  assert.equal(
+    parseQuickTime(buildMov({ created: secs, version: 1 })).t,
+    parseQuickTime(buildMov({ created: secs })).t
+  );
+});
+
+test('a movie header with no clock behind it is no time at all', () => {
+  // Zero is what a muxer writes when it never had one, and 1904 is not a reading.
+  assert.equal(parseQuickTime(buildMov({ created: 0 })), null);
+});
+
+test('a clip carrying a description brings it to the card', () => {
+  const meta = parseQuickTime(buildMov({
+    keys: [['com.apple.quicktime.description', 'The col at last 😍']]
+  }));
+  assert.equal(meta.caption, 'The col at last 😍');
+  // A caption is enough on its own to be worth keeping, exactly as it is for a
+  // photograph with no fix.
+  assert.equal(meta.t, null);
+  assert.equal(meta.lat, null);
+});
+
+test('a clip description is cut to the same length a photograph caption is', () => {
+  const meta = parseQuickTime(buildMov({
+    keys: [['com.apple.quicktime.description', 'x'.repeat(500)]]
+  }));
+  assert.equal(meta.caption.length, 280);
+});
+
+test('keys nobody asked for are skipped rather than misread', () => {
+  const meta = parseQuickTime(buildMov({
+    keys: [
+      ['com.apple.quicktime.make', 'Apple'],
+      ['com.apple.quicktime.model', 'iPhone 15 Pro'],
+      ['com.apple.quicktime.creationdate', '2026-08-05T11:46:38+02:00'],
+      ['com.apple.quicktime.software', '26.0']
+    ]
+  }));
+  assert.equal(meta.t, Date.UTC(2026, 7, 5, 9, 46, 38));
+  assert.equal(meta.caption, null);
+});
+
+// --- ISO 6709 -----------------------------------------------------------------
+
+test('a coordinate is read in whichever of the three spellings it was written', () => {
+  // Degrees; degrees and minutes; degrees, minutes and seconds. Nothing in the
+  // string says which — only the count of digits before the point.
+  const decimal = parseIso6709('+46.6261-001.1173/');
+  assert.ok(Math.abs(decimal.lat - 46.6261) < 1e-9);
+  assert.ok(Math.abs(decimal.lon - -1.1173) < 1e-9);
+
+  const minutes = parseIso6709('+4637.566-00107.038/');
+  assert.ok(Math.abs(minutes.lat - 46.6261) < 1e-4, `lat was ${minutes.lat}`);
+  assert.ok(Math.abs(minutes.lon - -1.1173) < 1e-4, `lon was ${minutes.lon}`);
+
+  const seconds = parseIso6709('+463733.9-0010702.2/');
+  assert.ok(Math.abs(seconds.lat - 46.6261) < 1e-4, `lat was ${seconds.lat}`);
+  assert.ok(Math.abs(seconds.lon - -1.1173) < 1e-4, `lon was ${seconds.lon}`);
+});
+
+test('an altitude is kept, and an altitude of exactly zero is not', () => {
+  assert.equal(parseIso6709('+46.6261-001.1173+1169.300/').ele, 1169.3);
+  // Below sea level is a real reading and survives.
+  assert.equal(parseIso6709('+46.6261-001.1173-004.500/').ele, -4.5);
+  // Exactly zero is what a phone writes when it has a fix and no height.
+  assert.equal(parseIso6709('+46.6261-001.1173+000.000/').ele, null);
+  assert.equal(parseIso6709('+46.6261-001.1173/').ele, null);
+});
+
+test('south and west are negative here too', () => {
+  const at = parseIso6709('-33.8688+151.2093/');
+  assert.ok(Math.abs(at.lat - -33.8688) < 1e-9);
+  assert.ok(Math.abs(at.lon - 151.2093) < 1e-9);
+});
+
+test('a coordinate off the planet is refused rather than drawn', () => {
+  for (const written of ['+99.0000-001.1173/', '+46.6261-200.0000/', '+46.6261/', 'CRSWGS_84', '']) {
+    assert.equal(parseIso6709(written), null, `"${written}" should not be a place`);
+  }
+});
+
+test('one bad clip never throws, whatever is wrong with it', () => {
+  const good = buildMov({ keys: [['com.apple.quicktime.creationdate', '2026-08-05T11:46:38Z']] });
+  const bytes = new Uint8Array(good);
+
+  // Every truncation of a real file, which is the shape a half-downloaded clip
+  // has. None may throw, and none may hang: a box size that reaches past the end
+  // stops the walk where it stands.
+  for (let n = 0; n <= bytes.length; n++) {
+    assert.doesNotThrow(() => parseQuickTime(bytes.slice(0, n).buffer), `truncated to ${n}`);
+  }
+
+  // And the files that are not clips at all.
+  assert.equal(parseQuickTime(new ArrayBuffer(0)), null);
+  assert.equal(parseQuickTime(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]).buffer), null);
+  assert.equal(parseQuickTime(fixture('exif-gps.jpg')), null);
+});
+
+test('a box claiming more room than it has ends the walk rather than the process', () => {
+  const bytes = new Uint8Array(buildMov({
+    keys: [['com.apple.quicktime.location.ISO6709', '+46.6261-001.1173/']]
+  }));
+  // The `moov` header sits behind `ftyp`; overstate its size and everything in it
+  // becomes unreachable. The answer is nothing, not a crash and not a guess.
+  const moov = 8 + 8;                        // ftyp is eight bytes of body
+  bytes[moov] = 0x7f;
+  assert.equal(parseQuickTime(bytes.buffer), null);
+});
+
+test('a clip with no metadata worth the name reads as none', () => {
+  assert.equal(parseQuickTime(buildMov({})), null);
+  assert.equal(parseQuickTime(buildMov({ keys: [['com.apple.quicktime.make', 'Apple']] })), null);
+});
+
 // --- placing ------------------------------------------------------------------
 
 const T0 = Date.UTC(2026, 6, 30, 12, 0, 0);
@@ -519,13 +813,14 @@ test('placed media is oldest first, with the timeless ones at the end', () => {
 // waiting at an aid station as the runner passing through it.
 
 const CREW = ['Mariam'];
-const withCrew = (...records) => placeMedia(records, PINGS, null, CREW);
+const withCrew = (...records) => placeMedia(records, PINGS, null, { crew: CREW });
 
 test('a crew photo is placed where it says it was, and is not a point', () => {
   const [poi] = withCrew(record({
     name: 'MARIAM_IMG_4021.jpg', t: T0 + 7 * MINUTE, lat: 45.9, lon: 6.3, ele: 1200
   }));
   assert.equal(poi.crew, 'Mariam');
+  assert.equal(poi.by, 'Mariam');
   assert.equal(poi.source, 'crew');
   assert.equal(poi.lat, 45.9);
   assert.equal(poi.lon, 6.3);
@@ -592,6 +887,44 @@ test('a crew photo never reaches the snapper, and is never moved by one', () => 
   assert.equal(pois[0].lat, 45.9);
   assert.equal(pois[0].lon, 6.3);
   assert.equal(pois[0].along, null);
+});
+
+// --- the byline ---------------------------------------------------------------
+
+test('a run that names its runner credits his photographs to him', () => {
+  const [poi] = placeMedia(
+    [record({ name: '2026-07-30T12_07_30+00_00.jpg' })], PINGS, null, { runner: 'Bert' }
+  );
+  assert.equal(poi.by, 'Bert');
+  // `crew` and `by` answer different questions, and only the first of them decides
+  // anything about where this photograph may be drawn.
+  assert.equal(poi.crew, null);
+  assert.equal(poi.source, 'trace');
+});
+
+test('a crew photo is credited to the crew member, not to the runner', () => {
+  const [poi] = placeMedia([record({
+    name: 'MARIAM_IMG_4021.jpg', t: T0 + 7 * MINUTE, lat: 45.9, lon: 6.3
+  })], PINGS, null, { crew: CREW, runner: 'Bert' });
+  assert.equal(poi.by, 'Mariam');
+  assert.equal(poi.crew, 'Mariam');
+});
+
+test('a run that names nobody credits nobody', () => {
+  // The whole of the opt-in. A byline on every picture is what makes one mean
+  // "whose"; with no second name to have said instead, it says nothing at all.
+  const [poi] = only(record({ name: '2026-07-30T12_07_30+00_00.jpg' }));
+  assert.equal(poi.by, null);
+  assert.equal(poi.crew, null);
+});
+
+test('the runner is credited on his timeless photographs too', () => {
+  // A waypoint — coordinates, no clock. It is still his picture.
+  const [poi] = placeMedia(
+    [record({ name: 'summit.jpg', lat: 45.9, lon: 6.3 })], PINGS, null, { runner: 'Bert' }
+  );
+  assert.equal(poi.t, null);
+  assert.equal(poi.by, 'Bert');
 });
 
 test('one photo is never interpolated off another', () => {

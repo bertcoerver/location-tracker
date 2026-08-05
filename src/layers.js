@@ -1090,12 +1090,18 @@ function mediaButton(act, glyph, label, enabled = true) {
  * for a photo that recorded its own coordinates, course purple for one placed
  * between the pings either side. See `mediaLayers`.
  *
- * With ONE exception, and it is an exception because it is not provenance: a crew
- * member's byline, over the top-left corner where a photograph's credit goes. That
- * the runner is not in this photograph and was not standing where it was taken is
- * the only thing on this card a reader could get badly wrong, and "badly wrong" is
- * the test for what earns words rather than a colour — and words that are read
- * before the picture rather than after the clock.
+ * With ONE exception, and it is an exception because it is not provenance: the
+ * byline, over the top-left corner where a photograph's credit goes. That the
+ * runner is not in a crew member's photograph and was not standing where it was
+ * taken is the only thing on this card a reader could get badly wrong, and "badly
+ * wrong" is the test for what earns words rather than a colour — words read before
+ * the picture rather than after the clock.
+ *
+ * Which is also why the RUNNER's own name goes there when a run gives one, and why
+ * it is optional. A byline on every picture is what makes a byline mean "whose",
+ * rather than "this one is odd"; but a run that names nobody has no comparison to
+ * draw, and a credit on every photograph in a folder where they are all the same
+ * person's is a label saying nothing four hundred times.
  *
  * Two admissions survive, because dropping them would be dropping facts rather
  * than dropping furniture, and both fit in the space an annotation takes:
@@ -1148,8 +1154,13 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   // on this page puts a fact and its caveats in.
   const said = poi.caption ? `<span class="cq">${escapeHtml(poi.caption)}</span>` : '';
 
-  // Whose camera, when it wasn't the runner's — a byline over the top-left corner
-  // of the picture, where a photograph's credit goes.
+  // Whose camera — a byline over the top-left corner of the picture, where a
+  // photograph's credit goes.
+  //
+  // Set for a crew member's photograph always, and for the runner's own when the
+  // run named him. `place` decides which; both arrive here as `by`, because a
+  // credit is a credit and a card that signed one person's pictures and left the
+  // other's bare would read as though only one of them had been vouched for.
   //
   // Deliberately NOT down in the caption with the day tag and the `zone?` caveat,
   // which is where this started. Those are annotations on a reading: small print
@@ -1164,7 +1175,7 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   // rather than hoped for. A dark badge would have matched the chrome; a light one
   // is the only thing on this card that reads as a label ON the photograph instead
   // of part of its furniture.
-  const by = poi.crew ? `<span class="by">by ${escapeHtml(poi.crew)}</span>` : '';
+  const by = poi.by ? `<span class="by">by ${escapeHtml(poi.by)}</span>` : '';
 
   const day = poi.t === null ? '' : dayTag(poi.t, origin);
 

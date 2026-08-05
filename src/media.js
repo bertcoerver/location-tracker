@@ -2,7 +2,8 @@
 //
 // A media file is named exactly like a ping — `2026-07-30T18_15_02+00_00.jpeg` —
 // but unlike a ping it can also carry its OWN account of when and where it was
-// taken, in EXIF. The two accounts disagree constantly: the files that prompted
+// taken: in EXIF if it is a photograph, and in QuickTime `moov` atoms if it is a
+// clip. The two accounts disagree constantly: the files that prompted
 // this were shot in 2024 and renamed into a 2026 run, so the camera's date is
 // nearly two years off the name's.
 //
@@ -429,6 +430,351 @@ function stampToMs(stamp, offset) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+// --- QuickTime --------------------------------------------------------------
+//
+// What a clip says about itself, which is the same two facts a photograph says
+// and in a completely different container. A `.mov` off an iPhone carries
+//
+//   com.apple.quicktime.creationdate      2026-08-05T11:46:38+02:00
+//   com.apple.quicktime.location.ISO6709  +46.6261-001.1173+000.000/
+//
+// and an Android `.mp4` carries the same coordinate in a `©xyz` atom instead.
+// Both sit in `moov`, which — unlike a JPEG's APP1 — may be at the END of the
+// file: on the clip this was built against `moov` starts at byte 3,446,584 of
+// 3,452,585. So there is no head-of-file shortcut here, and `resolveMedia` reads
+// the whole clip. It already had to: the atlas fetches the same URL for a first
+// frame moments later, and both go through the same content-addressed cache.
+//
+// The layout is boxes all the way down — four bytes of size, four of type, then
+// either children or payload — which makes the walk simple and the DEFENCE the
+// interesting part. Every size in the file is a number some muxer wrote, and a
+// walk that trusts one runs off the end of the buffer or loops forever. So a
+// size that doesn't fit inside its parent ends the walk where it stands, exactly
+// as `parseExif` drops an entry whose offset points off the end.
+
+/** The clip containers built out of ISO base media boxes, as against WebM, which
+ *  is Matroska and shares none of this. Kept apart from `VIDEO` because that set
+ *  answers "what element plays this" and this one answers "is there anything in
+ *  here worth opening the file for". */
+const QUICKTIME = new Set(['mp4', 'm4v', 'mov']);
+
+/** Whether the metadata below can be looked for at all. The one test that decides
+ *  a clip is worth a download. */
+export function isQuickTime(name) {
+  return QUICKTIME.has(mediaKind(name));
+}
+
+/** Seconds between the QuickTime epoch (1904-01-01 UTC) and the Unix one. `mvhd`
+ *  counts from the former and everything else here from the latter. */
+const EPOCH_1904 = 2082844800;
+
+/** The ilst keys worth reading, and the field each one answers. Apple's names are
+ *  reverse-DNS and exact; anything else in the list is skipped unread. */
+const QT_KEYS = new Map([
+  ['com.apple.quicktime.creationdate',     'when'],
+  ['com.apple.quicktime.location.ISO6709', 'where'],
+  ['com.apple.quicktime.description',      'caption']
+]);
+
+/** The same three facts where a writer that has never heard of `keys`/`ilst` puts
+ *  them. `©xyz` is the one an Android phone genuinely fills in. */
+const QT_UDTA = new Map([
+  ['©day', 'when'],
+  ['©xyz', 'where'],
+  ['©des', 'caption']
+]);
+
+/** One box's type as its four characters. The `©` beginning the older atom names
+ *  is byte 0xA9, which `fromCharCode` gives back as exactly the character written
+ *  in `QT_UDTA` above — the names compare equal without any decoding step. */
+function fourcc(view, at) {
+  return String.fromCharCode(
+    view.getUint8(at), view.getUint8(at + 1), view.getUint8(at + 2), view.getUint8(at + 3)
+  );
+}
+
+/** A byte range as text. Used for keys, captions and the ASCII-shaped values
+ *  alike — a QuickTime description is somebody's writing and can hold anything
+ *  UTF-8 can, so it goes through a decoder for the same reason the EXIF caption
+ *  does. Not fatal on bad bytes. */
+function utf8(view, from, to) {
+  if (to <= from) return null;
+  const bytes = new Uint8Array(view.buffer, view.byteOffset + from, to - from);
+  // A trailing NUL is legal in some of these and is not part of the writing.
+  const s = new TextDecoder().decode(bytes).replace(/\0.*$/s, '').trim();
+  return s || null;
+}
+
+/**
+ * The boxes directly inside a range, in order.
+ *
+ * Yields `{type, index, body, end}` — `index` being the type read as a number
+ * instead, which is what an `ilst` child is: a 1-based pointer into the `keys`
+ * table rather than a name.
+ *
+ * The walk STOPS rather than skipping on anything it can't make sense of. A box
+ * claiming to reach past its parent is a file that has been truncated or is not
+ * what it says it is, and the boxes after it cannot be found by a reader that has
+ * lost its place.
+ */
+function* boxes(view, from, to) {
+  let at = from;
+  while (at + 8 <= to) {
+    let size = view.getUint32(at);
+    let head = 8;
+
+    if (size === 1) {
+      // The 64-bit escape, for a box larger than 4 GiB. `mdat` in a long clip.
+      if (at + 16 > to) return;
+      size = Number(view.getBigUint64(at + 8));
+      head = 16;
+    } else if (size === 0) {
+      // "To the end of the file", legal only for the last box.
+      size = to - at;
+    }
+
+    if (!Number.isFinite(size) || size < head || at + size > to) return;
+    yield { type: fourcc(view, at + 4), index: view.getUint32(at + 4), body: at + head, end: at + size };
+    at += size;
+  }
+}
+
+/** The first box of a type inside a range, or null. */
+function box(view, from, to, type) {
+  for (const it of boxes(view, from, to)) if (it.type === type) return it;
+  return null;
+}
+
+/**
+ * Where a `meta` box's children start, which is the one place the two dialects of
+ * this format genuinely disagree.
+ *
+ * QuickTime's `meta` is a plain container. ISO-BMFF's is a FullBox, with four
+ * bytes of version and flags in front of its children — so the same descent that
+ * works on a `.mov` lands four bytes short on a `.mp4` and finds nothing. Nothing
+ * in the box says which it is, and the file extension is no guide either: an
+ * iPhone writes the QuickTime shape into a `.mov` and the ISO shape into the
+ * `.mp4` it exports.
+ *
+ * So the SHAPE decides. If the four bytes at the front begin a box that fits, they
+ * are one; version-and-flags is `00 00 00 00` in every writer, which reads as a
+ * size of zero and fits nothing.
+ */
+function metaBody(view, meta) {
+  if (meta.body + 8 > meta.end) return meta.body;
+  const size = view.getUint32(meta.body);
+  return size >= 8 && meta.body + size <= meta.end ? meta.body : meta.body + 4;
+}
+
+/** The `keys` table: reverse-DNS names, indexed from ONE by `ilst`. Index 0 is a
+ *  hole that nothing ever asks for. */
+function keyTable(view, keys) {
+  const out = [null];
+  let at = keys.body + 4;                            // version and flags
+  if (at + 4 > keys.end) return out;
+
+  const n = view.getUint32(at);
+  at += 4;
+  for (let i = 0; i < n; i++) {
+    if (at + 8 > keys.end) break;
+    const size = view.getUint32(at);
+    if (size < 8 || at + size > keys.end) break;
+    // The four bytes at `at + 4` are the namespace — `mdta` on everything Apple
+    // writes. The name is whatever follows, and is not NUL-terminated.
+    out.push(utf8(view, at + 8, at + size));
+    at += size;
+  }
+  return out;
+}
+
+/** The text inside an ilst item's `data` box, or null when it holds something
+ *  else. Type 1 is UTF-8; the numeric types exist and none of the three values
+ *  read here is ever written as one. */
+function itemText(view, item) {
+  const data = box(view, item.body, item.end, 'data');
+  if (!data || data.body + 8 > data.end) return null;
+  if ((view.getUint32(data.body) & 0xffffff) !== 1) return null;
+  return utf8(view, data.body + 8, data.end);       // past the type and the locale
+}
+
+/** The text inside a `udta` box of the older kind: two bytes of length, two of
+ *  language, then the string. */
+function udtaText(view, atom) {
+  if (atom.body + 4 > atom.end) return null;
+  const n = view.getUint16(atom.body);
+  const from = atom.body + 4;
+  return n > 0 && from + n <= atom.end ? utf8(view, from, from + n) : null;
+}
+
+/**
+ * One half of an ISO 6709 coordinate, in degrees.
+ *
+ * The standard allows three spellings — `±DD.DDDD`, `±DDMM.MM` and `±DDMMSS.SS`,
+ * each one digit wider for a longitude — and NOTHING in the string says which was
+ * used. The count of digits before the point is the only tell, and it is
+ * unambiguous: a latitude with four of them is degrees and minutes, and one with
+ * two is degrees. Phones write the first spelling and the other two are handled
+ * because reading `+4637.66` as 4637 degrees would put a clip in the sea rather
+ * than fail.
+ *
+ * @param {string} field including its sign, which ISO 6709 always writes.
+ * @param {number} width digits of degrees: 2 for a latitude, 3 for a longitude.
+ */
+function degrees(field, width) {
+  const sign = field[0] === '-' ? -1 : 1;
+  const body = field.slice(1);
+  const whole = body.split('.')[0].length;
+
+  if (whole === width) return sign * Number(body);
+  if (whole === width + 2) {
+    return sign * (Number(body.slice(0, width)) + Number(body.slice(width)) / 60);
+  }
+  if (whole === width + 4) {
+    return sign * (Number(body.slice(0, width))
+      + Number(body.slice(width, width + 2)) / 60
+      + Number(body.slice(width + 2)) / 3600);
+  }
+  return null;
+}
+
+const ISO6709_RE = /^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?/;
+
+/**
+ * An ISO 6709 string — `"+46.6261-001.1173+000.000/"` — as a place.
+ *
+ * The trailing `/` and anything after it are ignored: Android appends a CRS name
+ * (`CRSWGS_84`) that says the coordinate is in the datum this app already assumes
+ * everything is in.
+ *
+ * An altitude of exactly zero is read as ABSENT rather than as sea level. It is
+ * what an iPhone writes when it has a fix with no height to go with it, and a
+ * clip filmed beside three photographs that say 43 m should not be the one mark
+ * claiming 0. The cost of being wrong is a missing figure in a tooltip; the cost
+ * the other way is a wrong one.
+ */
+export function parseIso6709(text) {
+  const m = ISO6709_RE.exec(String(text || '').trim());
+  if (!m) return null;
+
+  const lat = degrees(m[1], 2);
+  const lon = degrees(m[2], 3);
+  if (lat === null || lon === null) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+
+  const height = m[3] !== undefined ? Number(m[3]) : NaN;
+  return { lat, lon, ele: Number.isFinite(height) && height !== 0 ? height : null };
+}
+
+/**
+ * What a clip says about itself: when it was filmed and, if the phone had a fix,
+ * where.
+ *
+ * Written to the same standard as `parseExif` and for the same reason — one bad
+ * file in a folder must not take the run down with it. Every failure returns null
+ * or drops one field, and it never throws.
+ *
+ * Three places are read for a time, in falling order of how much they can be
+ * trusted:
+ *
+ *   `creationdate` in `ilst` — an ISO 8601 stamp WITH an offset, which is the
+ *     only one of the three that knows its own zone;
+ *   `©day` in `udta` — usually the same shape, occasionally a bare date;
+ *   `mvhd` — the movie header, which every file has. Nominally UTC, and written
+ *     as local time by enough muxers that it comes back flagged `assumedUtc`,
+ *     the same caveat an EXIF stamp with no `OffsetTimeOriginal` gets.
+ *
+ * The flag is not decoration: it survives to the tooltip, and an hour of doubt
+ * about a clip is worth showing rather than hiding.
+ *
+ * @param {ArrayBuffer} buffer the WHOLE file. Unlike EXIF, a head is not enough —
+ *   `moov` is commonly the last box in the file.
+ * @returns {{t: number|null, caption: string|null, assumedUtc: boolean,
+ *            lat: number|null, lon: number|null, ele: number|null}|null} null when
+ *   there is nothing readable in there at all.
+ */
+export function parseQuickTime(buffer) {
+  try {
+    const view = new DataView(buffer);
+    const moov = box(view, 0, view.byteLength, 'moov');
+    if (!moov) return null;
+
+    const found = { when: null, where: null, caption: null };
+
+    // `keys` and `ilst` are parallel: the Nth name in one describes the item that
+    // points at N in the other. Both or neither.
+    const meta = box(view, moov.body, moov.end, 'meta');
+    if (meta) {
+      const from = metaBody(view, meta);
+      const keys = box(view, from, meta.end, 'keys');
+      const ilst = box(view, from, meta.end, 'ilst');
+      if (keys && ilst) {
+        const names = keyTable(view, keys);
+        for (const item of boxes(view, ilst.body, ilst.end)) {
+          const field = QT_KEYS.get(names[item.index]);
+          if (field && found[field] === null) found[field] = itemText(view, item);
+        }
+      }
+    }
+
+    // The older spelling, read only where the modern one said nothing — a file
+    // may carry both, and `ilst` is the one with the offset in its timestamp.
+    const udta = box(view, moov.body, moov.end, 'udta');
+    if (udta) {
+      for (const atom of boxes(view, udta.body, udta.end)) {
+        const field = QT_UDTA.get(atom.type);
+        if (field && found[field] === null) found[field] = udtaText(view, atom);
+      }
+    }
+
+    let t = found.when ? Date.parse(found.when) : NaN;
+    // A stamp with no zone on it is a wall clock, and reading it as the viewer's
+    // local time would put the same clip in two places for two people watching.
+    // `Date.parse` of a bare `YYYY-MM-DD` is already UTC; of a bare date and time
+    // it is local, so the Z is added rather than assumed.
+    let assumedUtc = false;
+    if (found.when && Number.isFinite(t) && !/(Z|[+-]\d{2}:?\d{2})$/.test(found.when.trim())) {
+      t = Date.parse(`${found.when.trim().replace(' ', 'T')}Z`);
+      assumedUtc = true;
+    }
+
+    if (!Number.isFinite(t)) {
+      const mvhd = box(view, moov.body, moov.end, 'mvhd');
+      const secs = mvhd && mvhdSeconds(view, mvhd);
+      // Zero is what a muxer writes when it has no clock, and 1904 is not a
+      // reading. Anything else is left to stand or fall on whether it lands
+      // inside the run's pings, which is where a wrong hour gets caught anyway.
+      t = secs ? (secs - EPOCH_1904) * 1000 : NaN;
+      assumedUtc = Number.isFinite(t);
+    }
+
+    const at = found.where ? parseIso6709(found.where) : null;
+
+    if (!Number.isFinite(t) && !at && !found.caption) return null;
+    return {
+      t: Number.isFinite(t) ? t : null,
+      caption: found.caption ? found.caption.slice(0, CAPTION_CHARS) : null,
+      assumedUtc: Number.isFinite(t) ? assumedUtc : false,
+      lat: at ? at.lat : null,
+      lon: at ? at.lon : null,
+      ele: at ? at.ele : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** `mvhd`'s creation time, in seconds from 1904. Version 1 widened it to 64 bits
+ *  in 2003 and phones still write version 0. */
+function mvhdSeconds(view, mvhd) {
+  const version = view.getUint8(mvhd.body);
+  const at = mvhd.body + 4;                          // past version and flags
+  if (version === 1) {
+    return at + 8 <= mvhd.end ? Number(view.getBigUint64(at)) : 0;
+  }
+  return at + 4 <= mvhd.end ? view.getUint32(at) : 0;
+}
+
 // --- placing ----------------------------------------------------------------
 
 /**
@@ -441,19 +787,22 @@ function stampToMs(stamp, offset) {
  *   order the folder happened to list, and chains a guess off a guess.
  * @param {object|null} course when the run has one — with it, an interpolated
  *   photo sits ON the route rather than on a chord across it.
- * @param {Array<string>} [crew] the run's crew, from [`parseSettings`](settings.js).
- *   Empty by default, which is every run that has never named one and is why no
- *   existing caller had to change.
+ * @param {{crew?: Array<string>, runner?: string|null}} [people] who this run says
+ *   is out there, from [`parseSettings`](settings.js) — the crew, and the runner's
+ *   own name if it gave one. Both default to nobody, which is every run that has
+ *   never named anybody; one object rather than two positional arguments, in the
+ *   idiom `snapAll` already uses for `{start, maxSpeed}`.
  * @returns {Array} oldest-first, timeless ones last. Each is
- *   `{kind: 'media', name, sha, url, animated, caption, crew, t, lat, lon, along,
- *     ele, gap, source, point}` — the sun POI's shape plus what it takes to draw a
- *   picture. `kind` is `'media'`, which is what the tooltips dispatch on; `point`
- *   marks the ones that are fixes in their own right and belong in the points array.
+ *   `{kind: 'media', name, sha, url, animated, caption, crew, by, t, lat, lon,
+ *     along, ele, gap, source, point}` — the sun POI's shape plus what it takes to
+ *   draw a picture. `kind` is `'media'`, which is what the tooltips dispatch on;
+ *   `point` marks the ones that are fixes in their own right and belong in the
+ *   points array.
  */
-export function placeMedia(records, points, course = null, crew = []) {
+export function placeMedia(records, points, course = null, people = {}) {
   const out = [];
   for (const record of records || []) {
-    const poi = record && place(record, points, course, crew);
+    const poi = record && place(record, points, course, people);
     if (poi) out.push(poi);
   }
   // Timeless POIs have nothing to sort BY, so they go to the end in the order
@@ -461,7 +810,7 @@ export function placeMedia(records, points, course = null, crew = []) {
   return out.sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
 }
 
-function place(record, points, course, crew = []) {
+function place(record, points, course, { crew = [], runner = null } = {}) {
   const who = crewOf(record.name, crew);
   const named = mediaTime(record.name, who);
   const timed = Number.isFinite(named);
@@ -485,6 +834,17 @@ function place(record, points, course, crew = []) {
     // so that everything downstream can ask the question without knowing whether
     // this run has a crew at all.
     crew: who,
+    // Who to credit, which is a DIFFERENT question from the one above and the
+    // reason both fields exist. `crew` decides how this photograph may be placed
+    // and what colour its dot is — it is a fact about the evidence. `by` is a line
+    // on a card, and a run that named its runner credits his pictures to him just
+    // as it credits Mariam's to her.
+    //
+    // Null when the run named nobody, and that is the whole of the opt-in: a folder
+    // with no `runners_name` and no crew draws no bylines, exactly as before. The
+    // credit is only worth putting on every picture in a run once there is a second
+    // name it could have been.
+    by: who ?? runner ?? null,
     t
   };
 
@@ -535,6 +895,10 @@ function place(record, points, course, crew = []) {
       along: null,
       ele: Number.isFinite(record.ele) ? record.ele : null,
       gap: null,
+      // Named for where these coordinates first came from, and now equally a
+      // clip's ISO 6709 — what the value means to [mediaLayers](layers.js) is "the
+      // file measured this", as against a position worked out for it, and a
+      // camera and a camcorder are the same kind of witness.
       source: 'exif',
       point: t !== null
     };
@@ -614,13 +978,20 @@ export function applyMediaSnaps(pois, points) {
  * the full bytes are wanted moments later regardless, so it buys a second request
  * rather than a smaller one.
  *
- * Only JPEG is opened at all. PNG, GIF and every video container have somewhere
- * in their spec to put a timestamp and a coordinate — QuickTime's `©xyz` atom is
- * the one a phone genuinely does fill in — but reading them means a second and
- * third parser with no test data behind either, and a `.mov`'s metadata sits in a
- * `moov` atom that may be at the END of the file. So they cost NO request here
- * and rest on their filename, which is the authority on time regardless and is
- * what everything in this folder is named by anyway.
+ * JPEG and the QuickTime family are opened; PNG, GIF and WebM are not. The line
+ * is drawn at what a PHONE fills in. A `.png` off a screenshot and a `.webm` off
+ * a transcode have somewhere in their spec to put a coordinate and nothing that
+ * puts one there, so they cost no request and rest on their filename.
+ *
+ * The two that are opened are read differently, and the difference is where the
+ * metadata sits. A JPEG's APP1 is within the first few KB, so a JPEG is sliced.
+ * A clip's `moov` is commonly the LAST box in the file — 3,446,584 bytes into the
+ * 3,452,585-byte clip this was written against — so a clip is read whole. That
+ * costs nothing extra in practice: the atlas fetches the very same
+ * content-addressed URL for the clip's first frame moments later, and `sw.js` and
+ * `force-cache` between them mean the second read never reaches the network. The
+ * one file that genuinely pays is a clip with no metadata in it, which is
+ * downloaded here to discover exactly that.
  *
  * @param {string} url from `rawUrl` — sha-suffixed.
  * @returns {Promise<object|null>} null when the name isn't media at all.
@@ -633,14 +1004,17 @@ export async function resolveMedia(url, name, sha) {
     name, sha, url, kind,
     t: null, caption: null, assumedUtc: false, lat: null, lon: null, ele: null
   };
-  if (kind !== 'jpeg') return record;
+  const clip = isQuickTime(name);
+  if (kind !== 'jpeg' && !clip) return record;
 
   const res = await fetch(url, { cache: 'force-cache' });
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
 
   const blob = await res.blob();
-  const exif = parseExif(await blob.slice(0, EXIF_BYTES).arrayBuffer());
-  return exif ? { ...record, ...exif } : record;
+  const meta = clip
+    ? parseQuickTime(await blob.arrayBuffer())
+    : parseExif(await blob.slice(0, EXIF_BYTES).arrayBuffer());
+  return meta ? { ...record, ...meta } : record;
 }
 
 /**

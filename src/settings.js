@@ -94,7 +94,8 @@ function parsePing(raw) {
  * another to everything downstream.
  *
  * @param {object} raw the parsed JSON body.
- * @returns {{label?, start?, ping?, banner?, distance?, totalAscent?, maxSpeed?, crew?}}
+ * @returns {{label?, start?, ping?, banner?, distance?, totalAscent?, maxSpeed?, crew?,
+ *            runner?}}
  */
 export function parseSettings(raw) {
   const out = {};
@@ -122,6 +123,18 @@ export function parseSettings(raw) {
       .filter(name => typeof name === 'string' && name.trim())
       .map(name => name.trim());
     if (crew.length) out.crew = crew;
+  }
+
+  // And who is running, when the run cares to say. Read like `label` and used for
+  // one thing: signing the photographs that are his, the way a crew member's are
+  // signed with theirs.
+  //
+  // Optional in the way that matters — a run that names nobody credits nobody, and
+  // its photographs are captioned exactly as they were before this existed. The
+  // byline is only worth drawing on every picture in a folder when there is a
+  // second person's name it could have said instead.
+  if (typeof raw.runners_name === 'string' && raw.runners_name.trim()) {
+    out.runner = raw.runners_name.trim();
   }
 
   // `parseStamp` rather than `Date.parse`, and this is not incidental. The convention

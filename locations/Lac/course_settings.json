@@ -7,5 +7,6 @@
         "k": 0.3,
         "midpoint": 25
     },
-    "crew": ["Mariam"]
+    "crew": ["Mariam"],
+    "runners_name": "Bert"
 }
