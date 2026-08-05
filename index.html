@@ -927,6 +927,43 @@
      was about to press it. */
   .tip .mb:disabled { opacity: 0.25; cursor: default; }
   .tip .expand { top: 8px; right: 8px; font-size: 15px; }
+
+  /* The byline on a crew member's photograph — top left, where a photograph's
+     credit goes, and opposite the ⤢ so the two corners never argue.
+
+     Solid and light where everything else laid over a picture is dark and
+     translucent, which is the point rather than an inconsistency: the scrim and the
+     buttons are chrome that must not hide the frame, and this is a LABEL, the one
+     thing on the card that has to be read before the picture rather than through
+     it. What it corrects is the assumption somebody brings to a map of a race —
+     that a photograph on it is a photograph of the runner.
+
+     Fixed colours, not `--surface-1` and `--text-primary`. Like the caption's scrim
+     it sits on an unknown photograph rather than on the card, so it takes no part
+     in the light/dark scheme: dark mode would have painted a near-black badge over
+     a photograph that may itself be a snowfield. */
+  .tip .by {
+    position: absolute;
+    z-index: 1;
+    top: 8px;
+    left: 8px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #fcfcfb;
+    color: #0b0b0b;
+    font-size: 12px;
+    font-weight: 600;
+    /* The figure sets `line-height: 0` to kill the image's descender gap, and the
+       text would inherit it straight into a collapsed box — same trap as `.mb`. */
+    line-height: 1.4;
+    white-space: nowrap;
+    /* Long enough to be a name and no longer: the corner of a 340px card is not the
+       place to discover somebody typed a sentence into the crew list. */
+    max-width: calc(100% - 56px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
   /* Above the vertical middle, not on it — the caption's scrim occupies the foot
      of the picture, and a chevron half in it reads as part of the readings. */
   .tip .prev { top: 40%; left: 8px; }

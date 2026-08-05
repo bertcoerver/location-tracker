@@ -1091,9 +1091,11 @@ function mediaButton(act, glyph, label, enabled = true) {
  * between the pings either side. See `mediaLayers`.
  *
  * With ONE exception, and it is an exception because it is not provenance: a crew
- * member's name. That the runner is not in this photograph and was not standing
- * where it was taken is the only thing on this card a reader could get badly
- * wrong, and "badly wrong" is the test for what earns words rather than a colour.
+ * member's byline, over the top-left corner where a photograph's credit goes. That
+ * the runner is not in this photograph and was not standing where it was taken is
+ * the only thing on this card a reader could get badly wrong, and "badly wrong" is
+ * the test for what earns words rather than a colour — and words that are read
+ * before the picture rather than after the clock.
  *
  * Two admissions survive, because dropping them would be dropping facts rather
  * than dropping furniture, and both fit in the space an annotation takes:
@@ -1146,22 +1148,25 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   // on this page puts a fact and its caveats in.
   const said = poi.caption ? `<span class="cq">${escapeHtml(poi.caption)}</span>` : '';
 
-  const day = poi.t === null ? '' : dayTag(poi.t, origin);
+  // Whose camera, when it wasn't the runner's — a byline over the top-left corner
+  // of the picture, where a photograph's credit goes.
+  //
+  // Deliberately NOT down in the caption with the day tag and the `zone?` caveat,
+  // which is where this started. Those are annotations on a reading: small print
+  // qualifying a number somebody has already read. This is not a qualification of
+  // anything on the card, it is a correction to the assumption somebody brings TO
+  // the card — that a photograph on this map is a photograph of the run. It has to
+  // be read before the picture, not after the clock, so it sits where a credit sits
+  // and says "by" rather than standing as a bare name that could be the subject.
+  //
+  // Solid and light rather than the caption's scrim, and that is the same argument
+  // `.mb` makes in reverse: over an unknown photograph, contrast has to be supplied
+  // rather than hoped for. A dark badge would have matched the chrome; a light one
+  // is the only thing on this card that reads as a label ON the photograph instead
+  // of part of its furniture.
+  const by = poi.crew ? `<span class="by">by ${escapeHtml(poi.crew)}</span>` : '';
 
-  // Whose camera, when it wasn't the runner's. A tag beside the clock rather than a
-  // line of its own, in the raised, quietened style the day and the `zone?` caveat
-  // already use — it belongs with the title because it is a fact about where this
-  // picture CAME FROM, which is the same kind of fact as when it was taken and the
-  // opposite kind from the caption above.
-  //
-  // Worth having in words as well as in the colour of the dot: the tag is what says
-  // that the position on this card is the photographer's and not the runner's, and a
-  // magenta dot alone can only say "different" to somebody already looking for it.
-  //
-  // Only ever on the timed branch below, and not by accident — `place` drops a crew
-  // photograph that carries no moment, so there is no timeless card this could
-  // appear on.
-  const by = poi.crew ? `<span class="d">${escapeHtml(poi.crew)}</span>` : '';
+  const day = poi.t === null ? '' : dayTag(poi.t, origin);
 
   // A filename is what goes in the title when nothing better is known. A caption is
   // something better, so `IMG_4021` is dropped rather than set beside it — two
@@ -1169,7 +1174,7 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   const title = poi.t === null
     ? (poi.caption ? '' : escapeHtml(String(poi.name).replace(/\.[a-z0-9]+$/i, '')))
     : `${fmtClock(poi.t)}${day ? `<span class="d">${day}</span>` : ''}` +
-      `${poi.assumedUtc ? '<span class="d">zone?</span>' : ''}${by}`;
+      `${poi.assumedUtc ? '<span class="d">zone?</span>' : ''}`;
 
   const stats = [];
   if (origin !== null && poi.t !== null && poi.t >= origin) {
@@ -1181,7 +1186,7 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   }
   if (poi.ele !== null && poi.ele !== undefined) stats.push(capStat(ICON.ele, metres(poi.ele)));
 
-  return `<figure class="ph">${frame}${buttons}<figcaption class="cap">` + said +
+  return `<figure class="ph">${frame}${by}${buttons}<figcaption class="cap">` + said +
     (title ? `<span class="ct">${title}</span>` : '') +
     (stats.length ? `<span class="cs">${stats.join('')}</span>` : '') +
     '</figcaption></figure>';
