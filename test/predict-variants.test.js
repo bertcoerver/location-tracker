@@ -11,8 +11,11 @@ import * as blend from '../src/predict-variants/v-gross-blend.js';
 import * as stoprate from '../src/predict-variants/v-stoprate.js';
 import * as fade from '../src/predict-variants/v-fade.js';
 import * as calibrated from '../src/predict-variants/v-calibrated.js';
+import * as kalman from '../src/predict-variants/v-kalman.js';
+import * as bootstrap from '../src/predict-variants/v-bootstrap.js';
+import { effortBlocks, effortNodes } from '../src/predict-variants/effort.js';
 
-const VARIANTS = { blend, stoprate, fade, calibrated };
+const VARIANTS = { blend, stoprate, fade, calibrated, kalman, bootstrap };
 
 // Fixtures copied from predict.test.js — they are file-local there.
 
@@ -142,11 +145,15 @@ for (const [name, variant] of Object.entries(VARIANTS)) {
     const points = steady(8, 1000, course);
     const at = variant.predictAt(variant.buildForecast(points, course), 15000);
     const base = basePredict(baseBuild(points, course), 15000);
-    // The stop terms are identity on a clean run: r ≈ 1, s ≈ 0. The fade
-    // family's literature prior deliberately keeps a couple of percent of fade
-    // until the run itself argues it away, so it gets that much slack — over
-    // the 40 minutes still to run here, about a minute.
-    const slack = ['fade', 'calibrated'].includes(name) ? 75 * 1000 : 30 * 1000;
+
+    // The stop terms are identity on a clean run: r ≈ 1, s ≈ 0. What is NOT
+    // identity is a fatigue prior — every model carrying one deliberately keeps
+    // a few per cent of fade until the run itself argues it away, and there is
+    // no run here long enough to argue. Those models are held to a tenth of the
+    // time still to come; the rest, which claim nothing about fatigue, have to
+    // land on the baseline's answer.
+    const prior = ['fade', 'calibrated', 'kalman', 'bootstrap'].includes(name);
+    const slack = prior ? 0.1 * (base.t - baseBuild(points, course).from.t) : 30 * 1000;
     assert.ok(Math.abs(at.t - base.t) < slack,
       `drifted ${(at.t - base.t) / 1000}s from the baseline`);
   });
@@ -171,7 +178,10 @@ test('a 30-minute stall pushes every stop-aware forecast later than the baseline
   const points = withStop(10, 1000, 30, course);
   const base = basePredict(baseBuild(points, course), 18000);
 
-  for (const name of ['blend', 'stoprate', 'fade']) {
+  // Every model except `classic` itself, by two different routes: the first
+  // three price the stop on top of the moving-pace fit, the last two never saw
+  // a moving pace at all — the stall is simply inside a block.
+  for (const name of ['blend', 'stoprate', 'fade', 'kalman', 'bootstrap']) {
     const variant = VARIANTS[name];
     const at = variant.predictAt(variant.buildForecast(points, course), 18000);
     assert.ok(at.t > base.t + 2 * MINUTE,
@@ -220,6 +230,89 @@ test('fade: longer horizons cost more per metre than shorter ones', () => {
   const near = fade.predictAt(forecast, 12000).t - forecast.from.t;
   const far = fade.predictAt(forecast, 19000).t - fade.predictAt(forecast, 18000).t;
   assert.ok(far > near, `last km ${far / 1000}s not above first km ${near / 1000}s`);
+});
+
+test('effort blocks bill a stop to the ground around it', () => {
+  const course = flat();
+  const clean = effortBlocks(steady(8, 1000, course), course);
+  const stalled = effortBlocks(withStop(8, 1000, 30, course), course);
+
+  // Every block has somewhere to go and a time to get there — no leg divides a
+  // duration by no distance, which is the whole point of blocking.
+  for (const block of [...clean, ...stalled]) {
+    assert.ok(block.e > 0 && block.dt > 0, 'degenerate block');
+  }
+  // The stall shows up as time, not as an extra block.
+  assert.equal(stalled.length, clean.length);
+  const gross = list => list.reduce((s, b) => s + b.dt, 0) / list.reduce((s, b) => s + b.e, 0);
+  assert.ok(gross(stalled) > gross(clean) * 1.5, 'stall not billed anywhere');
+});
+
+test('effort nodes span the anchor to the finish', () => {
+  const course = flat();
+  const nodes = effortNodes(course, 7000);
+  assert.equal(nodes[0].along, 7000);
+  assert.equal(nodes[nodes.length - 1].along, course.length);
+  for (let i = 1; i < nodes.length; i++) {
+    assert.ok(nodes[i].along > nodes[i - 1].along, 'nodes not ascending');
+    assert.ok(nodes[i].e > 0, 'node with no effort in it');
+  }
+});
+
+test('kalman: fading is read off the run, and an even run reports none', () => {
+  const course = flat();
+  const even = kalman.buildForecast(steady(12, 1000, course), course);
+
+  // Same ground, second half 60% slower.
+  const points = [];
+  let t = 0;
+  for (let i = 0; i < 12; i++) {
+    points.push(ping(`p${i}`, t, i * 1000));
+    t += i < 6 ? 5 : 8;
+  }
+  deriveStats(points, course);
+  const faded = kalman.buildForecast(points, course);
+
+  assert.ok(faded.r > even.r, `faded trend ${faded.r} not above even ${even.r}`);
+  assert.ok(faded.r > 0, 'a positive split reported no drift at all');
+  assert.ok(Math.abs(even.r) < 1e-5, `even run claimed drift ${even.r}`);
+});
+
+test('kalman: the band widens faster than the horizon does', () => {
+  // On an ULTRA-length course, because that is the regime the claim is about.
+  // Over the first few kilometres the opposite is true and should be: block
+  // scatter averages away as 1/distance, so the band there is proportionally
+  // TIGHTER the further ahead you look. Drift only takes over once there is
+  // enough race left for the runner to become a different runner.
+  const course = hills(Array.from({ length: 1501 }, () => 100));
+  const forecast = kalman.buildForecast(steady(20, 1000, course), course);
+
+  // What `calibrated` has to impose with a floor, this model produces on its
+  // own: the sd as a SHARE of the time still to run grows with the horizon,
+  // because the level and the trend both wander on the way there.
+  const share = along => {
+    const at = kalman.predictAt(forecast, along);
+    return at.sd / (at.t - forecast.from.t);
+  };
+  assert.ok(share(140000) > share(50000) * 1.5,
+    `far ${share(140000).toFixed(3)} vs near ${share(50000).toFixed(3)}`);
+});
+
+test('bootstrap: the band leans late, and repeats itself exactly', () => {
+  const course = flat();
+  const points = withStop(10, 1000, 30, course);
+  const forecast = bootstrap.buildForecast(points, course);
+  const at = bootstrap.predictAt(forecast, 19000);
+
+  // Right-skewed by construction: a runner can lose two hours and cannot gain
+  // them. No other model here can say anything but "± the same amount".
+  assert.ok(at.hi - at.t > (at.t - at.lo) * 1.05,
+    `late tail ${(at.hi - at.t) / MINUTE} min vs early ${(at.t - at.lo) / MINUTE} min`);
+
+  // Same run in, same band out — a figure that shivers between repaints is a
+  // bug, and a seeded generator is what stops it.
+  const again = bootstrap.predictAt(bootstrap.buildForecast(points, course), 19000);
+  assert.deepEqual(again, at);
 });
 
 test('the dispatcher runs the configured default and stamps the forecast', () => {

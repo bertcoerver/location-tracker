@@ -1125,6 +1125,43 @@ the 80% band's real coverage from 14% to 57%, and pooled across the holdout the 
 moved from −32% of time remaining to −14% — while the road marathons stayed within a couple of
 minutes of what `classic` already said.
 
+### Two that are not the regression at all
+
+Everything above shares one estimator, and therefore one set of blind spots. Two more models replace
+it. Both cut the run into **blocks of effort metres** ([`effort.js`](src/predict-variants/effort.js))
+— a metre of climb counted as `predictClimbFactor` metres of flat, the terrain frozen into the ruler
+instead of fitted — and report each block's *gross* pace, so a stop is not a special case to be
+budgeted for but simply time inside the block it happened in.
+
+- **`kalman`** — a local-linear-trend Kalman filter on log gross pace, walking block by block. The
+  band is not floored: it comes out of the state covariance plus the process noise that will
+  accumulate before the runner gets there, which grows with the cube of the horizon for a drifting
+  level and the fifth power for a drifting trend. It is the best-calibrated model in the registry —
+  on the holdout its 80% window covers **86%**, against `calibrated`'s 62% and `classic`'s 20% — and
+  the only one whose band needs nothing propping it up.
+- **`bootstrap`** — no pace model at all: two hundred simulated finishes, each node taking a pace
+  resampled from the blocks the runner has actually produced, drawn in runs of three so that bad
+  patches persist the way real ones do. The forecast is the median of the simulations and the band is
+  their 10th and 90th percentiles, so it is the one model here whose window is **asymmetric** —
+  which is the right shape, since a runner can lose two hours and cannot gain them.
+
+Neither takes the default. Pooled over the holdout, mean absolute error is 148 min for `calibrated`,
+175 for `kalman`, 190 for `bootstrap` and 240 for `classic`; the two new models are decisively better
+than the model they replace and still behind the one built on top of it. The split is by terrain:
+`kalman` wins outright on the mountain races (Vesuvio 12 min against `calibrated`'s 25, Wildstrubel
+22 against 24, Tympakio 10 against 16) and loses on the roads, where the classic regression is
+already near-exact and a fixed climb ruler and a fatigue prior are two assumptions a flat marathon
+does not need — La Rochelle is 1 min under `classic` and 6 under `kalman`.
+
+One negative result is worth recording, since it was the reason for building `kalman` in the first
+place. The filter's trend state was meant to *measure* fatigue from the run instead of assuming it.
+It forecast worse: a slope estimated from a couple of dozen noisy blocks and extrapolated over the
+rest of an ultra swings the finish by hours from one ping to the next, and any weight on it at all
+cost both accuracy and calibration against simply believing Riegel's exponent. Thirty-three runs are
+not enough to learn a slope that a century of race results already knows. The trend survives inside
+the filter, where it smooths, and in the variance, where "he may be drifting and I cannot see it yet"
+is exactly what a long-horizon band is for.
+
 The model was first measured while it was being built, by a walk-forward backtest that fitted the
 forecast for ping *i* on pings `0..i-1` only: mean absolute error **1.6 min** over the nine unseen
 pings of `test_3`, all nine inside the 80% band, and a finish predicted at 13:24 (13:16–13:33) against

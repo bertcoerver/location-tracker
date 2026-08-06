@@ -12,11 +12,20 @@
 // gross-pace blend, `stoprate` the stop budget, `fade` the fatigue exponent on
 // top of it, `calibrated` fade with the empirically-sized band. The backtests
 // behind the ranking live in the prediction-diag repo.
+//
+// The last two are a different family altogether. `kalman` and `bootstrap` do
+// not use the regression at all — they run on gross-pace blocks of course
+// ([effort.js](effort.js)), one as a recursive filter with a fade state, the
+// other as a few hundred simulated finishes with percentile bands. They are here
+// because the first five all inherit the same estimator, and therefore the same
+// blind spots.
 
 import * as classic from './classic.js';
 import * as blend from './v-gross-blend.js';
 import * as stoprate from './v-stoprate.js';
 import * as fade from './v-fade.js';
 import * as calibrated from './v-calibrated.js';
+import * as kalman from './v-kalman.js';
+import * as bootstrap from './v-bootstrap.js';
 
-export const MODELS = { classic, blend, stoprate, fade, calibrated };
+export const MODELS = { classic, blend, stoprate, fade, calibrated, kalman, bootstrap };

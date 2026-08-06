@@ -241,6 +241,10 @@ export const CONFIG = {
   // Diagonale des Fous it moved the median finish error from −354 minutes to
   // +54 and lifted the 80% band's real coverage from 14% to 57%, while leaving
   // road marathons within a couple of minutes of what `classic` said.
+  //
+  // `kalman` is the one to reach for on a mountain race, and the only model
+  // whose band is derived rather than floored — it covers 86% against this
+  // one's 62% on the holdout, at some cost in accuracy. See the README.
   predictModel: 'calibrated',
   //
   // 15 km leaves a 20 km run very nearly evenly weighted — there isn't enough
