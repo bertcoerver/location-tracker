@@ -120,7 +120,11 @@ export function createMap(container, {
       // went quiet for a while and the band slid over the newest fix — hiding the
       // one mark on the map that is actually known, behind the one that isn't.
       ...forecastLayers(course, marker),
-      ...pointLayers(points, pulse, course),
+      // The forecast goes in for one reason: it decides whether the newest fix
+      // still pulses. A mountain with no network is an hour of silence on a run
+      // that is plainly still happening, and the panel's clock already knows not
+      // to call that finished — see `latestState`.
+      ...pointLayers(points, pulse, course, forecast),
       // Above the pings, which took a measurement to get right: deck picks the
       // TOPMOST pickable layer, `points-hit` is a 16 px disc around every fix, and
       // a sun mark is interpolated between two pings five minutes apart — so

@@ -8,12 +8,13 @@ import {
 } from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
 import { isLive } from './github.js';
+import { stillRunning } from './predict.js';
 import { interpolateAt, originOf } from './stats.js';
 import { isDaylight, moonPhase } from './sun.js';
 import {
   ago, dayTag, escapeHtml, fmtClock, fmtDuration, fmtHm, fmtPace, mapsUrl
 } from './util.js';
-import { fixesOf, latestOf, posOf, tracePath } from './points.js';
+import { finishOf, fixesOf, latestOf, posOf, tracePath } from './points.js';
 import { isVideo, THUMB_PX } from './media.js';
 
 /** Keyless CARTO raster basemap, light or dark to match the page. */
@@ -510,13 +511,53 @@ export function mediaLayers(pois, atlas) {
  * @param {number} pulse 0..1, drives the halo on the newest fix
  * @param {object|null} course the run's route, when it has one
  */
-export function pointLayers(all, pulse, course = null) {
+/**
+ * What the newest fix is: a runner still out there, a phone that has gone quiet,
+ * or a race the phone itself called done.
+ *
+ * Pure, and separated out because it decides the two most visible things on the
+ * map — whether the orange dot pulses, and whether a chequered flag stands over it
+ * — and neither of those can be unit-tested through a deck.gl layer.
+ *
+ * `finished` is the phone's own assertion and outranks everything: `is_finish` on
+ * the last fix means the runner crossed the line, and that stays true tomorrow, in
+ * a week, and next year. It is the one state on this map that never goes stale.
+ *
+ * `live` is not a second opinion — it is [`stillRunning`](predict.js), the very
+ * rule the status panel's clock and dot are drawn from, so the halo and the panel
+ * cannot end up saying different things about one run. The record it wants is
+ * built from the newest PING rather than taken from the index, which is the same
+ * fact one poll sooner: the points are what this layer already has in its hand.
+ *
+ * Only a live run pulses. A pulse is a claim that something is happening NOW, and
+ * the two cases where nothing is are exactly these — the race is over, or the
+ * runner could no longer plausibly still be out on the course. Left pulsing, a fix
+ * from three weeks ago reads as a runner standing on a mountain, which is the one
+ * thing this map must never say.
+ *
+ * @param {Array} points fixes only, oldest-first — see `fixesOf`.
+ * @param {object|null} [forecast] from `buildForecast`; without it a quiet phone
+ *   is simply quiet, which is the honest answer on a run with no course.
+ * @param {number} [now]
+ */
+export function latestState(points, forecast = null, now = Date.now()) {
+  const latest = latestOf(points);
+  const finish = finishOf(points);
+  const live = stillRunning({ finish, record: { latest: latest?.t }, forecast, now });
+  return { latest, finished: !!finish, live };
+}
+
+/**
+ * @param {object|null} [forecast] for the liveness the halo rides on — see
+ *   `latestState`.
+ */
+export function pointLayers(all, pulse, course = null, forecast = null) {
   // Media that carried its own coordinates rides in the points array so that it
   // snaps and counts, but it gets no dot, no hit disc and no halo here: it has a
   // thumbnail of its own, and a dot under that thumbnail is one mark claimed by
   // two layers — with two tooltips to match. See `mediaLayers`.
   const points = fixesOf(all);
-  const latest = latestOf(points);
+  const { latest, finished, live } = latestState(points, forecast);
   const latestData = latest ? [latest] : [];
   const ring = surface();
   const fill = accent();
@@ -623,16 +664,35 @@ export function pointLayers(all, pulse, course = null) {
       getFillColor: [...fill, 232]
     }),
 
-    // Pulsing halo, so a newly arrived fix is visible without hunting for it.
-    new deck.ScatterplotLayer({
-      id: 'latest-halo',
-      data: latestData,
-      radiusUnits: 'pixels',
-      getPosition: posOf,
-      getRadius: 11 + pulse * 9,
-      getFillColor: [...accent(), Math.round(70 - pulse * 45)],
-      updateTriggers: { getRadius: pulse, getFillColor: pulse }
-    }),
+    // Pulsing halo, so a newly arrived fix is visible without hunting for it —
+    // and ONLY while there is something arriving. See `latestState`: a finished
+    // race and a phone that has gone quiet both get the bare dot, because a pulse
+    // means "now" and neither of them is happening now.
+    //
+    // A finished run gets a still ring in its place, at the halo's mid-size. The
+    // mark is the last thing on the course anybody looks at, and without it the
+    // newest fix would shrink to the size of every other ping the moment the
+    // runner crossed the line.
+    ...(live ? [
+      new deck.ScatterplotLayer({
+        id: 'latest-halo',
+        data: latestData,
+        radiusUnits: 'pixels',
+        getPosition: posOf,
+        getRadius: 11 + pulse * 9,
+        getFillColor: [...accent(), Math.round(70 - pulse * 45)],
+        updateTriggers: { getRadius: pulse, getFillColor: pulse }
+      })
+    ] : finished ? [
+      new deck.ScatterplotLayer({
+        id: 'latest-halo',
+        data: latestData,
+        radiusUnits: 'pixels',
+        getPosition: posOf,
+        getRadius: 15,
+        getFillColor: [...accent(), 48]
+      })
+    ] : []),
 
     new deck.ScatterplotLayer({
       id: 'latest',
@@ -646,8 +706,117 @@ export function pointLayers(all, pulse, course = null) {
       getLineWidth: 2,
       getLineColor: [...ring, 255],
       getFillColor: [...accent(), 255]
-    })
+    }),
+
+    // The chequered flag, planted on the last fix of a finished race.
+    //
+    // Not pickable, in the sun glyph's idiom: the dot underneath is the position
+    // and owns the tooltip — which already says `· finish` — and the flag is the
+    // one word the dot cannot say on its own. Anchored at the foot of its pole so
+    // the pole stands ON the fix with its base tucked under the dot, rather than
+    // floating beside it like a label.
+    ...(finished ? [
+      new deck.IconLayer({
+        id: 'finish-flag',
+        data: latestData,
+        iconAtlas: finishAtlas().atlas,
+        iconMapping: finishAtlas().mapping,
+        getIcon: () => 'flag',
+        getPosition: posOf,
+        getSize: 40,
+        sizeUnits: 'pixels'
+      })
+    ] : [])
   ];
+}
+
+/** The flag's cell, rasterised well past the 40 px it is drawn at so it stays
+ *  crisp on a display with twice the density. Square, like the sun's. */
+const FLAG_PX = 96;
+
+/** Built once and kept: the palette is read once per page too, so there is no
+ *  colour here that can change under it. */
+let flagAtlas = null;
+
+/**
+ * A chequered flag, drawn into a canvas for an `IconLayer` to sample.
+ *
+ * Drawn rather than typeset, for the reason `sunAtlas` records at length — deck's
+ * text pipeline keeps a glyph's coverage and throws away its colour, which turns
+ * 🏁 into a filled square — and then for one more: a chequered flag IS a pattern,
+ * so at the 40 px this is shown at, the emoji's own squares fall below a pixel
+ * each on most platforms and mush into grey. Four columns by three rows, drawn at
+ * a size chosen against the size it is displayed at, stays legible as checks.
+ *
+ * The pole and the flag's border are the accent rather than black, and that is
+ * load-bearing on a dark basemap: black on charcoal is invisible, and the frame is
+ * what holds the white squares together as one mark. It also keeps the flag inside
+ * the page's own language — this is the runner's mark, and the runner is orange.
+ *
+ * Lazy and never called from node, like `sunAtlas`: there is no `document` in the
+ * test run.
+ */
+function finishAtlas() {
+  if (flagAtlas) return flagAtlas;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = FLAG_PX;
+  canvas.height = FLAG_PX;
+
+  const c = canvas.getContext('2d');
+  const ink = `rgb(${accent().join(',')})`;
+
+  // The pole: full height, so the flag has something to be flown from and the
+  // mark has a foot to stand on.
+  const poleX = 18;
+  c.fillStyle = ink;
+  c.fillRect(poleX - 3, 6, 6, FLAG_PX - 8);
+
+  // The cloth. Whites first as one block, so the dark squares are laid onto a
+  // solid ground rather than onto whatever the basemap happens to be.
+  //
+  // Three squares by two, not the four-by-three a chequered flag is usually
+  // drawn with. Checked against a render at the size this is actually shown at:
+  // at 40 px the finer grid puts each square under 4 px and they average into
+  // grey, which is a flag that has stopped saying anything. Six big squares
+  // still read as CHEQUERED, which is the whole content of the mark.
+  const x0 = poleX + 3;
+  const y0 = 8;
+  const cols = 3;
+  const rows = 2;
+  const cell = 24;
+  c.fillStyle = '#fff';
+  c.fillRect(x0, y0, cols * cell, rows * cell);
+  c.fillStyle = '#111';
+  for (let col = 0; col < cols; col++) {
+    for (let row = 0; row < rows; row++) {
+      if ((col + row) % 2 === 0) c.fillRect(x0 + col * cell, y0 + row * cell, cell, cell);
+    }
+  }
+
+  // The frame, drawn last and inset by half its width so it sits on the cloth's
+  // edge instead of half outside it.
+  c.strokeStyle = ink;
+  c.lineWidth = 4;
+  c.strokeRect(x0 + 2, y0 + 2, cols * cell - 4, rows * cell - 4);
+
+  flagAtlas = {
+    atlas: canvas,
+    mapping: {
+      flag: {
+        x: 0,
+        y: 0,
+        width: FLAG_PX,
+        height: FLAG_PX,
+        // The foot of the pole, so the icon is planted on the fix rather than
+        // centred over it.
+        anchorX: poleX,
+        anchorY: FLAG_PX - 2,
+        mask: false
+      }
+    }
+  };
+  return flagAtlas;
 }
 
 /**

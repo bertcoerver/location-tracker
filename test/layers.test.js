@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import {
   beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
-  mediaTooltipHtml, splitWeather, sunGlyph, sunTooltipHtml, tooltipHtml, viewerLayers,
-  waypointTooltipHtml
+  latestState, mediaTooltipHtml, splitWeather, sunGlyph, sunTooltipHtml, tooltipHtml,
+  viewerLayers, waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
@@ -782,6 +782,76 @@ test('hover produces no tooltip at all while a point is pinned', () => {
     assert.ok(free(info), 'this case answers when nothing is pinned');
     assert.equal(pinned(info), null);
   }
+});
+
+// --- what the newest fix is doing ---------------------------------------------
+//
+// The decision behind the two loudest marks on the map: whether the orange dot
+// pulses, and whether a chequered flag stands on it. The layers themselves need
+// deck.gl's global, so the rule is pure and exported and the cases are all here.
+
+const HOUR = 60 * MINUTE;
+
+/** A run of three pings, the last of them `agoMs` ago. */
+const recent = (agoMs, now) => [
+  { name: 'a', t: now - agoMs - 2 * MINUTE, lat: LAT0, lon: 0 },
+  { name: 'b', t: now - agoMs - MINUTE, lat: LAT0, lon: 0 },
+  { name: 'c', t: now - agoMs, lat: LAT0, lon: 0 }
+];
+
+test('a run pinging now is live, and neither finished nor flagged', () => {
+  const now = Date.parse('2026-07-28T12:00:00+02:00');
+  const state = latestState(recent(2 * MINUTE, now), null, now);
+
+  assert.equal(state.live, true);
+  assert.equal(state.finished, false);
+  assert.equal(state.latest.name, 'c');
+});
+
+test('a race the phone called finished never pulses again', () => {
+  // The bug this was written for: the halo is a claim that something is happening
+  // NOW, and a finished race went on making it for weeks. The finish is the last
+  // ping, so it is also still the newest one — liveness cannot be what saves this.
+  const now = Date.parse('2026-07-28T12:00:00+02:00');
+  const points = recent(MINUTE, now);
+  points[points.length - 1].is_finish = true;
+
+  const state = latestState(points, null, now);
+  assert.equal(state.finished, true);
+  assert.equal(state.live, false, 'a finished race is not still running');
+
+  // And it stays that way, which is the whole point: same answer a month on.
+  const later = latestState(points, null, now + 30 * 24 * HOUR);
+  assert.deepEqual([later.finished, later.live], [true, false]);
+});
+
+test('a run that simply went quiet stops pulsing too, without a flag', () => {
+  // No finish marker and no course to predict one from — a phone that died, or a
+  // race abandoned. The dot must stop claiming "now", but nothing here earns a
+  // chequered flag: nobody said this run crossed a line.
+  const now = Date.parse('2026-07-28T12:00:00+02:00');
+  const state = latestState(recent(3 * HOUR, now), null, now);
+
+  assert.equal(state.live, false);
+  assert.equal(state.finished, false);
+});
+
+test('an hour of silence mid-race keeps pulsing, because the panel says it is running', () => {
+  // The map takes its liveness from `stillRunning`, so a blackout on a mountain
+  // reads the same here as it does on the panel's clock. Without the shared rule
+  // this dot would go still while the clock beside it was still counting up.
+  const now = Date.parse('2026-07-28T12:00:00+02:00');
+  const points = recent(90 * MINUTE, now).map((p, i) => ({
+    ...p, snap: { along: 1000 + i * 100, lon: 0, lat: LAT0, ele: 0, off: 2 }
+  }));
+  // Enough legs for a fit, at a pace with 3 km of the 4 km course left to run.
+  const forecast = buildForecast(
+    Array.from({ length: 6 }, (_, i) => ping(`p${i}`, i * 5, i * 100)), course()
+  );
+
+  assert.ok(forecast, 'the fixture has to produce a forecast for this to mean anything');
+  assert.equal(latestState(points, null, now).live, false, 'the ping rule alone has given up');
+  assert.equal(latestState(points, forecast, forecast.from.t + 10 * MINUTE).live, true);
 });
 
 // --- the forecast marker on the map -------------------------------------------

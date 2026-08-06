@@ -8,9 +8,9 @@ import assert from 'node:assert/strict';
 
 import { buildCourse } from '../src/course.js';
 import { isLive } from '../src/github.js';
-import { buildForecast, predictAt } from '../src/predict.js';
+import { buildForecast, predictAt, stillRunning } from '../src/predict.js';
 import { deriveStats } from '../src/stats.js';
-import { clockReading, courseFigures, stillRunning } from '../src/ui.js';
+import { clockReading, courseFigures } from '../src/ui.js';
 import { fmtStamp } from '../src/util.js';
 
 const MINUTE = 60000;

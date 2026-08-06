@@ -5,7 +5,7 @@ import { byRecency, isLive } from './github.js';
 import { fmtDistance, metres } from './layers.js';
 import { finishOf, fixesOf, latestOf } from './points.js';
 import { dueInMs } from './schedule.js';
-import { positionAt, predictAt } from './predict.js';
+import { predictAt, stillRunning } from './predict.js';
 import { originOf } from './stats.js';
 import { ago, coarse, dayTag, fmtCountdown, fmtElapsed, fmtHm, fmtStamp } from './util.js';
 
@@ -140,54 +140,6 @@ export function clockReading({ start, points, finish, live, forecast = null, now
     // phone ever saying it crossed the line.
     dnf: !live && !finish && Boolean(forecast)
   };
-}
-
-/**
- * Is the run on screen still underway?
- *
- * Pure and exported for the same reason `clockReading` is: it is a decision, three
- * of its cases take hours of real time to reach, and everything downstream of it —
- * the pulsing dot, the elapsed clock, the "next ping" estimate, the predicted
- * finish — says something different depending on the answer.
- *
- * Three conditions, and only the first is a fact. A finish marker is an assertion by
- * the phone that the race is over, and it outranks everything: it says so the instant
- * it lands rather than an hour later.
- *
- * After that there are two ways to still be running, and either will do:
- *
- *   1. a recent ping. `isLive` can only guess from the clock, and its hour is a guess
- *      about a phone that pings every few minutes.
- *   2. a prediction that has not yet reached the finish line. `positionAt` returns
- *      null once the forecast has walked off the end of the course, so this is
- *      exactly the condition that keeps the orange marker on the map: the clock and
- *      the marker stop together, which they did not before.
- *
- * The second is there because an hour of silence is normal on the terrain this page
- * is for. A mountain section with no network beat the ping-only rule outright — the
- * elapsed clock froze mid-race, relabelled itself "Total", and the panel announced a
- * finish two ridges early, which is the one thing it must never do. Judging from the
- * forecast instead keeps the run live for as long as the runner could plausibly still
- * be out there, and no longer: a phone that dies at 20 km of 160 keeps the clock
- * going, but only until the predicted position crosses the line, and then every
- * reading reverts at once.
- *
- * A run with no course has no forecast, so it gets the ping-only rule. That is the
- * honest answer there: with no route there is no finish line to predict crossing, and
- * nothing but the clock to go on.
- *
- * Only for the run on screen. The picker's per-run marker keeps plain `isLive`,
- * because the index is built from the tree API and knows nothing about file contents;
- * a run has to be opened before its finish or its course is visible.
- *
- * @param {object|null} finish   the ping the phone marked as its last, if any
- * @param {object|null} record   this run's index entry, for its `latest`
- * @param {object|null} forecast from `buildForecast`, or null with no course
- * @param {number}      now
- */
-export function stillRunning({ finish, record, forecast, now }) {
-  if (finish) return false;
-  return isLive(record, now) || Boolean(forecast && positionAt(forecast, now));
 }
 
 export function createUi({ onRecenter, onRunPick }) {
