@@ -1017,6 +1017,22 @@ export async function resolveMedia(url, name, sha) {
   return meta ? { ...record, ...meta } : record;
 }
 
+/** Whether a canvas came back empty, which is what a `<video>` with no frame
+ *  presented yet paints. Sampled through a tiny scratch canvas rather than read
+ *  straight off the frame: `getImageData` over a 4K still costs tens of
+ *  megabytes per clip, and every pixel of it would say the same thing the 64 in
+ *  here do. Alpha alone is the test — a genuine frame is opaque everywhere, so
+ *  anything transparent is the decoder's absence rather than the picture. */
+function blank(source) {
+  const probe = document.createElement('canvas');
+  probe.width = probe.height = 8;
+  const c = probe.getContext('2d', { willReadFrequently: true });
+  c.drawImage(source, 0, 0, probe.width, probe.height);
+  const { data } = c.getImageData(0, 0, probe.width, probe.height);
+  for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) return false;
+  return true;
+}
+
 /**
  * The first frame of a clip, as something a texture can be built from.
  *
@@ -1026,6 +1042,20 @@ export async function resolveMedia(url, name, sha) {
  * single unplayable clip leaves the atlas build pending forever and the map never
  * gets its thumbnails. That case stopped being hypothetical when `.mov` was
  * admitted: an iPhone shooting HEVC writes a file Chrome will not open.
+ *
+ * `loadeddata` is NOT that signal, which is the subtle half of this. The event
+ * means the decoder holds data for the current position; it does not mean a frame
+ * has been PRESENTED to the element, and a detached `<video>` that is neither
+ * playing nor seeking may never present one. Drawing then paints nothing and
+ * succeeds, so the failure arrives as a valid, fully transparent bitmap — a
+ * thumbnail with its frame and play badge intact and a hole where the picture
+ * goes, rather than as an error anything upstream could notice.
+ *
+ * So the element is nudged into producing a frame — muted playback, or a seek
+ * where autoplay is refused — every plausible signal is tried, and each attempt
+ * is checked with `blank` before it is accepted. A poll backs the events up
+ * because which of them fires, and in what order, is the part that differs
+ * between engines and between codecs on one engine.
  */
 function firstFrame(blob) {
   return new Promise(resolve => {
@@ -1037,27 +1067,51 @@ function firstFrame(blob) {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      clearInterval(poll);
+      // Let the decoder go before the element does. A page's worth of clips left
+      // paused mid-frame is a page's worth of decoders held open.
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
       URL.revokeObjectURL(url);
       resolve(value);
     };
     const timer = setTimeout(() => finish(null), CONFIG.mediaFrameMs);
 
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-    video.addEventListener('error', () => finish(null));
-    video.addEventListener('loadeddata', async () => {
+    const attempt = async () => {
+      if (done || !video.videoWidth || !video.videoHeight) return;
       try {
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        if (!canvas.width || !canvas.height) return finish(null);
         canvas.getContext('2d').drawImage(video, 0, 0);
+        // Blank means too early, not unplayable: leave the clip to the next
+        // signal, and to the timeout if no signal ever brings a frame.
+        if (blank(canvas)) return;
         finish(await createImageBitmap(canvas));
       } catch {
         finish(null);
       }
+    };
+    const poll = setInterval(attempt, 100);
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.addEventListener('error', () => finish(null));
+    video.addEventListener('loadedmetadata', () => {
+      // Muted playback is allowed without a gesture and is the one thing that
+      // reliably makes an engine composite frames. Where it is refused anyway, a
+      // seek off zero forces a single decode, which is all this needs.
+      const played = video.play();
+      played?.catch(() => {
+        try { video.currentTime = Math.min(0.1, (video.duration || 1) / 2); } catch { /* not seekable */ }
+      });
     });
+    video.addEventListener('loadeddata', attempt);
+    video.addEventListener('seeked', attempt);
+    video.addEventListener('timeupdate', attempt);
+    video.requestVideoFrameCallback?.(attempt);
     video.src = url;
   });
 }
@@ -1154,11 +1208,15 @@ export async function buildMediaAtlas(pois) {
     c.stroke();
 
     // A still frame is all a texture can hold. The badge is how the marker admits
-    // that, so nobody has to open a tooltip to find out something moves.
+    // that, so nobody has to open a tooltip to find out something moves. Centred
+    // and large, because at 44 px on a map the marker is read at a glance or not
+    // at all — a corner badge that size is a smudge. It does cover the middle of
+    // the picture, which is the trade: what the clip IS gets read from the frame
+    // around the badge, and the tooltip has the whole of it either way.
     if (poi.animated) {
-      const cx = x + CELL_PX - pad - side * 0.19;
-      const cy = y + CELL_PX - pad - side * 0.19;
-      const r0 = side * 0.15;
+      const cx = x + CELL_PX / 2;
+      const cy = y + CELL_PX / 2;
+      const r0 = side * 0.22;
       c.fillStyle = 'rgba(0,0,0,0.55)';
       c.beginPath();
       c.arc(cx, cy, r0, 0, Math.PI * 2);

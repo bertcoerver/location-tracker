@@ -542,6 +542,10 @@
   #news[data-more-right="true"]::after { opacity: 1; }
 
   .tip {
+    /* The height of the `by <name>` pill, and so the diameter of the round media
+       buttons that sit on the same photograph. Both are derived from it, so the
+       pill's cap and the discs share one radius by construction. */
+    --chip-h: calc(12px * 1.4 + 3px * 2);
     font: inherit;
     /* Opting back in: a tooltip is the one thing on screen with numbers in it
        somebody might want to copy. */
@@ -905,8 +909,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    /* A disc the size of the byline pill, so its radius is that pill's cap radius
+       and the two read as one set of chrome rather than two. `--chip-h` is `.by`'s
+       own height written out — 12px of text at 1.4, plus its 3px of padding twice
+       — declared once so the disc cannot drift away from the pill it matches. */
+    width: var(--chip-h);
+    height: var(--chip-h);
     padding: 0;
     border: 0;
     border-radius: 50%;
@@ -914,19 +922,26 @@
     -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
     color: #fff;
-    font: inherit;
-    font-size: 17px;
-    /* The figure sets `line-height: 0` to kill the image's descender gap, and a
-       glyph inherits it straight into a collapsed box. */
+    /* The figure sets `line-height: 0` to kill the image's descender gap, and the
+       button inherits it straight into a collapsed box. */
     line-height: 1;
     cursor: pointer;
   }
+  /* Sized here rather than in the markup, and `block` so the flexbox centres the
+     box exactly — an inline `<svg>` sits on the text baseline and carries the
+     descender gap under it, which is a pixel of drift on a 23px disc. */
+  .tip .mb svg { display: block; width: 16px; height: 16px; }
+  /* The disc is what you see; this is what you can hit. At the pill's size the
+     mark is the right weight on the card and the target is smaller than a
+     fingertip, so the target alone is grown — inside the button, so nothing
+     moves. */
+  .tip .mb::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; }
   .tip .mb:hover:not(:disabled) { background: rgba(0, 0, 0, 0.7); }
   /* The end of the run in that direction. Kept in place rather than removed: a
      button that vanishes moves the one beside it out from under the cursor that
      was about to press it. */
   .tip .mb:disabled { opacity: 0.25; cursor: default; }
-  .tip .expand { top: 8px; right: 8px; font-size: 15px; }
+  .tip .expand { top: 8px; right: 8px; }
 
   /* The byline on a crew member's photograph — top left, where a photograph's
      credit goes, and opposite the ⤢ so the two corners never argue.
@@ -947,15 +962,18 @@
     z-index: 1;
     top: 8px;
     left: 8px;
-    padding: 3px 9px;
+    height: var(--chip-h);
+    padding: 0 9px;
     border-radius: 999px;
     background: #fcfcfb;
     color: #0b0b0b;
     font-size: 12px;
     font-weight: 600;
-    /* The figure sets `line-height: 0` to kill the image's descender gap, and the
-       text would inherit it straight into a collapsed box — same trap as `.mb`. */
-    line-height: 1.4;
+    /* Two jobs at once: it centres the single line in a box whose height is now
+       stated, and the figure sets `line-height: 0` to kill the image's descender
+       gap, which the text would otherwise inherit straight into a collapsed box —
+       the same trap `.mb` steps over. */
+    line-height: var(--chip-h);
     white-space: nowrap;
     /* Long enough to be a name and no longer: the corner of a 340px card is not the
        place to discover somebody typed a sentence into the crew list. */

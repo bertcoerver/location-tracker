@@ -1224,6 +1224,27 @@ function capStat(icon, value) {
 }
 
 /**
+ * The controls' marks, drawn rather than typed.
+ *
+ * `‹`, `›` and `⤢` were the obvious thing and are wrong in both of the ways a
+ * character is wrong inside a small disc. Weight isn't ours to set: `font-weight`
+ * nudges a guillemet and leaves `⤢` exactly as it was, because the arrow comes
+ * from whichever font on the machine happens to have it and most carry one cut of
+ * it. And a character is centred by its BOX — side bearings included — so a
+ * chevron whose ink sits left of centre in the font sits left of centre in the
+ * button, which is the off-centre look rather than anything the flexbox did.
+ *
+ * A path has neither problem. Each of these is point-symmetric about the middle
+ * of its own viewBox, so centring the box centres the ink, and `stroke-width` is
+ * the weight, in the same units as the mark.
+ */
+const MEDIA_ICON = {
+  prev: 'M15 5.5 9 12l6 6.5',
+  next: 'M9 5.5 15 12l-6 6.5',
+  expand: 'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7'
+};
+
+/**
  * One of the controls laid over a pinned photograph.
  *
  * `data-act` is the whole interface between this file and the click handler:
@@ -1237,9 +1258,12 @@ function capStat(icon, value) {
  * no longer where you were about to press — and there is no way to tell "there is
  * nothing further this way" from "this viewer has no such control".
  */
-function mediaButton(act, glyph, label, enabled = true) {
+function mediaButton(act, label, enabled = true) {
+  const mark = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ` +
+    `stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">` +
+    `<path d="${MEDIA_ICON[act]}"/></svg>`;
   return `<button type="button" class="mb ${act}" data-act="${act}" ` +
-    `title="${label}" aria-label="${label}"${enabled ? '' : ' disabled'}>${glyph}</button>`;
+    `title="${label}" aria-label="${label}"${enabled ? '' : ' disabled'}>${mark}</button>`;
 }
 
 /**
@@ -1312,9 +1336,9 @@ export function mediaTooltipHtml(poi, origin = null, controls = null) {
   // card has no room that isn't photograph, and a strip of chrome below the image
   // would be the one edge the picture didn't reach.
   const buttons = !controls ? '' :
-    mediaButton('expand', '⤢', 'See it full size') +
-    mediaButton('prev', '‹', 'Previous photo', controls.prev) +
-    mediaButton('next', '›', 'Next photo', controls.next);
+    mediaButton('expand', 'See it full size') +
+    mediaButton('prev', 'Previous photo', controls.prev) +
+    mediaButton('next', 'Next photo', controls.next);
 
   // What somebody typed about the picture, if they typed anything — and the only
   // line on this card that isn't a measurement. It goes ABOVE the readings rather
