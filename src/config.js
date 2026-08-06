@@ -233,6 +233,16 @@ export const CONFIG = {
   // distance; a phone that drops to 30-minute pings when the battery fades
   // would otherwise silently halve how much history the model looks at.
   //
+  // Which forecaster answers, out of the registry in
+  // [predict-variants/index.js](./predict-variants/index.js); `?model=<name>`
+  // in the URL overrides it for one page load. `calibrated` — the stop budget
+  // plus the fatigue exponent, with the band floored at a fraction of the time
+  // remaining — won the backtest across all 31 recorded runs: on the 165 km
+  // Diagonale des Fous it moved the median finish error from −354 minutes to
+  // +54 and lifted the 80% band's real coverage from 14% to 57%, while leaving
+  // road marathons within a couple of minutes of what `classic` said.
+  predictModel: 'calibrated',
+  //
   // 15 km leaves a 20 km run very nearly evenly weighted — there isn't enough
   // of it for recency to mean much — while on a 160 km ultra the last ~45 km
   // carry most of the fit, which is the regime this was chosen for.

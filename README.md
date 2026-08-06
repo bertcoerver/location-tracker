@@ -1042,12 +1042,14 @@ poll that found no edits.
 Past the last ping the map used to say "Not reached yet" and stop. It now forecasts: hover any part
 of the course still ahead of the runner and the tooltip gives a time and a window for it.
 
-The model lives in [`src/predict.js`](src/predict.js) and is fitted from **one run's own pings and
-nothing else**. Nothing is shared between runs, cached across them, or seeded from them — a course is
-run differently by different people on different days, and borrowing yesterday's pace is how a
-forecast becomes confident and wrong.
+The forecasters live in [`src/predict-variants/`](src/predict-variants/), one file per model, and
+[`src/predict.js`](src/predict.js) dispatches to whichever one is active — `?model=<name>` in the URL
+for one page load, `predictModel` in [`src/config.js`](src/config.js) otherwise. Every model is
+fitted from **one run's own pings and nothing else**. Nothing is shared between runs, cached across
+them, or seeded from them — a course is run differently by different people on different days, and
+borrowing yesterday's pace is how a forecast becomes confident and wrong.
 
-### The model
+### The backbone: the classic regression
 
 Each pair of consecutive snapped pings is a **leg**, and leg duration is regressed on distance,
 ascent and descent, with no intercept:
@@ -1098,13 +1100,32 @@ The residual scatter is floored twice over (`predictMinSigmaMs`, `predictSigmaFl
 legs can be fitted almost perfectly by three coefficients, and a band claiming ten seconds of
 certainty an hour out would be the most misleading thing on the screen.
 
-### Known limitation
+### The models, and switching between them
 
-`flat` is **moving** pace. Time spent standing still widens the band, because it is real scatter, but
-it does not push the estimate later — so on a race with long aid-station stops the forecast will run
-optimistic. The fix would be a stoppage term rather than a tweak to any constant in `config.js`.
+The classic regression's known limitation was that `flat` is **moving** pace: time spent standing
+still widened the band but never pushed the estimate later, so on a race with long aid-station stops
+the forecast ran optimistic — by a margin that grew with distance, from a few percent of the time
+remaining on a marathon to over 30% on a 165 km ultra. The models in the registry
+([`src/predict-variants/index.js`](src/predict-variants/index.js)) are the stoppage-and-fatigue
+terms that comment always promised, each selectable with `?model=<name>`:
 
-The model was measured this way while it was being built, by a walk-forward backtest that fitted the
+- **`classic`** — the regression above, on its own.
+- **`blend`** — classic, drawn towards the run's stop-inclusive gross pace as the horizon grows.
+- **`stoprate`** — classic plus an explicit stop budget: the recency-weighted time per metre the fit
+  could not explain, phased in over the first couple of kilometres ahead.
+- **`fade`** — the stop budget plus a within-run Riegel exponent read from the run's own gross
+  halves, so a positive split slows the far forecast down further.
+- **`calibrated`** — `fade`'s estimate with the band floored at a fraction of the predicted time
+  remaining, sized so the 80% window means 80% again. **The default.**
+
+The ranking comes from [`prediction-diag`](../prediction-diag)'s walk-forward backtest over all 31
+recorded runs, tuned on two thirds of them and judged on the held-out third: on the 165 km Diagonale
+des Fous the median finish error went from −354 minutes under `classic` to +54 under `calibrated`,
+the 80% band's real coverage from 14% to 57%, and pooled across the holdout the beyond-8-hours bias
+moved from −32% of time remaining to −14% — while the road marathons stayed within a couple of
+minutes of what `classic` already said.
+
+The model was first measured while it was being built, by a walk-forward backtest that fitted the
 forecast for ping *i* on pings `0..i-1` only: mean absolute error **1.6 min** over the nine unseen
 pings of `test_3`, all nine inside the 80% band, and a finish predicted at 13:24 (13:16–13:33) against
 an actual 13:22. That code (`deriveForecastErrors`) has been **deleted** along with the tooltip row it

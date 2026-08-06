@@ -3,9 +3,14 @@ import assert from 'node:assert/strict';
 
 import { CONFIG } from '../src/config.js';
 import { buildCourse } from '../src/course.js';
+// The model-specific behaviour under test is the CLASSIC forecaster's, so the
+// fit and its predictions are imported straight from it; `positionAt` comes
+// from the dispatcher, which falls back to classic for a forecast no model
+// stamped. The dispatcher itself is covered in predict-variants.test.js.
+import { positionAt } from '../src/predict.js';
 import {
-  buildForecast, fitPace, legsOf, positionAt, predictAt
-} from '../src/predict.js';
+  buildForecast, fitPace, legsOf, predictAt
+} from '../src/predict-variants/classic.js';
 import { deriveStats } from '../src/stats.js';
 
 const LAT0 = 46.5;
