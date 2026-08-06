@@ -881,10 +881,12 @@ export function createProfile(root, {
    *
    * A selection with no `along` has no place on a chart of distance, so it can
    * never be grabbed here. That is a ping the snapper left alone: it has a
-   * position on the map and none on the course.
+   * position on the map and none on the course. A `fixed` one is marked here and
+   * still not draggable — a photograph's distance is a measurement, and the same
+   * gate holds on the map. See `Selection` in [pin.js](pin.js).
    */
   function grabDistance(clientX) {
-    if (!visible() || selection?.along == null) return null;
+    if (!visible() || selection?.along == null || selection.fixed) return null;
     const rect = canvas.getBoundingClientRect();
     const scale = scaleFor(course, rect.width, rect.height);
     return Math.abs(clientX - rect.left - scale.x(selection.along));

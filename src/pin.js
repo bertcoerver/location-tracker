@@ -24,6 +24,10 @@
  * @property {string} [media] the filename, on a selection that is a photograph or
  *   a clip. It is what `same` compares such a selection by, and what lets the
  *   card's own buttons find the next one along.
+ * @property {boolean} [fixed] a mark that has a distance and still may not be
+ *   dragged along the course — a photograph, whose place is a measurement rather
+ *   than a guess to be corrected. Kept apart from a null `along`, which says the
+ *   different thing that there is no distance to mark at all.
  */
 
 /**

@@ -204,9 +204,18 @@ export function createMap(container, {
     // has every field the branch below tests for and would be described as an
     // ordinary fix — losing the picture, which is the whole of what it is.
     //
-    // `along: null` like the sun's, and for the same reason: pinnable, not
-    // draggable. Sliding a photograph down the course would be sliding a
-    // photograph.
+    // Pinnable, not draggable: sliding a photograph down the course would be
+    // sliding a photograph. That is `fixed` and not, as it once was, an `along` of
+    // null — the two are different claims, and using the second to say the first
+    // cost this mark its place on the strip. A photograph's distance is a real
+    // measurement — `applyMediaSnaps` takes it from the snapper, `traceAt` from
+    // the trace — and the crosshair is how a click on the map says WHERE on the
+    // climb this was taken. It stays null only for a crew photograph, which has no
+    // distance along the runner's course to report.
+    //
+    // The sun's branch above still says null and still means it: a sun mark is
+    // drawn on the strip whether or not anything is selected, so it needs no
+    // crosshair to be found there.
     if (object?.kind === 'media') {
       // Where it sits in the run's own order — which is `placeMedia`'s: oldest
       // first, the timeless ones at the end. That is the sequence the `‹` and `›`
@@ -223,7 +232,8 @@ export function createMap(container, {
         media: object.name,
         lat: object.lat,
         lon: object.lon,
-        along: null
+        along: object.along ?? null,
+        fixed: true
       };
     }
 
@@ -344,15 +354,17 @@ export function createMap(container, {
    * How far, in pixels, the pointer is from the pinned point — or null when
    * there is nothing to be near.
    *
-   * A selection with no `along` is not draggable: it is a ping the snapper left
-   * alone, so it has a place on the map but none on the course, and there is no
-   * line to slide it down.
+   * Two selections are not draggable. One with no `along` has no line to slide
+   * down: it is a ping the snapper left alone, so it has a place on the map and
+   * none on the course. One that is `fixed` has a place on both and is still not
+   * ours to move — a photograph was taken where it was taken, and the drag would
+   * be editing the measurement rather than reading it.
    *
    * @param {number} x pointer position relative to the container, which deck's
    * @param {number} y picking info reports directly and a raw event does not.
    */
   function grabDistance(x, y) {
-    if (!course || selection?.along == null) return null;
+    if (!course || selection?.along == null || selection.fixed) return null;
     const { viewport: view } = viewport();
     if (!view) return null;
     const [px, py] = view.project([selection.lon, selection.lat]);
@@ -411,6 +423,12 @@ export function createMap(container, {
       // A ping already knows where it sits on the course; no need to re-solve
       // geometry that snap.js worked out with the benefit of history.
       if (info.object?.snap) return onCourseHover(info.object.snap.along);
+      // And a photograph knows it the same way, off the snapper or off the trace.
+      // A crew photograph's is null and falls through to the clear below, which is
+      // right: it has no distance along this course to point at.
+      if (info.object?.kind === 'media' && info.object.along != null) {
+        return onCourseHover(info.object.along);
+      }
       // `course-hit` rather than `course`: the drawn route is 3 px and all but
       // unhittable, so what's pickable is a wide transparent band over it.
       if (info.layer?.id === 'course-hit' && info.coordinate) {
