@@ -564,15 +564,39 @@ async function poll() {
       ? 'Too many pings for one listing — older ones are missing. See the README.'
       : courseError);
     ui.setState('ok');
+    // The listing was actually read, which is the only thing that entitles the
+    // panel to say a missing ping is the phone's fault rather than ours. Last, so
+    // it records a pass that got all the way through. See `pingNote`.
+    ui.setContact();
   } catch (err) {
     if (err instanceof RateLimitError) {
       backoffUntil = err.retryAt;
       ui.setError(`GitHub rate limit reached — retrying at ${fmtClock(err.retryAt)}`);
+    } else if (offlineError(err)) {
+      ui.setError('No connection to GitHub — showing the last data received.');
     } else {
       ui.setError(err.message);
     }
     ui.setState('error');
   }
+}
+
+/**
+ * Is this the page's own connection failing, rather than GitHub saying something?
+ *
+ * `fetch` rejects with a TypeError for every network-level failure there is — no
+ * route, DNS, a captive portal, TLS, the wifi dropping mid-request — and the
+ * message inside it ("Failed to fetch", "Load failed", "NetworkError when
+ * attempting to fetch resource") is the browser's wording for its own plumbing and
+ * means nothing to anybody watching a race. Every HTTP answer we don't like is
+ * thrown as a plain Error with a status in it, so the two never overlap.
+ *
+ * `navigator.onLine` is checked too, and only as a second way in: it is true
+ * whenever there is a network interface at all, so it can miss, but when it is
+ * false it is right.
+ */
+function offlineError(err) {
+  return err instanceof TypeError || !navigator.onLine;
 }
 
 /**
@@ -653,5 +677,14 @@ setInterval(() => { ui.tickClock(); profile.tickForecast(); map.tickForecast(); 
 
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNow(); });
 addEventListener('focus', refreshNow);
+
+// The connection coming and going. Neither of these is load-bearing — the panel
+// reads `navigator.onLine` for itself on its 15-second repaint, and the poll timer
+// keeps its own schedule regardless — they are both about being PROMPT, which is
+// the whole point of a line that says the silence is yours rather than the
+// runner's. Coming back is worth a poll on the spot: what you missed is exactly
+// what you opened the page for.
+addEventListener('online', refreshNow);
+addEventListener('offline', () => ui.refreshRelativeTime());
 
 requestAnimationFrame(frame);

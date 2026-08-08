@@ -158,6 +158,31 @@ The battery itself is not shown here. It is what *decides* that number rather th
 on, and "next ~16m" is already the useful half of the answer; the figure is still in each ping's own
 tooltip for anyone who wants it.
 
+`overdue` is a claim about the **phone**: the slot came and went and nothing was committed. The page
+may only make it if it has actually looked since the slot passed — and a late ping has two quite
+different causes, one of them at the reader's end. So when nothing has read the listing since the
+ping was due, the line says whose silence it is instead:
+
+```
+● Last ping 34m ago · you are offline
+● Last ping 34m ago · not checked for 30m
+```
+
+The first is `navigator.onLine` going false, which is only ever used to *sharpen the wording*: it is
+true whenever there is a network interface at all, so a captive portal, a dead cell and a phone in a
+valley all satisfy it. The test that decides the message is the second one — when the page last
+successfully read the listing, against when the ping was due. Everything after that read is
+unobserved, so a ping due after it is a ping nobody has looked for, whatever the browser believes
+about its wifi. It covers a spent rate limit and a GitHub outage for free, and it says how blind the
+page is rather than merely that it is.
+
+A ping only *just* late still reads `overdue`: the poll for it is scheduled 30 s past the moment the
+countdown reaches zero and the refresh throttle may hold it another 30 s, so a page doing everything
+right is briefly there with nothing to report. Past that window, silence from our own side stops
+being ordinary scheduling. A failed poll also rewrites the error line at the foot of the panel —
+`fetch` rejects with a `TypeError` for every network-level failure there is, and "Failed to fetch" is
+the browser's wording for its own plumbing, not something to show anybody watching a race.
+
 Once the phone says it is done, the line says that instead:
 
 ```

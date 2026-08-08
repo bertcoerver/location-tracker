@@ -10,7 +10,7 @@ import { buildCourse } from '../src/course.js';
 import { isLive } from '../src/github.js';
 import { buildForecast, predictAt, stillRunning } from '../src/predict.js';
 import { deriveStats } from '../src/stats.js';
-import { clockReading, courseFigures } from '../src/ui.js';
+import { clockReading, courseFigures, pingNote } from '../src/ui.js';
 import { fmtStamp } from '../src/util.js';
 
 const MINUTE = 60000;
@@ -267,4 +267,58 @@ test('nothing known is an empty line, which the panel hides', () => {
   // A course with no climb worth reporting says its distance and stops, rather than
   // claiming "0 m climb" — which reads as a measurement rather than as an absence.
   assert.equal(courseFigures({}, flatCourse()).includes('climb'), false);
+});
+
+// --- whose silence is it? -----------------------------------------------------
+//
+// The fourth pure decision in the panel, and the one that stops it blaming a
+// runner for a browser's dead wifi. "Overdue" is a claim about the PHONE, and the
+// page may only make it if it has actually looked since the ping was due.
+
+const NOW = GUN + 3 * 3600000;
+
+/** The defaults of a healthy page watching a live run: online, just polled. */
+const note = over => pingNote({ due: -10 * MINUTE, now: NOW, online: true, contact: NOW, ...over });
+
+test('nothing to predict from says nothing at all', () => {
+  assert.equal(note({ due: null }), '');
+});
+
+test('a ping still to come counts down, whatever the connection is doing', () => {
+  // An expectation is arithmetic on the last ping's battery — it stays true while
+  // offline, it just may not be observable. Nothing here is a claim about a silence.
+  assert.equal(note({ due: 16 * MINUTE }), ' · next ~16m');
+  assert.equal(note({ due: 16 * MINUTE, online: false, contact: null }), ' · next ~16m');
+});
+
+test('looked after it was due and found nothing: the phone is late', () => {
+  assert.equal(note({ due: -10 * MINUTE, contact: NOW - MINUTE }), ' · overdue');
+});
+
+test('a ping only just late is still overdue, not a connection problem', () => {
+  // The poll for it is scheduled 30 s past this and the throttle may hold it another
+  // 30 s, so a page doing everything right is briefly here with nothing to report.
+  assert.equal(note({ due: -20000, contact: NOW - 10 * MINUTE }), ' · overdue');
+});
+
+test('nothing has looked since it was due, and the browser says why', () => {
+  assert.deepEqual([
+    note({ due: -10 * MINUTE, contact: NOW - 30 * MINUTE, online: false }),
+    note({ due: -10 * MINUTE, contact: null, online: false })
+  ], [' · you are offline', ' · you are offline']);
+});
+
+test('online but unheard from: say how blind we are, and never "overdue"', () => {
+  // `navigator.onLine` is true whenever there is a network interface at all — a
+  // captive portal, a dead cell and a spent rate limit all satisfy it — so the
+  // signal that counts is that we asked and got nothing back.
+  assert.equal(note({ due: -10 * MINUTE, contact: NOW - 30 * MINUTE }), ' · not checked for 30m');
+  assert.equal(note({ due: -10 * MINUTE, contact: null }), ' · not checked yet');
+});
+
+test('a poll that lands while a ping is late puts the blame back on the phone', () => {
+  // The whole loop: blind, then a successful read, and the reading changes hands.
+  const blind = { due: -40 * MINUTE, now: NOW, contact: NOW - 45 * MINUTE };
+  assert.equal(pingNote(blind), ' · not checked for 45m');
+  assert.equal(pingNote({ ...blind, contact: NOW }), ' · overdue');
 });

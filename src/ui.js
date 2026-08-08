@@ -1,5 +1,6 @@
 // The status panel and the run picker — all DOM, no map, no network.
 
+import { CONFIG } from './config.js';
 import { gainAt } from './course.js';
 import { byRecency, isLive } from './github.js';
 import { fmtDistance, metres } from './layers.js';
@@ -48,6 +49,65 @@ export function courseFigures(settings, course) {
   if (Number.isFinite(distance) && distance > 0) parts.push(fmtDistance(distance));
   if (Number.isFinite(ascent) && ascent > 0) parts.push(`${metres(ascent)} climb`);
   return parts.join(' · ');
+}
+
+/**
+ * How long after a ping was due before the PAGE's silence becomes the story.
+ *
+ * `nextPollMs` sleeps until `pollGuardMs` past the moment `dueInMs` counts down
+ * to, and the refresh throttle can hold that poll back by up to `minRefreshMs`.
+ * So a page doing everything right can be this far past a due ping without having
+ * looked yet, and anything inside this window is ordinary scheduling rather than a
+ * connection worth mentioning.
+ */
+const BLIND_MS = CONFIG.pollGuardMs + CONFIG.minRefreshMs;
+
+/**
+ * The " · next ~16m" half of the ticker — and, when a ping is late, whose silence
+ * it actually is.
+ *
+ * "Overdue" is a claim about the PHONE: it says the slot came and went and nothing
+ * was committed. The page can only make that claim if it has actually looked since
+ * the slot passed. When it hasn't — the visitor's connection dropped, GitHub is
+ * unreachable, the rate limit is spent, the tab was asleep — the phone may well
+ * have pinged on time and the page simply cannot see it, and blaming a runner for
+ * a browser's dead wifi is the one thing this line must not do.
+ *
+ * Hence `contact`: the last time the listing was actually read. Everything after
+ * it is unobserved, so a ping due after it is a ping nobody has looked for.
+ *
+ * `navigator.onLine` only sharpens the wording, and is deliberately not the test.
+ * It is true whenever there is a network interface at all, which a captive portal,
+ * a dead cell, and a phone in a valley all satisfy — the honest signal is that we
+ * asked and got nothing back, which is what a stale `contact` records.
+ *
+ * Pure and exported for the same reason `clockReading` is: it is a decision with
+ * several ways out that turns on a clock and a connection, neither of which can be
+ * arranged in a browser on demand.
+ *
+ * @param {number|null} due   from `dueInMs` — negative once the ping is late,
+ *   null when there is nothing to predict from.
+ * @param {number}      now
+ * @param {boolean}     online what the browser says about having a network.
+ * @param {number|null} contact when the page last successfully read the listing,
+ *   or null if it never has this session.
+ * @returns {string} '' to say nothing at all.
+ */
+export function pingNote({ due, now, online = true, contact = null }) {
+  if (due === null) return '';
+  if (due > 0) return ` · next ~${coarse(due)}`;
+
+  // When the ping was due. `due` is negative here, so this is in the past.
+  const dueAt = now + due;
+  // Looked since it was due and found nothing: the phone really is late.
+  if (contact !== null && contact >= dueAt) return ' · overdue';
+  // Not looked yet, but not late enough for that to mean anything — see BLIND_MS.
+  if (now - dueAt <= BLIND_MS) return ' · overdue';
+
+  if (!online) return ' · you are offline';
+  return contact === null
+    ? ' · not checked yet'
+    : ` · not checked for ${coarse(now - contact)}`;
 }
 
 /**
@@ -187,6 +247,14 @@ export function createUi({ onRecenter, onRunPick }) {
   // again the moment the run changes — a distance left over from the last race is
   // worse than no distance at all.
   let course = null;
+  // When the page last successfully read the listing — see `pingNote`, which is
+  // the only thing that reads it. Null until the first poll comes back, which is
+  // its own answer: nothing has been confirmed this session.
+  //
+  // Set from outside rather than derived from `setState('ok')`: a run switch ends
+  // in 'ok' too, and it is served from disk and the CDN without the listing being
+  // asked about at all.
+  let contact = null;
 
   /** This run's own settings, or an empty object. Never null, so `?.` isn't needed
    *  at a dozen call sites for a thing that is always a record or nothing. */
@@ -240,6 +308,7 @@ export function createUi({ onRecenter, onRunPick }) {
    *
    *   ● Last ping 1m ago · next ~16m
    *   ● Last ping 34m ago · overdue
+   *   ● Last ping 34m ago · you are offline
    *   ● Finished 12m ago
    */
   function renderTicker(state) {
@@ -277,14 +346,26 @@ export function createUi({ onRecenter, onRunPick }) {
    * something to act on, and "next ~16m" is already the useful half of that
    * answer; the figure is still in each ping's own tooltip for anyone who wants
    * it. See `dueInMs` in [schedule.js](./schedule.js).
+   *
+   * Every decision past that is in [`pingNote`](#pingNote), including the one this
+   * line used to get wrong: whether a late ping is the phone's silence or the
+   * page's own.
    */
   function expectation(last) {
     if (!live()) return '';
-    // This run's own ping curve when its settings named one, so a race tracked by a
-    // differently-configured phone is not counted down against another phone's.
-    const due = dueInMs(last, Date.now(), mine().ping);
-    if (due === null) return '';
-    return due > 0 ? ` · next ~${coarse(due)}` : ' · overdue';
+    const now = Date.now();
+    return pingNote({
+      // This run's own ping curve when its settings named one, so a race tracked by
+      // a differently-configured phone is not counted down against another phone's.
+      due: dueInMs(last, now, mine().ping),
+      now,
+      // Read at render time, never stored. It changes without this module being
+      // told, and the 15-second repaint is what picks it up; the `online`/`offline`
+      // events in main.js only make it prompt. Absent in a non-browser — the panel
+      // is DOM-bound and can't run there, but the default keeps it a browser detail.
+      online: navigator.onLine !== false,
+      contact
+    });
   }
 
   /**
@@ -559,6 +640,19 @@ export function createUi({ onRecenter, onRunPick }) {
     setState(state) {
       document.body.dataset.state = state;
       renderTicker(state);
+    },
+
+    /**
+     * The page just read the listing successfully. Only a real answer from GitHub
+     * counts — not an attempt, not a 429, not a paint from cache — because the one
+     * thing this timestamp is used for is deciding whether the panel has looked
+     * recently enough to call a missing ping the phone's fault. See `pingNote`.
+     *
+     * @param {number} [at] when, defaulting to now.
+     */
+    setContact(at = Date.now()) {
+      contact = at;
+      renderTicker(document.body.dataset.state);
     },
 
     setError(message) {
