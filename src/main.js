@@ -296,6 +296,9 @@ function show(cache) {
   profile.setPoints(points);
   profile.setForecast(forecast);
   profile.setSun(sun);
+  // The same POIs the map was just given. No atlas goes with them: the strip has
+  // no room for a thumbnail and draws one camera mark for every photograph.
+  profile.setMedia(pois);
   profile.scrollToLatest();
   ui.setPoints(points);
   ui.setForecast(forecast);
@@ -435,6 +438,7 @@ async function reconcile() {
     map.setMedia([]);
     map.setMediaAtlas(null);
     map.setCourse(null);
+    profile.setMedia([]);
     profile.setCourse(null);
     ui.setCourse(null);
     ui.setRun(run);

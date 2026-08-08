@@ -9,9 +9,10 @@
 // arithmetic is tested without a canvas anywhere near it.
 
 import { CONFIG } from './config.js';
-import { accent, course as courseColor, surface } from './colors.js';
+import { accent, course as courseColor, crew as crewColor, surface } from './colors.js';
 import { pointAt } from './course.js';
-import { hoverTooltipHtml, sunGlyph, tooltipHtml } from './layers.js';
+import { glyph, inkOf, loadGlyphs } from './glyphs.js';
+import { hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
 import { latestOf, posOf } from './points.js';
 import { positionAt } from './predict.js';
@@ -51,6 +52,16 @@ const TIP_GRACE_MS = 320;
  * tapping it again.
  */
 const DRAG_SLOP_PX = 4;
+
+/**
+ * How big a drawn mark is on the strip, a side.
+ *
+ * Smaller than the map's, and that is the strip all over: 112 px tall with the
+ * axis and the waypoint names already in it, so a mark has to be readable at a
+ * glance and then get out of the way. No halo on any of them — this canvas owns
+ * its own background, unlike the map, which sits on whatever imagery it is given.
+ */
+const MARK_PX = 15;
 
 /**
  * How long after a tap has been dealt with a `click` is still assumed to belong
@@ -367,6 +378,11 @@ export function createProfile(root, {
   // Sunrise and sunset, from `sunPois` — the same array the map draws, so a mark
   // here and a mark there are the same moment.
   let sun = [];
+  // Photographs and clips, from `placeMedia` — again the very array the map is
+  // given. The map draws each one's own thumbnail; there is no room for a picture
+  // on a 112 px strip, so here they are one repeated camera mark saying only
+  // "there is a photograph from this point of the course".
+  let media = [];
   let hover = null;      // distance in metres under the cursor, or null
   // A pending dismissal of the hover tooltip, from the cursor having left the strip.
   // See `leaveSoon`.
@@ -490,6 +506,9 @@ export function createProfile(root, {
     drawAxis(scale);
     drawWaypoints(scale);
     drawSun(scale);
+    // After the sun and before the crosshair: a camera sits on the terrain, so it
+    // is part of the picture the crosshair and the pings are read against.
+    drawMedia(scale, ridge);
     drawHover(scale, scale.floor, ridge);
     drawForecast(scale, ridge);
     drawPoints(scale);
@@ -708,14 +727,15 @@ export function createProfile(root, {
   /**
    * Sunrise and sunset, at the distance the run had reached when they happened.
    *
-   * A tick like a waypoint's, and the glyph on it — in a band of its own just under
+   * A tick like a waypoint's, and the mark on it — in a band of its own just under
    * the waypoint names rather than among them. Two labels of different kinds
    * competing for one row is how the collision rule above ends up dropping the
    * interesting one, and there was no need: nothing else uses this strip of pixels.
    *
    * No time beside it and no tooltip on it, exactly as a waypoint here has a tick
-   * and no tooltip. The glyph is unambiguous — that is why the pair was chosen —
-   * and the map is where a mark is asked what else it knows.
+   * and no tooltip. The drawing is unambiguous — a sun rising and a moon rising
+   * are not the same picture — and the map is where a mark is asked what else it
+   * knows.
    *
    * Marks with no distance are skipped: an axis of distance along the course has
    * nowhere to put a moment that happened off it.
@@ -725,17 +745,7 @@ export function createProfile(root, {
 
     const line = courseColor();
     ctx.strokeStyle = `rgba(${line.join(',')}, 0.35)`;
-    // Set even though a colour emoji ignores it — a bitmap glyph carries its own
-    // colours. It is here for the platform that has neither emoji font and draws a
-    // missing-glyph box instead, which would otherwise come out in whatever ink the
-    // last thing drawn happened to leave behind.
-    ctx.fillStyle = `rgba(${line.join(',')}, 0.9)`;
     ctx.lineWidth = 1;
-    // Emoji fonts first: this is one glyph and no lettering, and the fallback is
-    // only there so a platform with neither draws its own box rather than nothing.
-    ctx.font = '13px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
 
     for (const poi of sun) {
       if (poi.along === null || poi.along === undefined) continue;
@@ -745,8 +755,81 @@ export function createProfile(root, {
       ctx.moveTo(x, PAD_TOP);
       ctx.lineTo(x, scale.floor);
       ctx.stroke();
-      ctx.fillText(sunGlyph(poi.event), x, PAD_TOP);
+      // Centred on its own tick and hanging off the top of the plot, which is the
+      // band `PAD_TOP` was reserved for.
+      stamp(poi.event, inkOf(line), x, PAD_TOP + MARK_PX / 2);
     }
+  }
+
+  /**
+   * The photographs, at the distance along the course each one was taken.
+   *
+   * On the map a photograph is its own thumbnail — the one mark on this page that
+   * shows you what it is without being asked. There is no room for that here, so
+   * the strip gets a camera instead, and its job is smaller and different: it says
+   * that this climb, this descent, this stretch of the course is one somebody has
+   * a picture of, and it says it while you are reading the profile rather than the
+   * map.
+   *
+   * Sat ON the terrain rather than in the sun's band at the top, and lifted just
+   * clear of it with a stem down to the line — the same idiom the map uses to keep
+   * a 44 px thumbnail from covering the route it belongs to. A photograph is about
+   * a PLACE on the course; a sunrise is about a moment that happened to fall
+   * somewhere on it, and the two bands keep that difference visible.
+   *
+   * Coloured by where the position came from, exactly as the map's anchor dots are:
+   * the accent for a file that carried its own GPS, the course purple for one
+   * placed between the pings either side, magenta for a crew member's. Reserving
+   * the accent for real readings is what stops an interpolation from looking like
+   * evidence — and a mark that is one colour here and another there would undo it.
+   *
+   * A photo with no distance — a crew shot from off the route — has nowhere to go
+   * on an axis of distance, and is left to the map.
+   */
+  function drawMedia(scale, ridge) {
+    if (!media.length) return;
+
+    const measured = accent();
+    const inferred = courseColor();
+    const theirs = crewColor();
+
+    for (const poi of media) {
+      if (poi.along === null || poi.along === undefined) continue;
+
+      const rgb =
+        poi.source === 'exif' ? measured :
+        poi.source === 'crew' ? theirs : inferred;
+
+      const x = Math.round(scale.x(poi.along)) + 0.5;
+      // The DRAWN skyline, so the stem ends on the line rather than near it —
+      // see `ridgeAt`.
+      const ground = scale.y(ridgeAt(ridge, scale, poi.along));
+      // Clamped into the plot: a picture taken on the highest point of the course
+      // would otherwise float off the top of a 112 px strip.
+      const centre = Math.max(PAD_TOP + MARK_PX / 2, ground - MARK_PX / 2 - 3);
+
+      ctx.strokeStyle = `rgba(${rgb.join(',')}, 0.55)`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, centre);
+      ctx.lineTo(x, ground);
+      ctx.stroke();
+
+      stamp('photo', inkOf(rgb), x, centre);
+    }
+  }
+
+  /**
+   * One drawn mark, centred on a point.
+   *
+   * Silently nothing until the SVGs have loaded — `loadGlyphs` redraws when they
+   * have, so the miss lasts one paint. Everything around a mark is drawn from the
+   * data alone and is on screen already; this is the decoration arriving late.
+   */
+  function stamp(name, ink, x, y) {
+    const mark = glyph(name, ink);
+    if (!mark) return;
+    ctx.drawImage(mark, x - MARK_PX / 2, y - MARK_PX / 2, MARK_PX, MARK_PX);
   }
 
   /**
@@ -1092,6 +1175,10 @@ export function createProfile(root, {
 
   addEventListener('resize', sync);
 
+  // The sun and camera marks are SVG files and land a moment after the first
+  // paint. One redraw when they do — see `stamp`, which draws nothing until then.
+  loadGlyphs().then(draw);
+
   return {
     /** @param {object|null} next the run's course, or null when it has none. */
     setCourse(next) {
@@ -1120,6 +1207,15 @@ export function createProfile(root, {
      */
     setSun(next) {
       sun = next;
+      draw();
+    },
+
+    /**
+     * The run's photographs, from `placeMedia` — the same array the map is given,
+     * so a picture is at one distance along the course rather than at two.
+     */
+    setMedia(next) {
+      media = next;
       draw();
     },
 

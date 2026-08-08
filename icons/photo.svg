@@ -1,0 +1,19 @@
+<!--
+  A photograph, for the height strip.
+
+  Only the strip uses this. The map draws the picture ITSELF — a thumbnail says
+  which photograph without anybody having to click it — but the strip is 112 px
+  tall and has no room to show one, so there it is this instead: a mark that says
+  a picture was taken at this distance, and go to the map to see it.
+
+  One ink, tinted on the way to the screen. See sunrise.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     color="#000" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- The body, with the viewfinder hump over the lens. -->
+  <path d="M3.8 7.6h2.9l1.5-2.4h7.6l1.5 2.4h2.9A1.8 1.8 0 0 1 22 9.4v8.8a1.8 1.8 0
+           0 1-1.8 1.8H3.8A1.8 1.8 0 0 1 2 18.2V9.4a1.8 1.8 0 0 1 1.8-1.8Z"/>
+  <!-- The lens. -->
+  <circle cx="12" cy="13.8" r="3.5"/>
+</svg>

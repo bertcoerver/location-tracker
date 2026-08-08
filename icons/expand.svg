@@ -1,0 +1,13 @@
+<!--
+  The "open this photograph full screen" control: two corners pulling apart.
+
+  Inlined rather than rasterised, so no `color` — see prev.svg.
+
+  This replaced `⤢`, which came from whichever font on the machine happened to
+  carry it and so arrived at a different weight on every one of them.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"
+     fill="none" stroke="currentColor" stroke-width="2.6"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>
+</svg>

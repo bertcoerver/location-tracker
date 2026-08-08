@@ -7,6 +7,7 @@ import {
   prefersDark
 } from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
+import { CELL_PX, glyphAtlas, inkOf, inlineGlyph, INSET_PX } from './glyphs.js';
 import { isLive } from './github.js';
 import { stillRunning } from './predict.js';
 import { interpolateAt, originOf } from './stats.js';
@@ -268,15 +269,20 @@ function waypointName(w) {
 /**
  * Sunrise and sunset, marked where the run was when they happened.
  *
- * Three layers per mark, and the split between them is forced rather than chosen —
- * see `sunAtlas` for the measurement behind it. The dot is what a cursor picks and
- * what carries the tooltip, the glyph is an `IconLayer` because deck's text
- * pipeline destroys a colour emoji, and the time is a `TextLayer` because deck's
- * text pipeline is very good at digits.
+ * Two layers per mark. The dot is what a cursor picks and what carries the
+ * tooltip; the icon is a picture of the moment, and is not pickable — like the
+ * waypoint labels, a mark whose label answers a different hover is a bug.
+ *
+ * There used to be a third layer with the time typeset beside the icon, and it is
+ * gone. Two marks a night, each with digits hanging off it, is a lot of furniture
+ * on a route for a fact nobody reads off the map anyway — the tooltip says the
+ * time to the minute, and says the date and the race clock with it. What the mark
+ * has to say from across the screen is only "here is where the light changed",
+ * and the drawing says that on its own.
  *
  * Drawn in the course's colour rather than the accent: these are annotations on
  * the route, in the same idiom as its waypoints, and the accent on this page
- * belongs to the runner. The glyph supplies the only colour they need anyway.
+ * belongs to the runner.
  *
  * @param {Array} pois from [`sunPois`](sun.js).
  */
@@ -285,7 +291,7 @@ export function sunLayers(pois) {
 
   const line = courseColor();
   const ring = surface();
-  const { atlas, mapping } = sunAtlas();
+  const marks = sunAtlas();
 
   return [
     new deck.ScatterplotLayer({
@@ -305,90 +311,45 @@ export function sunLayers(pois) {
       getFillColor: [...line, 255]
     }),
 
-    new deck.IconLayer({
+    // Nothing to draw until the drawings have loaded, which is a frame or two
+    // after the first paint. The dot above is already there and already carries
+    // the tooltip, so what a visitor sees in the meantime is a mark with no
+    // picture on it yet rather than a missing mark.
+    ...(marks ? [new deck.IconLayer({
       id: 'sun-glyph',
       // Not pickable, like the waypoint labels: the dot underneath owns the
       // tooltip, and a mark whose label answers a different hover is a bug.
       data: pois,
-      iconAtlas: atlas,
-      iconMapping: mapping,
+      iconAtlas: marks.atlas,
+      iconMapping: marks.mapping,
       getIcon: p => p.event,
       getPosition: p => [p.lon, p.lat],
-      getSize: 19,
+      getSize: SUN_PX,
       sizeUnits: 'pixels',
-      // Up and to the left of the dot, so the glyph and the time together sit
-      // centred above it — the place a waypoint puts its name.
-      getPixelOffset: [-19, -19]
-    }),
-
-    new deck.TextLayer({
-      id: 'sun-time',
-      data: pois,
-      getPosition: p => [p.lon, p.lat],
-      getText: p => fmtHm(p.t),
-      getSize: 12,
-      sizeUnits: 'pixels',
-      getPixelOffset: [-6, -19],
-      getTextAnchor: 'start',
-      getAlignmentBaseline: 'center',
-      getColor: [...line, 255],
-      // The same halo as the waypoint labels and for the same reason — the
-      // basemap under it is whatever it happens to be. This is the half of the
-      // label deck CAN typeset properly, so it gets the treatment.
-      fontSettings: { sdf: true, radius: 12, cutoff: 0.25 },
-      outlineWidth: 0.3,
-      outlineColor: [...ring, 235]
-    })
+      // Centred over the dot — where a waypoint puts its name — rather than
+      // shouldered to one side of it, which is what it had to be back when a
+      // time was typeset alongside.
+      getPixelOffset: [0, -SUN_PX / 2 - 5],
+      // The atlas is null until the SVGs load and then never changes again, so
+      // this is one rebuild in the life of the page.
+      updateTriggers: { getIcon: marks }
+    })] : [])
   ];
 }
 
-/** Rasterised at this many pixels a side, which is headroom over the 19 px it is
- *  drawn at on a display with twice the density. */
-const GLYPH_PX = 96;
+/** How big a sun mark is drawn, in whole cells — see `CELL_PX` for why the
+ *  drawing inside one comes out a little smaller than this. */
+const SUN_PX = 23;
 
-/** Built once and kept, because it never changes: the glyphs are fixed and the
- *  atlas has no colour of its own to follow the page's scheme with. */
-let glyphAtlas = null;
+/** Built once and kept: the palette is read once per page too, so there is no
+ *  colour in here that can change under it. Not memoised until it EXISTS, so the
+ *  paints before the drawings land don't cache their own absence. */
+let sunAtlasMemo = null;
 
-/**
- * The two glyphs, drawn into a canvas for an `IconLayer` to sample.
- *
- * This exists because deck.gl 9.3.7 cannot draw a colour emoji as TEXT. Measured
- * rather than assumed: with `sdf: true` — what the waypoint labels use — and with
- * `sdf: false` alike, a `TextLayer` renders 🌅 as a solid filled square, while the
- * digits beside it come out perfectly. Its font atlas keeps each glyph's coverage
- * and discards its colour, which is exactly right for lettering and fatal for an
- * emoji, whose entire content is colour.
- *
- * A 2D canvas has no such trouble — the same call that fails inside deck succeeds
- * here — so the rasterising happens in our own canvas and arrives as an icon,
- * where `mask: false` tells deck to sample the texture as it is rather than tinting
- * it. Which is also why the time is a separate `TextLayer`: each half of the label
- * goes through the pipeline that can render it.
- *
- * Lazy, and never called from node: the tooltip half of this file is unit-tested
- * without a DOM, and `document` does not exist there.
- */
+/** The two marks as one texture. Null until `loadGlyphs` has settled. */
 function sunAtlas() {
-  if (glyphAtlas) return glyphAtlas;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = GLYPH_PX * 2;
-  canvas.height = GLYPH_PX;
-
-  const c = canvas.getContext('2d');
-  // Named emoji fonts first and a plain sans-serif last, so a platform with
-  // neither draws its own missing-glyph box rather than nothing at all.
-  c.font = `${Math.round(GLYPH_PX * 0.8)}px "Apple Color Emoji", "Segoe UI Emoji", ` +
-    '"Noto Color Emoji", ui-sans-serif, sans-serif';
-  c.textAlign = 'center';
-  c.textBaseline = 'middle';
-  c.fillText(ICON.sunrise, GLYPH_PX / 2, GLYPH_PX / 2);
-  c.fillText(ICON.sunset, GLYPH_PX * 1.5, GLYPH_PX / 2);
-
-  const cell = x => ({ x, y: 0, width: GLYPH_PX, height: GLYPH_PX, mask: false });
-  glyphAtlas = { atlas: canvas, mapping: { sunrise: cell(0), sunset: cell(GLYPH_PX) } };
-  return glyphAtlas;
+  return sunAtlasMemo ??=
+    glyphAtlas(['sunrise', 'sunset'], inkOf(courseColor()), inkOf(surface()));
 }
 
 /**
@@ -715,108 +676,60 @@ export function pointLayers(all, pulse, course = null, forecast = null) {
     // one word the dot cannot say on its own. Anchored at the foot of its pole so
     // the pole stands ON the fix with its base tucked under the dot, rather than
     // floating beside it like a label.
-    ...(finished ? [
+    //
+    // Nothing until the drawing has loaded, for the sun's reason: the dot is the
+    // reading and is already on screen.
+    ...(finished && finishAtlas() ? [
       new deck.IconLayer({
         id: 'finish-flag',
         data: latestData,
         iconAtlas: finishAtlas().atlas,
         iconMapping: finishAtlas().mapping,
-        getIcon: () => 'flag',
+        getIcon: () => 'finish',
         getPosition: posOf,
-        getSize: 40,
-        sizeUnits: 'pixels'
+        getSize: FLAG_PX,
+        sizeUnits: 'pixels',
+        updateTriggers: { getIcon: finishAtlas() }
       })
     ] : [])
   ];
 }
 
-/** The flag's cell, rasterised well past the 40 px it is drawn at so it stays
- *  crisp on a display with twice the density. Square, like the sun's. */
-const FLAG_PX = 96;
+/** How big the flag is drawn, in whole cells. Bigger than the sun marks because
+ *  it is a statement about the whole race rather than an annotation on it. */
+const FLAG_PX = 48;
 
-/** Built once and kept: the palette is read once per page too, so there is no
- *  colour here that can change under it. */
-let flagAtlas = null;
+/** Built once and kept, and — like the sun's — not memoised until it exists. */
+let flagAtlasMemo = null;
 
 /**
- * A chequered flag, drawn into a canvas for an `IconLayer` to sample.
+ * The chequered flag, from `icons/finish.svg`.
  *
- * Drawn rather than typeset, for the reason `sunAtlas` records at length — deck's
- * text pipeline keeps a glyph's coverage and throws away its colour, which turns
- * 🏁 into a filled square — and then for one more: a chequered flag IS a pattern,
- * so at the 40 px this is shown at, the emoji's own squares fall below a pixel
- * each on most platforms and mush into grey. Four columns by three rows, drawn at
- * a size chosen against the size it is displayed at, stays legible as checks.
+ * The accent rather than the course colour: this is the runner's own mark, the
+ * one the whole page is about, and the runner is orange.
  *
- * The pole and the flag's border are the accent rather than black, and that is
- * load-bearing on a dark basemap: black on charcoal is invisible, and the frame is
- * what holds the white squares together as one mark. It also keeps the flag inside
- * the page's own language — this is the runner's mark, and the runner is orange.
- *
- * Lazy and never called from node, like `sunAtlas`: there is no `document` in the
- * test run.
+ * Mono, which a chequered flag has to be talked about carefully. The squares are
+ * not black and white — they are the accent at full strength and the accent at a
+ * third of it, which is a distinction the tint keeps because it works on colour
+ * and leaves alpha alone. See `glyphs.js`.
  */
 function finishAtlas() {
-  if (flagAtlas) return flagAtlas;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = FLAG_PX;
-  canvas.height = FLAG_PX;
-
-  const c = canvas.getContext('2d');
-  const ink = `rgb(${accent().join(',')})`;
-
-  // The pole: full height, so the flag has something to be flown from and the
-  // mark has a foot to stand on.
-  const poleX = 18;
-  c.fillStyle = ink;
-  c.fillRect(poleX - 3, 6, 6, FLAG_PX - 8);
-
-  // The cloth. Whites first as one block, so the dark squares are laid onto a
-  // solid ground rather than onto whatever the basemap happens to be.
-  //
-  // Three squares by two, not the four-by-three a chequered flag is usually
-  // drawn with. Checked against a render at the size this is actually shown at:
-  // at 40 px the finer grid puts each square under 4 px and they average into
-  // grey, which is a flag that has stopped saying anything. Six big squares
-  // still read as CHEQUERED, which is the whole content of the mark.
-  const x0 = poleX + 3;
-  const y0 = 8;
-  const cols = 3;
-  const rows = 2;
-  const cell = 24;
-  c.fillStyle = '#fff';
-  c.fillRect(x0, y0, cols * cell, rows * cell);
-  c.fillStyle = '#111';
-  for (let col = 0; col < cols; col++) {
-    for (let row = 0; row < rows; row++) {
-      if ((col + row) % 2 === 0) c.fillRect(x0 + col * cell, y0 + row * cell, cell, cell);
+  if (!flagAtlasMemo) {
+    flagAtlasMemo = glyphAtlas(['finish'], inkOf(accent()), inkOf(surface()));
+    // Planted on the fix rather than centred over it, so the pole stands ON the
+    // last position with its base tucked under the dot. The bottom-left corner of
+    // the DRAWING AREA, not of the pole — stated that way on purpose, because the
+    // whole point of keeping these in their own files is that one can be swapped
+    // without editing this line. It is a couple of pixels off the pole itself,
+    // which at this size is nothing.
+    if (flagAtlasMemo) {
+      Object.assign(flagAtlasMemo.mapping.finish, {
+        anchorX: INSET_PX,
+        anchorY: CELL_PX - INSET_PX
+      });
     }
   }
-
-  // The frame, drawn last and inset by half its width so it sits on the cloth's
-  // edge instead of half outside it.
-  c.strokeStyle = ink;
-  c.lineWidth = 4;
-  c.strokeRect(x0 + 2, y0 + 2, cols * cell - 4, rows * cell - 4);
-
-  flagAtlas = {
-    atlas: canvas,
-    mapping: {
-      flag: {
-        x: 0,
-        y: 0,
-        width: FLAG_PX,
-        height: FLAG_PX,
-        // The foot of the pole, so the icon is planted on the fix rather than
-        // centred over it.
-        anchorX: poleX,
-        anchorY: FLAG_PX - 2,
-        mask: false
-      }
-    }
-  };
-  return flagAtlas;
+  return flagAtlasMemo;
 }
 
 /**
@@ -1224,27 +1137,6 @@ function capStat(icon, value) {
 }
 
 /**
- * The controls' marks, drawn rather than typed.
- *
- * `‹`, `›` and `⤢` were the obvious thing and are wrong in both of the ways a
- * character is wrong inside a small disc. Weight isn't ours to set: `font-weight`
- * nudges a guillemet and leaves `⤢` exactly as it was, because the arrow comes
- * from whichever font on the machine happens to have it and most carry one cut of
- * it. And a character is centred by its BOX — side bearings included — so a
- * chevron whose ink sits left of centre in the font sits left of centre in the
- * button, which is the off-centre look rather than anything the flexbox did.
- *
- * A path has neither problem. Each of these is point-symmetric about the middle
- * of its own viewBox, so centring the box centres the ink, and `stroke-width` is
- * the weight, in the same units as the mark.
- */
-const MEDIA_ICON = {
-  prev: 'M15 5.5 9 12l6 6.5',
-  next: 'M9 5.5 15 12l-6 6.5',
-  expand: 'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7'
-};
-
-/**
  * One of the controls laid over a pinned photograph.
  *
  * `data-act` is the whole interface between this file and the click handler:
@@ -1257,13 +1149,21 @@ const MEDIA_ICON = {
  * takes its neighbours' positions with it, so the one you meant to press next is
  * no longer where you were about to press — and there is no way to tell "there is
  * nothing further this way" from "this viewer has no such control".
+ *
+ * The mark is a drawing rather than a character, and its file is `icons/<act>.svg`
+ * — the button's action names its own icon, which is why there is no table here
+ * mapping one to the other. `‹`, `›` and `⤢` were the obvious thing and are wrong
+ * in both of the ways a character is wrong inside a small disc; prev.svg records
+ * why at length.
+ *
+ * Inlined rather than loaded through an `<img>`, which is what keeps
+ * `currentColor` working: the mark has to be the button's ink, in both colour
+ * schemes and while disabled, and an image cannot inherit that.
  */
 function mediaButton(act, label, enabled = true) {
-  const mark = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ` +
-    `stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">` +
-    `<path d="${MEDIA_ICON[act]}"/></svg>`;
   return `<button type="button" class="mb ${act}" data-act="${act}" ` +
-    `title="${label}" aria-label="${label}"${enabled ? '' : ' disabled'}>${mark}</button>`;
+    `title="${label}" aria-label="${label}"${enabled ? '' : ' disabled'}>` +
+    `${inlineGlyph(act)}</button>`;
 }
 
 /**
@@ -1504,27 +1404,13 @@ const ICON = {
   // `weatherIcon` falls back to when a label arrives that nobody anticipated —
   // that case is genuinely "some temperature, no idea what sky".
   temp: '\u{1F321}️', // 🌡️
-  bpm:  '❤️', // ❤️
-  // The one pair here picked for being unlike EACH OTHER rather than for being
-  // like what it depicts. 🌅 and 🌇 are the obvious choice and are the same
-  // picture — a sun on a horizon — at the 19 px these are drawn at on the map, so
-  // the two marks a night puts on a course would be indistinguishable. A starry
-  // skyline is unmistakable beside a sunrise, and it says the thing the runner
-  // cares about: the head torch goes on.
-  sunrise: '\u{1F305}', // 🌅
-  sunset:  '\u{1F303}'  // 🌃
+  bpm:  '❤️' // ❤️
+  // The sunrise and sunset pair used to live here as 🌅 and 🌃. They are drawings
+  // now, in `icons/`, for the reason `glyphs.js` records: an emoji is a different
+  // picture on every platform, and the pair had to be chosen for being unlike EACH
+  // OTHER rather than for being like what they depict. Two icons we draw ourselves
+  // can be both.
 };
-
-/**
- * The glyph for a sun event.
- *
- * Exported so the height strip draws the same two characters this file does — it
- * renders them with canvas `fillText`, which has no trouble with a colour emoji
- * whatsoever, and a second copy of the pair is a second chance to change one.
- */
-export function sunGlyph(event) {
-  return event === 'sunrise' ? ICON.sunrise : ICON.sunset;
-}
 
 /**
  * A tooltip's top line: what this is, and — on a ping — how the phone was doing.
@@ -1563,6 +1449,13 @@ function statusHtml(point) {
 
 /**
  * A battery, filled to `pct`.
+ *
+ * The two icons below are the only ones left in code rather than in `icons/`, and
+ * that is not an oversight. Every other mark on this page is a picture of a fixed
+ * thing — a sunrise is a sunrise — but these two carry their READING in their
+ * geometry: the fill rectangle's width IS the charge, and which bars are lit IS
+ * the signal. There is nothing to move to a file that would not have to be
+ * regenerated from a number the moment it was drawn.
  *
  * `currentColor` throughout, so it inherits the line's ink and needs no rule of its
  * own in either colour scheme. Deliberately NOT red when low: this page spends its

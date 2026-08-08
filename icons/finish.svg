@@ -1,0 +1,26 @@
+<!--
+  The finish: a chequered flag, planted on the last fix of a finished race.
+
+  One ink, tinted on the way to the screen (see src/glyphs.js), so the chequers
+  are made out of OPACITY rather than out of black and white — the light squares
+  are the same colour at a third of the strength. Alpha survives the tint; colour
+  does not.
+
+  Three columns by two, not the four-by-three a chequered flag is usually drawn
+  with. At the size this is shown at the finer grid puts each square under 4 px
+  and they average into a smudge, which is a flag that has stopped saying
+  anything. Six big squares still read as CHEQUERED, which is the whole mark.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     color="#000" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <!-- The cloth's light squares, laid down as one block so the dark ones have a
+       ground to sit on rather than whatever the basemap happens to be. -->
+  <path d="M6 4.5h15v9.5H6z" fill="currentColor" fill-opacity=".3" stroke="none"/>
+  <!-- The dark squares, on the diagonal. -->
+  <path d="M6 4.5h5v4.75H6zM11 9.25h5V14h-5zM16 4.5h5v4.75h-5z"
+        fill="currentColor" stroke="none"/>
+  <!-- The pole, full height, so the flag has something to be flown from and the
+       mark has a foot to stand on. -->
+  <path d="M5 21.5V4"/>
+</svg>

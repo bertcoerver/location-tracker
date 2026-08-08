@@ -306,18 +306,25 @@ sun came up — and on a race that runs through the night that is a fact nothing
 gives. Each crossing is marked on the course, on the map and on the height strip both:
 
 ```
-        🌅 06:42                 🌃 21:07
+       (sun rising)             (moon rising)
    ─────●──────────────────────────●─────
 ```
 
-The glyph, the local time, and a dot you can hover for the rest: the race clock at that moment, how
-far in it was, and how high. On La Diagonale des Fous — 45 hours, two nights — that is four marks, at
-50, 90, 120 and 165 km.
+A drawing and a dot you can hover for the rest: the local time, the race clock at that moment, how far
+in it was, and how high. On La Diagonale des Fous — 45 hours, two nights — that is four marks, at 50,
+90, 120 and 165 km.
 
-**🌃 rather than 🌇 for sunset.** The obvious pair is 🌅 and 🌇 and it is unusable: both are a sun on a
-horizon, and at the 19 px these are drawn at the two marks a night puts on a course are the same
-picture. A starry skyline is unmistakable beside a sunrise, and it says the thing the runner cares
-about anyway — the head torch goes on.
+**No time typeset beside the mark.** There used to be one, and two marks a night each with digits
+hanging off them is a lot of furniture on a route for a fact nobody reads off a map anyway. What a
+mark has to say from across the screen is *here is where the light changed*; the tooltip says the
+minute, the date and the race clock, and it says them to anyone who asks.
+
+**A rising moon for sunset, not a setting sun.** The pair has to be told apart at 22 px, which rules
+out the obvious drawing — a sun on a horizon with the arrow the other way is the same picture as
+sunrise until you look hard. A crescent coming up is unmistakable beside a sun coming up, and it says
+the thing the runner actually cares about: the head torch goes on.
+
+Both are SVG files — see "The marks are files" below.
 
 **The position is interpolated between the two pings either side**, along the course where both of them
 snapped to it, so a mark sits on the route round the bends rather than on a chord across them. Where
@@ -342,17 +349,41 @@ The same arithmetic decides the **weather glyph** on every ping tooltip, which i
 says](#what-a-tooltip-says) below. That is one crossing serving both, on purpose: a mark saying the sun had set and a tooltip four
 pixels away drawing a sun would be the page contradicting itself about the same minute.
 
-Two things fell out of building it. The glyph on the map is an `IconLayer` over a canvas the page
-rasterises itself, because deck.gl cannot draw a colour emoji as *text*: with `sdf` on and off alike a
-`TextLayer` renders 🌅 as a solid filled square while the digits beside it come out perfectly — its font
-atlas keeps each glyph's coverage and throws its colour away, which is right for lettering and fatal
-for an emoji. So each half of the label goes through the pipeline that can render it: the glyph as an
-icon, the time as text with the same halo the waypoint labels use. And the mark is drawn *above* the
-pings, which is against this stack's usual order and was also measured: deck picks the topmost pickable
-layer, every fix carries a 16 px invisible hit disc, and a mark interpolated between two pings five
-minutes apart sat inside one at every usable zoom — so underneath, hovering a sunrise returned the
-neighbouring ping's tooltip. The cost is the reverse: where a mark lands on a fix, the mark's 5 px owns
-the middle of that fix's 16 px, and the ping is still there six pixels away.
+One thing fell out of building it. The mark is drawn *above* the pings, which is against this stack's
+usual order and was measured rather than reasoned about: deck picks the topmost pickable layer, every
+fix carries a 16 px invisible hit disc, and a mark interpolated between two pings five minutes apart
+sat inside one at every usable zoom — so underneath, hovering a sunrise returned the neighbouring
+ping's tooltip. The cost is the reverse: where a mark lands on a fix, the mark's 5 px owns the middle
+of that fix's 16 px, and the ping is still there six pixels away.
+
+### The marks are files
+
+Every drawn mark on this page is an SVG in `icons/`, and swapping one is editing one small file and
+touching no code at all. There are seven: `sunrise`, `sunset`, `finish`, `photo`, and the three
+controls on a photo card — `prev`, `next`, `expand`. `src/glyphs.js` is the plumbing, and
+`test/glyphs.test.js` guards the invariants a browser would otherwise break silently.
+
+They used to be emoji, and the reason they are not is worth recording: deck.gl cannot draw a colour
+emoji as *text*. With `sdf` on and off alike a `TextLayer` renders 🌅 as a solid filled square while
+the digits beside it come out perfectly — its font atlas keeps each glyph's coverage and throws its
+colour away, which is right for lettering and fatal for an emoji. Rasterising in a canvas of our own
+sidesteps that; and once a mark is ours rather than the platform's, it also stops being a different
+picture on every operating system, which is what made the old pair so hard to choose.
+
+**Every mark is mono.** Whatever colour a file states is discarded — the raster is used as a stencil
+and refilled with one of the page's own five colours, so a mark follows the palette in either scheme
+and a replacement cannot arrive carrying a sixth colour. *Opacity* survives, because it is the
+stencil's alpha, which is how the chequered flag gets its light squares out of a single ink.
+
+**Two families, one rule apart.** The four *drawn* marks go onto a canvas and so must state a `color`
+of their own; the three *inlined* ones go into a button as markup, where `currentColor` is the whole
+point — it inherits the button's ink — so they must not. That is the one difference that fails
+silently in opposite directions, so there is a test for it.
+
+**Two icons are still in code, on purpose.** The battery and the signal bars in a ping tooltip carry
+their *reading* in their geometry: the fill rectangle's width **is** the charge, and which bars are lit
+**is** the signal. There is nothing there to move to a file that would not have to be regenerated from
+a number the moment it was drawn.
 
 ### What a tooltip says
 
@@ -1252,6 +1283,17 @@ Interpolation only, never extrapolation: a moment before the first ping or after
 position this page can honestly claim, so such a file is not drawn at all. A file with neither a time
 nor a coordinate is dropped for the same reason.
 
+**On the height strip it is a camera, not a picture.** The map shows the photograph itself — the one
+mark on this page that tells you what it is without being asked — but the strip is 112 px tall and has
+no room for that, so it draws a camera mark sitting on the terrain with a short stem down to the line,
+the same idiom the map uses to keep a 44 px thumbnail off the route it belongs to. Its job is smaller
+and different: it says *this* climb, *this* descent is one somebody has a picture of, and it says it
+while you are reading the profile rather than the map. It is coloured by where the position came from,
+exactly as the map's anchor dot is — accent for a file that carried its own GPS, course purple for one
+placed between the pings either side, magenta for a crew member's — because a mark that is one colour
+here and another there would undo the whole point of the distinction. A crew photograph with no
+distance along the course has nowhere to go on an axis of distance, and is left to the map.
+
 A photo can also carry **words**. `ImageDescription` is where the iOS share sheet, Photos and
 Lightroom all write a caption, and it is read for free — it is a tag in an IFD the parser already
 walks — and shown above the readings on the card, and again in full under the picture when you open
@@ -1701,6 +1743,7 @@ src/
   layers.js         layer construction + tooltip markup
   pin.js            the tooltip a click pins in place, shared by both views
   shot.js           a photograph at full size, opened from the pinned card's ⤢
+  glyphs.js         loads icons/*.svg and tints them to the palette — see "The marks are files"
   colors.js         reads the CSS colour tokens
   util.js           time parsing (ping filenames and hand-written starts), 24-hour clocks, race days,
                     pace, formatting, escaping, pool, storage guard
@@ -1708,7 +1751,14 @@ src/
 sw.js               the service worker: what the app caches, and what it must never cache
 manifest.webmanifest  name, icons, colours — what makes it installable
 icons/
-  icon.svg          the mark; render.py rasterises the PNGs beside it
+  icon.svg          the app's own mark; render.py rasterises the PNGs beside it
+  sunrise.svg       the marks the map and the height strip draw. Edit them freely — they are
+  sunset.svg        tinted to the palette, so only the shape and its opacity matter.
+  finish.svg
+  photo.svg
+  prev.svg          the three controls on a photo card. Inlined into markup rather than
+  next.svg          rasterised, so these must NOT state a `color` — see "The marks are files".
+  expand.svg
 vendor/
   deck.gl-*.min.js  vendored, not a CDN link — see "Offline" below
 test/

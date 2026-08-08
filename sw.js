@@ -33,7 +33,7 @@
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '10';
+const VERSION = '11';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes
@@ -63,11 +63,25 @@ const SHELL_URLS = [
   './icons/icon-512.png',
   './icons/icon-512-maskable.png',
   './icons/apple-touch-icon.png',
+  // The marks the map and the height strip draw. Part of the shell rather than of
+  // the data: they never change between deploys, and without them a course opened
+  // offline draws every sunrise as a bare dot.
+  //
+  // No apostrophes in this comment on purpose: test/sw.test.js reads the list out
+  // of this file with a regex over quoted strings, and one would look like an entry.
+  './icons/sunrise.svg',
+  './icons/sunset.svg',
+  './icons/finish.svg',
+  './icons/photo.svg',
+  './icons/prev.svg',
+  './icons/next.svg',
+  './icons/expand.svg',
   './src/colors.js',
   './src/config.js',
   './src/course.js',
   './src/geo.js',
   './src/github.js',
+  './src/glyphs.js',
   './src/gpx.js',
   './src/layers.js',
   './src/main.js',

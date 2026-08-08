@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import {
   beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml, makeTooltip,
-  latestState, mediaTooltipHtml, splitWeather, sunGlyph, sunTooltipHtml, tooltipHtml,
+  latestState, mediaTooltipHtml, splitWeather, sunTooltipHtml, tooltipHtml,
   viewerLayers, waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
@@ -1236,18 +1236,10 @@ test('a photo is not mistaken for a ping', () => {
   assert.doesNotMatch(html, /class="st"/, 'described a photograph as a phone');
 });
 
-test('the two sun glyphs are one character each and not the same one', () => {
-  // The height strip draws these with canvas `fillText` while the map draws them
-  // through an icon atlas, and both take them from here — so this is the one place
-  // the pair is stated. They have to differ: two marks a night that look alike are
-  // two marks that say nothing.
-  const rise = sunGlyph('sunrise');
-  const set = sunGlyph('sunset');
-
-  assert.notEqual(rise, set);
-  assert.equal([...rise].length, 1, `${rise} is not one character`);
-  assert.equal([...set].length, 1, `${set} is not one character`);
-});
+// The sun marks used to be a pair of emoji stated in this file, and there was a
+// test here that they were one character each and not the same character. They are
+// drawings now — see test/glyphs.test.js, which guards the same thing about the
+// files they were replaced by.
 
 // --- standing still -----------------------------------------------------------
 

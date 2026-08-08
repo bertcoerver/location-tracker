@@ -3,6 +3,7 @@
 
 import { CONFIG } from './config.js';
 import { courseBounds, courseHoverAt, pointAt } from './course.js';
+import { loadGlyphs } from './glyphs.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
   makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers, sunLayers, sunTooltipHtml,
@@ -578,6 +579,13 @@ export function createMap(container, {
     if (flying) return deckgl.setProps({ layers: allLayers() });
     paint();
   }
+
+  // The sun marks and the finish flag are SVG files, so they arrive a moment
+  // after the first paint. One redraw when they land is all it takes — the atlas
+  // is built on the next `allLayers()` and never changes again. Nothing waits for
+  // this: a map that held its first paint back for an icon would be a map that
+  // holds its first paint back.
+  loadGlyphs().then(render);
 
   /**
    * Drop the transition props once a flight ends, so a later render() doesn't

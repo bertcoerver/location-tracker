@@ -1,0 +1,12 @@
+<!--
+  The "next photograph" control. The mirror of prev.svg — change one, change the
+  other, or the pair stops reading as a pair.
+
+  Inlined rather than rasterised: no `color` here, so `currentColor` inherits the
+  button. See prev.svg for the rest.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"
+     fill="none" stroke="currentColor" stroke-width="2.6"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9 5.5 15 12l-6 6.5"/>
+</svg>

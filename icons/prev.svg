@@ -1,0 +1,22 @@
+<!--
+  The "previous photograph" control, on the card a pinned photo opens into.
+
+  One of the INLINED marks: this file is dropped into the page as markup rather
+  than rasterised, so unlike sunrise.svg and its siblings it must NOT state a
+  `color` — `currentColor` here inherits the button's own ink, which is how the
+  control follows the light and dark schemes without a rule of its own.
+
+  A path rather than a `‹`. A character is centred by its BOX, side bearings and
+  all, so a chevron whose ink sits left of centre in the font sits left of centre
+  in the button; and its weight is whichever cut of it the machine happens to
+  have, which `font-weight` cannot argue with. A path has neither problem, and
+  `stroke-width` is the weight in the same units as the mark.
+
+  Point-symmetric about the middle of its own viewBox, so centring the box centres
+  the ink. Keep that if you replace it — and keep it a mirror of next.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"
+     fill="none" stroke="currentColor" stroke-width="2.6"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="M15 5.5 9 12l6 6.5"/>
+</svg>
