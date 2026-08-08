@@ -116,10 +116,18 @@ export const CONFIG = {
   // content-addressed URL. Past it the extras are ignored rather than queued —
   // the page degrades to the first forty rather than to a spinner.
   mediaLimit: 40,
-  // How long to wait for a video's first frame before giving up on its
-  // thumbnail. A container the browser cannot decode fires no event at all, so
-  // this is what stops one unplayable clip leaving the atlas pending forever.
-  mediaFrameMs: 3000,
+  // How long to wait for a clip to prove it can be opened at all. A container the
+  // browser cannot decode fires no event whatsoever — not `error`, not
+  // `loadedmetadata` — so this is what stops one unplayable clip leaving the atlas
+  // pending forever, and it is short because every other thumbnail in the run is
+  // queued behind it.
+  mediaOpenMs: 3000,
+  // And how long to wait, after it has opened, for it to actually present a frame.
+  // Much longer, because this one is no longer a bet on whether the file is
+  // readable: 16 MB of HEVC off a phone genuinely takes seconds to decode frame
+  // one, and the old three-second budget covering both cases was quietly losing
+  // thumbnails for clips the browser was perfectly capable of showing.
+  mediaFrameMs: 12000,
 
   // --- snapping pings onto a run's course, when it has a .gpx ---------------
   // Further than this from the course and a ping is left where it is. Was 500,
@@ -489,6 +497,18 @@ export const LS_BEACONS   = `lt.beacons.${V}`;
 // checked, and since a 304 makes `refreshIndex` return the cached index untouched,
 // the merged half would be permanently one poll stale.
 export const LS_SETTINGS  = `lt.settings.${V}`;
+
+// When each `.gpx` landed in the repo: `<run>/<name>@<sha>` -> commit time in ms.
+//
+// The one fact in this app that a directory listing cannot supply. It costs an API
+// request to learn, so it is cached under a key naming bytes-at-a-place — immutable,
+// therefore correct forever — and read only when a run holds more than one course.
+// See `uploadKey` and `resolveCourses`.
+//
+// Nothing in here can go stale on its own, so it is not versioned away for
+// correctness. It shares `V` anyway, because one wrong-shaped record from an older
+// build is not worth a special case.
+export const LS_UPLOADED  = `lt.uploaded.${V}`;
 
 // When the index was last fetched. Persisted so the refresh throttle survives a
 // page reload — in memory it resets, and refresh-mashing spends the budget.

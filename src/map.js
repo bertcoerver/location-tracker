@@ -849,8 +849,9 @@ export function createMap(container, {
     /**
      * The texture those thumbnails are cut out of, or null.
      *
-     * Null until the images have decoded, and null for a run whose files could
-     * none of them be read — `mediaLayers` then draws the anchor dots alone.
+     * Null until the images have decoded, which is the only time it is null: a
+     * file that could not be read still gets a cell, so the state `mediaLayers`
+     * draws the anchor dots alone for is a loading state and nothing worse.
      * main.js keys the atlas on the run's shas and is the only thing that knows
      * whether the one in flight still belongs to the markers on screen.
      */

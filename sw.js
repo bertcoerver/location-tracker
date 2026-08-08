@@ -10,10 +10,12 @@
 //                           one-line CSS fix into four rounds of "did it land?".
 //                           Online you are always current; offline you still open.
 //   vendor/, icons/         cache-first. Big, and their names change when they do.
-//   api.github.com          network only. This is the listing, fetched with an
-//                           ETag and `cache: 'no-store'`, and it is the ONLY
+//   api.github.com          network only. Chiefly the listing, fetched with an
+//                           ETag and `cache: 'no-store'`, which is the ONLY
 //                           thing that says a new ping exists. A stale one here
-//                           is a runner who has stopped moving.
+//                           is a runner who has stopped moving. (The commits
+//                           call behind it — which .gpx was uploaded last — is
+//                           the same host, so this covers it too.)
 //   raw.githubusercontent   cache-first WHEN the URL carries a sha, forever.
 //                           `rawUrl` in github.js appends the blob sha as the
 //                           query string, so such a URL is content-addressed and
@@ -33,7 +35,7 @@
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '12';
+const VERSION = '13';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes

@@ -5,7 +5,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONFIG, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG, keysFor } from '../src/config.js';
+import {
+  CONFIG, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG, LS_UPLOADED, keysFor
+} from '../src/config.js';
 import {
   buildIndex, byRecency, cachedBeacons, cachedSettings, defaultRun, fetchCourse, hydrate, isLive,
   newestFile, RateLimitError, refreshBeacons, refreshIndex, refreshSettings
@@ -23,13 +25,25 @@ function fakeLocalStorage() {
   };
 }
 
+/** A blob sha the way git makes one: from the content, and nothing else. */
+function blobSha(body) {
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0;
+  return `sha-${(h >>> 0).toString(16)}-${text.length}`;
+}
+
 /**
  * A stand-in for the repo. `files` maps a full repo path to a body object.
- * Serves the two endpoints the app uses: the recursive tree of `locations/`,
- * and raw file bodies.
+ * Serves the three endpoints the app uses: the recursive tree of `locations/`,
+ * the commit log of one path, and raw file bodies.
+ *
+ * `uploaded` maps a full repo path to the ms its newest commit landed. A path
+ * missing from it has no commits, which is what GitHub says about a path it has
+ * never seen — and the shape `resolveCourses` has to survive.
  */
 function fakeGitHub(files) {
-  const state = { files: new Map(Object.entries(files)), calls: [] };
+  const state = { files: new Map(Object.entries(files)), uploaded: new Map(), calls: [] };
   const root = `${CONFIG.dir}/`;
 
   /** Everything under locations/, in Git Trees shape — paths relative to it. */
@@ -42,7 +56,10 @@ function fakeGitHub(files) {
       const path = full.slice(root.length);
       const slash = path.indexOf('/');
       if (slash > 0) dirs.add(path.slice(0, slash));
-      entries.push({ path, type: 'blob', sha: `sha-${path}-${JSON.stringify(body).length}` });
+      // Content-addressed, exactly as git is: the sha follows the BYTES, so two
+      // paths holding the same body really do share one sha. That is a case
+      // `resolveCourses` has to survive, and a path-derived sha would hide it.
+      entries.push({ path, type: 'blob', sha: blobSha(body) });
     }
     for (const path of dirs) entries.push({ path, type: 'tree', sha: `tree-${path}` });
     return entries;
@@ -53,7 +70,19 @@ function fakeGitHub(files) {
 
   state.fetch = async (url, opts = {}) => {
     const isApi = String(url).includes('api.github.com');
-    state.calls.push({ kind: isApi ? 'API' : 'RAW', url: String(url) });
+    const isCommits = isApi && String(url).includes('/commits');
+    state.calls.push({ kind: isApi ? 'API' : 'RAW', url: String(url), commits: isCommits });
+
+    if (isCommits) {
+      if (state.rateLimited || state.commitsRateLimited) return new Response('', { status: 403 });
+      const path = decodeURIComponent(new URL(url).searchParams.get('path'));
+      const when = state.uploaded.get(path);
+      return new Response(
+        JSON.stringify(when === undefined
+          ? []
+          : [{ commit: { committer: { date: new Date(when).toISOString() } } }]),
+        { status: 200 });
+    }
 
     if (isApi) {
       if (state.rateLimited) {
@@ -89,6 +118,7 @@ function fakeGitHub(files) {
     api: state.calls.filter(c => c.kind === 'API').length,
     raw: state.calls.filter(c => c.kind === 'RAW').length
   });
+  state.commitCalls = () => state.calls.filter(c => c.commits).length;
   return state;
 }
 
@@ -619,8 +649,9 @@ test('the course is found whatever the file is called', () => {
 });
 
 test('several courses in one run resolve the same way on every poll', () => {
-  // Arbitrary, but it has to be STABLE: a course that changed identity between
-  // polls would throw away the snap cache each time.
+  // The newest upload wins, but `buildIndex` cannot know which that is, so what it
+  // produces has to be STABLE: a course that changed identity between polls would
+  // throw away the snap cache each time. `resolveCourses` corrects it afterwards.
   const entries = [
     { path: 'new-race/z-route.gpx', type: 'blob', sha: 'z' },
     { path: 'new-race/a-route.gpx', type: 'blob', sha: 'a' }
@@ -628,6 +659,21 @@ test('several courses in one run resolve the same way on every poll', () => {
   assert.equal(buildIndex([...TREE, ...entries]).course, undefined);
   assert.equal(buildIndex([...TREE, ...entries])['new-race'].course.name, 'a-route.gpx');
   assert.equal(buildIndex([...TREE, ...entries.reverse()])['new-race'].course.name, 'a-route.gpx');
+});
+
+test('a run with a choice to make carries the shortlist; one with none does not', () => {
+  const one = buildIndex([...TREE, { path: 'new-race/course.gpx', type: 'blob', sha: 'g' }]);
+  // No `courses` on a run with a single course: it would be a copy of `course` in
+  // every folder of the repo, persisted, saying nothing.
+  assert.equal(one['new-race'].courses, undefined);
+  assert.equal(one['old-race'].courses, undefined, 'nor on a run with no course at all');
+
+  const two = buildIndex([
+    ...TREE,
+    { path: 'new-race/z-route.gpx', type: 'blob', sha: 'z' },
+    { path: 'new-race/a-route.gpx', type: 'blob', sha: 'a' }
+  ]);
+  assert.deepEqual(two['new-race'].courses, { 'z-route.gpx': 'z', 'a-route.gpx': 'a' });
 });
 
 test('a folder holding only a course is a run — an upcoming one', () => {
@@ -693,6 +739,163 @@ test('the alphabetically first course still wins the tie-break', () => {
   for (const order of [entries, [...entries].reverse()]) {
     assert.deepEqual(buildIndex(order).twice.course, { name: 'a.gpx', sha: 'a' });
   }
+});
+
+// --- which .gpx is the course ------------------------------------------------
+
+const DAY = 86400000;
+const T0 = Date.parse('2026-07-01T09:00:00Z');
+
+/** A run holding two courses, with `older` committed a day before `newer`. */
+function twoCourses({ older = 'a-route.gpx', newer = 'z-route.gpx' } = {}) {
+  gh.files.set(`${RUN}/${older}`, GPX);
+  gh.files.set(`${RUN}/${newer}`, GPX);
+  gh.uploaded.set(`${RUN}/${older}`, T0);
+  gh.uploaded.set(`${RUN}/${newer}`, T0 + DAY);
+}
+
+test('the most recently uploaded .gpx is the course, not the first alphabetically', async () => {
+  twoCourses();                                    // a-route is older, z-route newer
+  const { index } = await refreshIndex();
+
+  assert.equal(index['vendee-10k'].course.name, 'z-route.gpx');
+});
+
+test('and when the newest upload IS the alphabetically first, it still wins', async () => {
+  // The same rule, run the other way, so the test can't pass on an unchanged
+  // alphabetical fallback.
+  twoCourses({ older: 'z-route.gpx', newer: 'a-route.gpx' });
+  const { index } = await refreshIndex();
+
+  assert.equal(index['vendee-10k'].course.name, 'a-route.gpx');
+});
+
+test('the course choice survives a reload, from cache, with no request at all', async () => {
+  twoCourses({ older: 'z-route.gpx', newer: 'a-route.gpx' });
+  await refreshIndex();
+  gh.reset();
+
+  const { index } = await refreshIndex();
+  assert.equal(index['vendee-10k'].course.name, 'a-route.gpx');
+  // The tree still costs its conditional request; dating the courses costs nothing
+  // a second time, because a blob sha is immutable and so is the answer about it.
+  assert.equal(gh.commitCalls(), 0);
+});
+
+test('a repo where every run has one course never asks when anything was uploaded', async () => {
+  gh.files.set(`${RUN}/course.gpx`, GPX);
+  await refreshIndex();
+
+  assert.equal(gh.commitCalls(), 0);
+  assert.deepEqual(gh.counts(), { api: 1, raw: 0 }, 'the listing, and nothing else');
+});
+
+test('only the ambiguous run is asked about, and only its own files', async () => {
+  gh.files.set('locations/other-race/2026-07-28T11_00_00+02_00.json', { lat: 1, lon: 2 });
+  gh.files.set('locations/other-race/course.gpx', GPX);
+  twoCourses();
+
+  await refreshIndex();
+
+  assert.equal(gh.commitCalls(), 2, 'two courses in one run, and nothing for the other');
+  assert.ok(gh.calls.filter(c => c.commits).every(c => c.url.includes('vendee-10k')));
+});
+
+test('an undatable course leaves the alphabetical pick standing rather than guessing', async () => {
+  // Half a shortlist is worse than none of it: picking confidently from the
+  // candidates that happened to answer is how you show the wrong route.
+  gh.files.set(`${RUN}/a-route.gpx`, GPX);
+  gh.files.set(`${RUN}/z-route.gpx`, GPX);
+  gh.uploaded.set(`${RUN}/a-route.gpx`, T0);       // z-route has no commits at all
+
+  const { index } = await refreshIndex();
+  assert.equal(index['vendee-10k'].course.name, 'a-route.gpx');
+});
+
+test('an unresolved run withholds the ETag, so the next poll retries', async () => {
+  gh.files.set(`${RUN}/a-route.gpx`, GPX);
+  gh.files.set(`${RUN}/z-route.gpx`, GPX);
+  gh.uploaded.set(`${RUN}/a-route.gpx`, T0);
+
+  await refreshIndex();
+  // Storing it would make the next poll a 304, hand back the guess from cache, and
+  // never look again — the tree has not changed, so nothing would prompt a retry.
+  assert.equal(localStorage.getItem(LS_TREE_ETAG), null);
+  assert.ok(localStorage.getItem(LS_TREE), 'the index itself is still cached');
+
+  // The upload lands, and the retry the withheld ETag bought settles it.
+  gh.uploaded.set(`${RUN}/z-route.gpx`, T0 + DAY);
+  const { index } = await refreshIndex();
+  assert.equal(index['vendee-10k'].course.name, 'z-route.gpx');
+  assert.ok(localStorage.getItem(LS_TREE_ETAG), 'settled, so the ETag is worth keeping');
+});
+
+test('a spent budget costs the course choice, not the whole poll', async () => {
+  // The listing has already been read by the time the courses are dated. A
+  // RateLimitError here would discard a good poll — every ping, every run, every
+  // other course — over which of two routes one folder should draw.
+  twoCourses();
+  gh.commitsRateLimited = true;
+
+  const { index, changed } = await refreshIndex();
+
+  assert.equal(changed, true, 'the poll still succeeded');
+  assert.equal(index['vendee-10k'].course.name, 'a-route.gpx', 'the fallback stands');
+  assert.equal(Object.keys(index).length, 1, 'and the rest of the listing survived');
+});
+
+test('a failed dating is not written down, so it is asked again', async () => {
+  twoCourses();
+  gh.uploaded.delete(`${RUN}/z-route.gpx`);        // unanswerable this poll
+  await refreshIndex();
+  gh.reset();
+
+  gh.uploaded.set(`${RUN}/z-route.gpx`, T0 + DAY);
+  const { index } = await refreshIndex();
+
+  assert.equal(gh.commitCalls(), 1, 'only the one that failed; the other is cached');
+  assert.equal(index['vendee-10k'].course.name, 'z-route.gpx');
+});
+
+test('replacing a course drops the old one from the upload cache', async () => {
+  twoCourses();
+  await refreshIndex();
+  assert.equal(Object.keys(JSON.parse(localStorage.getItem(LS_UPLOADED))).length, 2);
+
+  // Down to one course: there is no choice left to make, so nothing left to remember.
+  gh.files.delete(`${RUN}/a-route.gpx`);
+  await refreshIndex();
+
+  assert.equal(localStorage.getItem(LS_UPLOADED), null, 'the whole record goes');
+});
+
+test('two runs sharing one route file are dated separately', async () => {
+  // The same bytes committed into two folders is ONE blob with one sha and two
+  // different upload times. Filed under the sha alone, whichever run was dated first
+  // would hand its answer to the other and pick that one's course.
+  const OTHER = 'locations/other-race';
+  for (const dir of [RUN, OTHER]) {
+    gh.files.set(`${dir}/shared.gpx`, GPX);         // identical body, identical sha
+    gh.files.set(`${dir}/own.gpx`, `${GPX}<!--${dir}-->`);
+  }
+  // In one run the shared file is the newer; in the other it is the older.
+  gh.uploaded.set(`${RUN}/shared.gpx`, T0 + DAY);
+  gh.uploaded.set(`${RUN}/own.gpx`, T0);
+  gh.uploaded.set(`${OTHER}/shared.gpx`, T0);
+  gh.uploaded.set(`${OTHER}/own.gpx`, T0 + DAY);
+
+  const { index } = await refreshIndex();
+
+  assert.equal(index['vendee-10k'].course.name, 'shared.gpx');
+  assert.equal(index['other-race'].course.name, 'own.gpx');
+});
+
+test('a repo that never had a choice to make never writes an upload cache', async () => {
+  gh.files.set(`${RUN}/course.gpx`, GPX);
+  await refreshIndex();
+  await refreshIndex();
+
+  assert.equal(localStorage.getItem(LS_UPLOADED), null);
 });
 
 test('an upcoming run survives the round trip through JSON', () => {

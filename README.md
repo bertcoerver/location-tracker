@@ -783,8 +783,9 @@ Any `.gpx` directly inside the folder is found. It is never treated as a ping, s
 make a finished race look live — but a folder holding **only** a course is still a run, an upcoming
 one, and that is most of the point: a race is worth putting on the map before it starts, so you can
 see the route, the height profile and how long there is to wait. Track segments (`<trk>`) are
-preferred; a file with only a route (`<rte>`) works too. If a run somehow has several `.gpx` files the
-first alphabetically wins — arbitrary, but stable, which is what matters for the cache.
+preferred; a file with only a route (`<rte>`) works too. If a run holds several `.gpx` files the most
+recently uploaded one wins, so replacing a route is just dropping the new file in — see
+"[Replacing a course](#replacing-a-course)".
 
 ### A run with no course gets a line through its own pings
 
@@ -855,7 +856,7 @@ a start has none, and everything below simply doesn't apply to it.
 This **used to be the GPX's filename** (`UTMB_2026-08-28T09_00_00+02_00.gpx`). Nothing reads a
 filename for a time any more. Two things were wrong with it: moving the gun meant renaming a file,
 and a race with no route mapped yet couldn't have a start at all. Name the `.gpx` whatever reads
-well; the alphabetically first one in the folder is still the course.
+well; if there is more than one, the most recently uploaded is the course.
 
 Two things follow from a start being known:
 
@@ -1272,8 +1273,36 @@ any, all, or none of them:
 
 Files are never edited once written.
 
-A run's `.gpx` follows no naming convention at all — call it whatever reads well. The alphabetically
-first `.gpx` in the folder is the course.
+A run's `.gpx` follows no naming convention at all — call it whatever reads well.
+
+<a name="replacing-a-course"></a>
+#### Replacing a course
+
+If a folder holds more than one `.gpx`, **the most recently uploaded one is the course.** Re-routed
+the day before the race? Drop the new file in and it takes over; the old one can stay where it is.
+
+This is the one fact about the repo that a directory listing cannot supply. A Git tree response
+carries a path, a type and a blob sha, and no dates at all — which is why every other rule in this
+app is decided from filenames. So this one costs a second API call, `GET /commits?path=…`, and three
+rules keep that spend at approximately zero:
+
+- **Only ambiguous runs are asked about.** A folder with one `.gpx` has nothing to decide, so a repo
+  where every run has one course — nearly always, including this one — makes no extra requests ever.
+- **Answers are cached under the blob sha**, and a sha is immutable, so the commit that introduced
+  those exact bytes cannot change. One sha is asked about at most once per browser, forever.
+  Uploading a replacement makes a new sha, and so a new question, which is exactly right.
+- **Failure is never written down.** A spent budget or a dropped connection leaves the sha
+  unanswered rather than caching a wrong answer, so it is asked again next poll.
+
+Until the answer arrives — a cold start on such a repo, or a spent rate limit — the alphabetically
+first `.gpx` stands in. That fallback is arbitrary but identical for every viewer, which is the
+property that matters: two people watching one race must not see two different routes. Ties are
+broken the same way, so a run whose files can't be dated and one whose files share a commit agree.
+
+A poll that couldn't settle the choice **throws away the tree ETag** rather than storing it. Keeping
+it would make the next poll a 304, hand the fallback back from cache, and never look again — the tree
+hasn't changed, so nothing would ever prompt a retry. Discarding it costs a full tree body next poll
+but not an extra request: a 304 is charged to the budget just the same. See "Rate limit" below.
 
 ### Photographs and clips
 
@@ -1363,8 +1392,19 @@ Two format notes. `.heic` — what an iPhone shoots by default for **stills**, a
 largely cannot decode — is ignored rather than half-drawn, so export photos as JPEG. Video is the
 opposite call: WebM is the one container a browser is guaranteed to play and the one container a
 phone will not give you, so `.mov` (iOS) and `.mp4` (Android) are admitted as they come. A clip a
-particular browser can't decode gets its anchor dot and no thumbnail — Chrome and Firefox refuse
-HEVC-in-`.mov`, Safari doesn't — rather than hanging the map waiting for a frame that never arrives.
+particular browser can't decode — Chrome and Firefox refuse HEVC-in-`.mov`, Safari doesn't — gets a
+plain dark marker with the ▶ badge on it rather than hanging the map waiting for a frame that never
+arrives. That marker is a marker like any other: it sits where the clip does, it can be clicked, and
+the tooltip behind it holds the video itself, which the `<video>` element may well play perfectly
+even where the thumbnail machinery couldn't get a still out of it. The alternative — no thumbnail at
+all — left the file the map could show you least as the file you could ask about least.
+
+Getting a real frame out is two waits rather than one, because a container that fires no event at all
+has to be given up on fast — every other thumbnail in the run is queued behind it — while a clip
+that *has* opened is owed real patience: 16 MB of HEVC off a phone takes seconds to present frame
+one. And the `<video>` it comes out of is parked two pixels wide off the left edge of the page
+rather than left detached, because WebKit will happily load a detached element, report its
+dimensions, fire every event, and still hand `drawImage` nothing.
 
 The tooltip *is* the photograph, edge to edge, with the clock, the elapsed, the distance and the
 height laid over the foot of it. Where the position came from is said by the colour of the dot the
@@ -1666,6 +1706,10 @@ old fixed `pollMs`.
 Steps 1–2 are the only rate-limited work, and they're independent of which run you're looking at.
 So **opening a run costs zero API requests**: the cached index already lists its files, and their
 bodies come from the CDN. Switching runs can never rate-limit you.
+
+(One thing rides behind the listing: dating the `.gpx` files of a run that holds more than one, so
+the newest upload wins. It is charged to the same budget, but only for such a run and only until its
+shas have been dated once. See "[Replacing a course](#replacing-a-course)".)
 
 ### Marking the other runs
 
@@ -2237,7 +2281,7 @@ times: cache what cannot change, and never cache what must be fresh.
 |---|---|---|
 | `index.html`, `src/*.js` | **network first**, 3 s timeout, cache fallback | the files that change. Online you are always current; offline the precached copy answers. Staleness here is what makes a fix impossible to verify. |
 | `vendor/`, `icons/` | cache first | big, and their names change when they do. |
-| `api.github.com` | **network only** | the listing is the only thing that says a new ping exists. A stale one here looks exactly like a runner who has stopped moving, which is the worst failure this app has. |
+| `api.github.com` | **network only** | the listing is the only thing that says a new ping exists. A stale one here looks exactly like a runner who has stopped moving, which is the worst failure this app has. The commits call behind it is the same host, so it is covered by the same rule. |
 | `raw.githubusercontent.com?<sha>` | cache first, forever | `rawUrl` puts the blob sha in the query string, so the URL is content-addressed and its bytes can never change. A URL *without* one is a plain branch path, which can — so that goes to the network. |
 | `basemaps.cartocdn.com` | cache first, ~1200 tiles | the ground you have already looked at is the ground you are standing on. Evicted oldest-first once over the cap. |
 | anything else same-origin | cache first | precached on install. |

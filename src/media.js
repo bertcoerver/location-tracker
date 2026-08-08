@@ -1056,6 +1056,16 @@ function blank(source) {
  * is checked with `blank` before it is accepted. A poll backs the events up
  * because which of them fires, and in what order, is the part that differs
  * between engines and between codecs on one engine.
+ *
+ * And the element is put IN THE DOCUMENT, which is the part that reads like
+ * superstition and is not. A detached `<video>` has no box to paint into, and
+ * WebKit takes that as leave to never present a frame — it will load the file,
+ * fire every event above, report a `videoWidth`, and hand `drawImage` nothing.
+ * That failure is invisible from here: it arrives as a blank canvas, which is
+ * exactly what "too early" looks like, so it burns the whole timeout and comes
+ * back null. The tell was that the very same clip plays perfectly in the
+ * tooltip's `<video>` — and the only thing that element has that this one lacked
+ * is a place on the page.
  */
 function firstFrame(blob) {
   return new Promise(resolve => {
@@ -1073,10 +1083,21 @@ function firstFrame(blob) {
       video.pause();
       video.removeAttribute('src');
       video.load();
+      video.remove();
       URL.revokeObjectURL(url);
       resolve(value);
     };
-    const timer = setTimeout(() => finish(null), CONFIG.mediaFrameMs);
+
+    // Two deadlines rather than one, because the failures they guard against cost
+    // wildly different amounts. A container the browser cannot decode fires no
+    // event at all, and every other thumbnail in the run is behind this one in a
+    // single `Promise.all` — so a file that never even opens has to be given up on
+    // quickly. A file that DOES open is owed more patience than that: 16 MB of
+    // HEVC off a phone can take several seconds to present frame one, and quitting
+    // at three would throw away a thumbnail the decoder was about to hand over.
+    //
+    // So the clock is restarted, once, the moment the file proves it is readable.
+    let timer = setTimeout(() => finish(null), CONFIG.mediaOpenMs);
 
     const attempt = async () => {
       if (done || !video.videoWidth || !video.videoHeight) return;
@@ -1098,8 +1119,19 @@ function firstFrame(blob) {
     video.muted = true;
     video.playsInline = true;
     video.preload = 'auto';
+    // Two pixels in the corner of the page, moved off the left edge. Not
+    // `display: none`, not `width: 0`, not `visibility: hidden` — every one of
+    // those puts the element back in the case above, with no box and no reason to
+    // paint. It has to be laid out and it must not be seen, and being two pixels
+    // somewhere nobody is looking is how those are both true at once.
+    video.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;' +
+      'opacity:0;pointer-events:none';
     video.addEventListener('error', () => finish(null));
     video.addEventListener('loadedmetadata', () => {
+      // It opened, so it is worth waiting on properly. See the deadlines above.
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(null), CONFIG.mediaFrameMs);
+
       // Muted playback is allowed without a gesture and is the one thing that
       // reliably makes an engine composite frames. Where it is refused anyway, a
       // seek off zero forces a single decode, which is all this needs.
@@ -1112,6 +1144,7 @@ function firstFrame(blob) {
     video.addEventListener('seeked', attempt);
     video.addEventListener('timeupdate', attempt);
     video.requestVideoFrameCallback?.(attempt);
+    document.body.appendChild(video);
     video.src = url;
   });
 }
@@ -1136,6 +1169,12 @@ async function thumbnail(poi) {
  *  times the density, which is the headroom `sunAtlas` reasons about for glyphs. */
 const CELL_PX = THUMB_PX * 3;
 
+/** What a cell holds when the picture would not decode. Fixed rather than read off
+ *  the palette, and for the same reason the play badge's own colours are: this is
+ *  the absence of a photograph, not a part of the page's scheme, and it has to sit
+ *  under white in both light and dark. */
+const MISSING = '#2a2a2e';
+
 /**
  * Every thumbnail packed into one texture, with the mapping deck needs to cut
  * them back out.
@@ -1153,20 +1192,31 @@ const CELL_PX = THUMB_PX * 3;
  * fixed at build time is the same bargain `getPalette` already makes — it is read
  * once per page and never re-read when the scheme changes.
  *
+ * EVERY POI gets a cell, including the ones whose picture would not decode. That
+ * is the whole of the fallback, and it replaced a much worse one. A file with no
+ * cell has no icon, and a file with no icon has nothing above its anchor dot —
+ * which meant the map's answer to "I cannot decode this clip" was a 4 px dot
+ * indistinguishable from a ping, and, because the dot is not the thing that owns
+ * the tooltip, one you could not click either. The file the map could show you
+ * least was the file it let you ask about least.
+ *
+ * A dark cell with the ▶ badge on it says the same thing and says it at 44 px:
+ * there is a clip here, we could not get a frame out of it, open it and see for
+ * yourself. It is the same admission the badge already makes on a thumbnail that
+ * DID decode — that a texture cannot animate and the tooltip has the rest of it —
+ * carried one step further.
+ *
  * @param {Array} pois from `placeMedia`.
- * @returns {Promise<{atlas: HTMLCanvasElement, mapping: Object}|null>} null when
- *   nothing could be decoded, which is what keeps `mediaLayers` from drawing
- *   empty frames.
+ * @returns {Promise<{atlas: HTMLCanvasElement, mapping: Object}|null>} null only
+ *   when there was nothing to draw in the first place.
  */
 export async function buildMediaAtlas(pois) {
   if (!pois?.length) return null;
 
   const bitmaps = await Promise.all(pois.map(thumbnail));
-  const usable = pois.map((poi, i) => [poi, bitmaps[i]]).filter(([, bitmap]) => bitmap);
-  if (!usable.length) return null;
 
-  const cols = Math.ceil(Math.sqrt(usable.length));
-  const rows = Math.ceil(usable.length / cols);
+  const cols = Math.ceil(Math.sqrt(pois.length));
+  const rows = Math.ceil(pois.length / cols);
 
   const canvas = document.createElement('canvas');
   canvas.width = cols * CELL_PX;
@@ -1176,7 +1226,8 @@ export async function buildMediaAtlas(pois) {
   const [r, g, b] = surface();
   const mapping = {};
 
-  usable.forEach(([poi, bitmap], i) => {
+  pois.forEach((poi, i) => {
+    const bitmap = bitmaps[i];
     const x = (i % cols) * CELL_PX;
     const y = Math.floor(i / cols) * CELL_PX;
     // Inset by the frame's own width, so the stroke sits inside the cell rather
@@ -1190,16 +1241,24 @@ export async function buildMediaAtlas(pois) {
       c.roundRect(x + pad, y + pad, side, side, radius);
     };
 
-    // Centre-cropped, so a 4:3 photo fills a square without being squashed into
-    // one. The alternative — letterboxing — spends a third of a 44 px marker on
-    // background.
-    const crop = Math.min(bitmap.width, bitmap.height);
     c.save();
     box();
     c.clip();
-    c.drawImage(bitmap,
-      (bitmap.width - crop) / 2, (bitmap.height - crop) / 2, crop, crop,
-      x + pad, y + pad, side, side);
+    if (bitmap) {
+      // Centre-cropped, so a 4:3 photo fills a square without being squashed into
+      // one. The alternative — letterboxing — spends a third of a 44 px marker on
+      // background.
+      const crop = Math.min(bitmap.width, bitmap.height);
+      c.drawImage(bitmap,
+        (bitmap.width - crop) / 2, (bitmap.height - crop) / 2, crop, crop,
+        x + pad, y + pad, side, side);
+    } else {
+      // Nothing decoded. Not black, which would swallow the badge's own dark
+      // disc and leave a white triangle floating on nothing; dark enough that the
+      // white of the badge and the surface-coloured frame both read on it.
+      c.fillStyle = MISSING;
+      c.fillRect(x + pad, y + pad, side, side);
+    }
     c.restore();
 
     c.strokeStyle = `rgb(${r},${g},${b})`;
@@ -1213,6 +1272,9 @@ export async function buildMediaAtlas(pois) {
     // at all — a corner badge that size is a smudge. It does cover the middle of
     // the picture, which is the trade: what the clip IS gets read from the frame
     // around the badge, and the tooltip has the whole of it either way.
+    //
+    // On an empty cell it is doing double duty and is the only thing in there: the
+    // badge alone on the dark says "a clip, and no frame of it to show you".
     if (poi.animated) {
       const cx = x + CELL_PX / 2;
       const cy = y + CELL_PX / 2;
@@ -1231,8 +1293,8 @@ export async function buildMediaAtlas(pois) {
     }
 
     // Keyed by filename, which is unique within a run and is what `getIcon`
-    // reads. A POI whose thumbnail failed to decode has no entry, and deck draws
-    // nothing for it rather than drawing the wrong picture.
+    // reads. Every POI is in here, decoded or not — a marker that cannot show its
+    // picture is still a marker, and one that can be pointed at.
     mapping[poi.name] = { x, y, width: CELL_PX, height: CELL_PX, mask: false };
   });
 

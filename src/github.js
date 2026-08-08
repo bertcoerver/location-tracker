@@ -10,7 +10,9 @@
 // (2) is why one recursive tree request answers everything the UI needs: which
 // runs exist, which are live, which is newest, and what's in the one on screen.
 
-import { CONFIG, keysFor, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG } from './config.js';
+import {
+  CONFIG, keysFor, LS_BEACONS, LS_SETTINGS, LS_TREE, LS_TREE_ETAG, LS_UPLOADED
+} from './config.js';
 import { MEDIA_RE, mediaTime, resolveMedia } from './media.js';
 import { parseSettings } from './settings.js';
 import { parseTime, pool, storage } from './util.js';
@@ -87,6 +89,7 @@ export async function fetchTree(etag) {
  *   { 'vendee-10k': { files: { '<name>.json': '<sha>', … },
  *                     latest: <ms> | null,
  *                     course: { name: 'course.gpx', sha } | null,
+ *                     courses: { '<name>.gpx': '<sha>', … } | undefined,
  *                     settings: { sha } | null } }
  *
  * Pure, and the only place the layout of the repo is interpreted.
@@ -96,8 +99,19 @@ export async function fetchTree(etag) {
  *
  * A `.gpx` inside a run is that run's course. It is deliberately kept out of
  * `files` and out of `latest`: a course is not a ping, and dropping one into a
- * folder must not make a finished race look live. If a run somehow has several,
- * the alphabetically first wins — arbitrary, but stable across polls.
+ * folder must not make a finished race look live.
+ *
+ * A run holding SEVERAL is the interesting case, and this function cannot settle it:
+ * the newest upload wins, and upload time is the one fact a tree listing does not
+ * carry. So it does the half that is derivable from filenames — the alphabetically
+ * first, arbitrary but stable — and hands the rest to `resolveCourses`, leaving the
+ * candidates in `courses` for it to choose between. That split is what keeps this
+ * function pure and synchronous, so the first paint has A course to draw before any
+ * request is made, and the RIGHT one once one has been.
+ *
+ * `courses` exists only while there is a choice to make. One `.gpx` is not a
+ * shortlist, and a copy of `course` in every one of a repo's runs is bytes spent in
+ * localStorage to say nothing.
  *
  * A `course_settings.json` is what the run says about itself, and only its SHA is
  * recorded here: this function reads a listing, and everything it produces has to
@@ -115,7 +129,9 @@ export async function fetchTree(etag) {
 export function buildIndex(entries) {
   const index = {};
   const record = run =>
-    (index[run] ??= { files: {}, media: {}, latest: null, course: null, settings: null });
+    (index[run] ??= {
+      files: {}, media: {}, latest: null, course: null, courses: {}, settings: null
+    });
 
   for (const entry of entries) {
     if (entry.type !== 'blob') continue;
@@ -129,6 +145,7 @@ export function buildIndex(entries) {
 
     if (/\.gpx$/i.test(name)) {
       const found = record(run);
+      found.courses[name] = entry.sha;
       if (!found.course || name < found.course.name) found.course = { name, sha: entry.sha };
       continue;
     }
@@ -177,6 +194,13 @@ export function buildIndex(entries) {
   // comes back as the string "null" either way — one of those two is a number, and
   // it isn't -Infinity. Nothing is left to drop: a record only exists because a
   // ping or a course created it.
+  //
+  // The shortlist goes last rather than being built conditionally above, because
+  // whether a run has a choice to make is only known once every entry has been read.
+  for (const record of Object.values(index)) {
+    if (Object.keys(record.courses).length < 2) delete record.courses;
+  }
+
   return index;
 }
 
@@ -185,9 +209,160 @@ export function cachedIndex() {
   return storage.get(LS_TREE) || {};
 }
 
+/** When each `.gpx` we've had to ask about landed: `uploadKey` -> ms. */
+export function cachedUploads() {
+  return storage.get(LS_UPLOADED) || {};
+}
+
 /**
- * One poll: refresh the index of every run. This is the ONLY rate-limited call
- * in the app, which is why `main.js` puts a throttle around exactly this.
+ * What one dated `.gpx` is filed under: its path AND its content.
+ *
+ * Both halves are needed, and each rules out a different way of being wrong. Without
+ * the sha the key names a mutable thing — re-upload a course under the same name and
+ * the old date would answer for the new file forever. Without the path it names an
+ * ambiguous one: the same route committed into two runs is one blob with one sha and
+ * two different upload times, and whichever run was dated first would hand its answer
+ * to the other. Together they name bytes-at-a-place, which is immutable and unique,
+ * so a cached answer is correct for as long as it exists.
+ */
+function uploadKey(run, name, sha) {
+  return `${run}/${name}@${sha}`;
+}
+
+/**
+ * When one blob was committed, from the commits API.
+ *
+ * THE SECOND RATE-LIMITED CALL IN THIS APP, and the only one besides the tree
+ * listing. Everything above is arranged so it is asked rarely: see `resolveCourses`.
+ *
+ * The COMMITTER date, not the author date. "Uploaded" means when the file appeared
+ * in this repo, and a GPX exported from a watch and committed months later would
+ * otherwise date from the export.
+ *
+ * `per_page=1` because commits come back newest first and only the newest matters —
+ * a course that was uploaded, deleted and re-uploaded counts from the re-upload.
+ *
+ * @returns {Promise<number|null>} ms, or null when GitHub won't say — a 403, a
+ *   network failure, or a path with no commits touching it at all.
+ */
+async function fetchUploadTime(run, name) {
+  const { owner, repo, branch, dir } = CONFIG;
+  const path = [dir, run, name].map(encodeURIComponent).join('/');
+  const url = `https://api.github.com/repos/${owner}/${repo}/commits`
+    + `?path=${path}&sha=${encodeURIComponent(branch)}&per_page=1`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/vnd.github+json' },
+      cache: 'no-store'
+    });
+    // Deliberately NOT a RateLimitError. This runs after the listing has already
+    // been read, and throwing here would throw away a good poll over a detail that
+    // only matters to runs with two courses. The caller reports it as unresolved
+    // instead, and the alphabetical pick stands until the budget refills.
+    if (!res.ok) return null;
+
+    const body = await res.json();
+    const when = Date.parse(body?.[0]?.commit?.committer?.date ?? '');
+    return Number.isNaN(when) ? null : when;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Settles which `.gpx` is the course for any run holding more than one: the most
+ * recently uploaded.
+ *
+ * This is the one thing about the repo that its filenames cannot tell us, so it is
+ * also the one place this app spends API budget on something other than the poll.
+ * Three rules keep that spend near zero, and all three are load-bearing:
+ *
+ *   Only AMBIGUOUS runs are asked about. `buildIndex` leaves `courses` behind only
+ *   where there are two or more, so a repo where every run has one course — which is
+ *   every repo, nearly always — makes no requests here at all, ever.
+ *
+ *   Answers are cached under the BLOB SHA, and a sha is immutable: the commit that
+ *   introduced these exact bytes at this path cannot change, so an answer is correct
+ *   forever and one sha is asked about at most once per browser. Re-uploading a
+ *   course produces a new sha and so a new question, which is precisely right.
+ *
+ *   Failure is not written down. A 403 or a dropped connection leaves the sha
+ *   unanswered rather than caching a null, so the question is asked again next poll
+ *   instead of being settled wrongly for good.
+ *
+ * A run whose files can't all be dated keeps the alphabetical pick from `buildIndex`
+ * — the whole shortlist or nothing, because dating half the candidates and comparing
+ * them against each other would pick confidently from the wrong set. Ties, which take
+ * one commit adding both files, fall back to the same alphabetical rule; it is
+ * arbitrary, but every viewer is arbitrary in the same direction, and two people
+ * looking at one race have to see one course.
+ *
+ * @param {Object} index from `buildIndex`, MUTATED in place.
+ * @returns {Promise<boolean>} whether every ambiguous run was settled. False means
+ *   the caller must not store the tree ETag — see `refreshIndex`.
+ */
+export async function resolveCourses(index) {
+  const ambiguous = Object.entries(index).filter(([, record]) => record?.courses);
+
+  const cache = cachedUploads();
+  // Shas nothing will ask about again — a course that was replaced, or a run that
+  // stopped being ambiguous. Left in, this grows by one entry per re-upload forever.
+  const live = new Set(ambiguous.flatMap(([run, r]) =>
+    Object.entries(r.courses).map(([name, sha]) => uploadKey(run, name, sha))));
+  const stale = Object.keys(cache).filter(key => !live.has(key));
+
+  if (!ambiguous.length) {
+    // The normal repo, and the reason the early return is here rather than at the
+    // top: there is nothing to choose, but there may still be something to forget.
+    // Conditional, because a write on every poll of a repo with nothing to remember
+    // is a write for nothing.
+    if (stale.length) storage.remove(LS_UPLOADED);
+    return true;
+  }
+
+  const wanted = ambiguous.flatMap(([run, record]) =>
+    Object.entries(record.courses).map(([name, sha]) => ({ run, name, key: uploadKey(run, name, sha) })));
+
+  const unknown = wanted.filter(({ key }) => !(key in cache));
+
+  if (unknown.length) {
+    const found = await pool(unknown, CONFIG.concurrency, async ({ run, name, key }) => {
+      const when = await fetchUploadTime(run, name);
+      return when === null ? null : { key, when };
+    });
+    for (const hit of found) if (hit) cache[hit.key] = hit.when;
+  }
+
+  let complete = true;
+
+  for (const [run, record] of ambiguous) {
+    const candidates = Object.entries(record.courses)
+      .map(([name, sha]) => ({ name, sha, when: cache[uploadKey(run, name, sha)] }));
+
+    if (candidates.some(c => c.when === undefined)) {
+      complete = false;
+      continue;                                     // keep the alphabetical pick
+    }
+    // Newest wins; the alphabetically first breaks a tie, which is the rule the
+    // fallback already follows, so an undatable run and a tied one agree.
+    const best = candidates.reduce((a, b) =>
+      b.when > a.when || (b.when === a.when && b.name < a.name) ? b : a);
+    record.course = { name: best.name, sha: best.sha };
+  }
+
+  for (const key of stale) delete cache[key];
+  storage.set(LS_UPLOADED, cache);
+
+  return complete;
+}
+
+/**
+ * One poll: refresh the index of every run. The tree request here is the
+ * rate-limited call, which is why `main.js` puts a throttle around exactly this.
+ *
+ * `resolveCourses` can add a request or two behind it, but only for a repo where
+ * some run holds two courses at once, and only until their shas have been dated.
  *
  * @returns {{changed: boolean, index: Object, truncated: boolean}} `changed` is
  *   false on a 304, in which case `index` is the cached one — still usable.
@@ -197,10 +372,18 @@ export async function refreshIndex() {
   if (!tree) return { changed: false, index: cachedIndex(), truncated: false };
 
   const index = buildIndex(tree.entries);
+  const resolved = await resolveCourses(index);
 
   // Only remember the ETag if the index itself was persisted. Otherwise a reload
   // would send the ETag, get a 304, and have no idea what runs exist.
-  if (storage.set(LS_TREE, index)) storage.set(LS_TREE_ETAG, tree.etag);
+  //
+  // And only if the courses were settled. An unresolved run is holding the
+  // alphabetical fallback, which is a guess; storing the ETag would make the next
+  // poll a 304, hand back that guess from the cache, and never look again — the
+  // tree hasn't changed, so nothing would ever prompt a retry. Withholding it costs
+  // a full tree body next poll, not an extra request: a 304 is charged the same.
+  const stored = storage.set(LS_TREE, index);
+  if (stored && resolved) storage.set(LS_TREE_ETAG, tree.etag);
   else storage.remove(LS_TREE_ETAG);
 
   return { changed: true, index, truncated: tree.truncated };

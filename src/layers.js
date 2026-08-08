@@ -388,9 +388,9 @@ function sunAtlas() {
  *
  * @param {Array} pois from [`placeMedia`](media.js).
  * @param {{atlas, mapping}|null} atlas from `buildMediaAtlas`, once its images
- *   have decoded. Null until then, and null forever for a run whose files all
- *   failed — in which case only the anchor dots draw, which is the honest result:
- *   something is there, and we cannot show you what.
+ *   have decoded. Null until then, and only until then: every POI gets a cell,
+ *   and a file that would not decode gets a dark one with the ▶ badge on it. So
+ *   the dots-alone state is a loading state and nothing else.
  */
 export function mediaLayers(pois, atlas) {
   if (!pois?.length) return [];
@@ -420,14 +420,32 @@ export function mediaLayers(pois, atlas) {
       getFillColor: p => [...fill(p), 255]
     }),
 
+    // Until the atlas lands there is nothing above the dots, so for those few
+    // seconds they are the whole of the mark and answer for themselves. Invisible,
+    // generous, and pickable, in the idiom of `course-hit`. It goes away the moment
+    // the thumbnails arrive, which is what keeps the rule below true: one mark, one
+    // tooltip, and the picture owns it wherever there is one.
+    ...(atlas ? [] : [new deck.ScatterplotLayer({
+      id: 'media-hit',
+      data: pois,
+      pickable: true,
+      radiusUnits: 'pixels',
+      getPosition: p => [p.lon, p.lat],
+      // Wider than the 4 px dot it stands over, because a dot drawn that small is
+      // aimed at rather than hit.
+      getRadius: 10,
+      getFillColor: [0, 0, 0, 0]
+    })]),
+
     ...(atlas ? [new deck.IconLayer({
       id: 'media',
       data: pois,
       pickable: true,
       iconAtlas: atlas.atlas,
       iconMapping: atlas.mapping,
-      // A POI whose image would not decode has no cell in the mapping, and deck
-      // draws nothing for it rather than drawing its neighbour's picture.
+      // Every POI has a cell, decoded or not — see `buildMediaAtlas`. A clip whose
+      // frame would not come gets a dark one with the ▶ on it, which is a marker
+      // you can read and point at rather than a hole in the layer.
       getIcon: p => p.name,
       getPosition: p => [p.lon, p.lat],
       getSize: THUMB_PX,
