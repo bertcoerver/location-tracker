@@ -787,7 +787,7 @@ test('hover produces no tooltip at all while a point is pinned', () => {
 // --- what the newest fix is doing ---------------------------------------------
 //
 // The decision behind the two loudest marks on the map: whether the orange dot
-// pulses, and whether a chequered flag stands on it. The layers themselves need
+// pulses, and whether a finish flag stands on it. The layers themselves need
 // deck.gl's global, so the rule is pure and exported and the cases are all here.
 
 const HOUR = 60 * MINUTE;
@@ -828,7 +828,7 @@ test('a race the phone called finished never pulses again', () => {
 test('a run that simply went quiet stops pulsing too, without a flag', () => {
   // No finish marker and no course to predict one from — a phone that died, or a
   // race abandoned. The dot must stop claiming "now", but nothing here earns a
-  // chequered flag: nobody said this run crossed a line.
+  // finish flag: nobody said this run crossed a line.
   const now = Date.parse('2026-07-28T12:00:00+02:00');
   const state = latestState(recent(3 * HOUR, now), null, now);
 

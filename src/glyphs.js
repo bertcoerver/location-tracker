@@ -11,7 +11,8 @@
 // used as a stencil and refilled with one of the page's own five colours, so a
 // mark follows the palette in either colour scheme and a replacement icon cannot
 // arrive carrying a sixth colour. Opacity survives — it is the stencil's alpha —
-// which is how the chequered flag gets its light squares out of one ink.
+// so a half-strength shape stays half-strength and a hole stays a hole, which is
+// the only way a solid mark like the camera can have a lens.
 //
 // This replaced a pair of colour emoji. They were unusable for a reason worth
 // recording: with `sdf: true` and with `sdf: false` alike, deck.gl 9.3.7 renders
@@ -229,10 +230,10 @@ async function fetchSource(name) {
  * The drawing, refilled with one colour.
  *
  * `source-in` keeps the destination's alpha and takes the source's colour, so
- * anti-aliased edges and any deliberate transparency — the flag's light squares —
- * come through untouched while every hue in the file is thrown away. That is what
- * "mono" means here, and it is enforced rather than assumed: an icon downloaded
- * from anywhere at all arrives on this page in this page's colours.
+ * anti-aliased edges and any deliberate transparency — the camera's punched-out
+ * lens — come through untouched while every hue in the file is thrown away. That
+ * is what "mono" means here, and it is enforced rather than assumed: an icon
+ * downloaded from anywhere at all arrives on this page in this page's colours.
  */
 function tint(stencil, ink) {
   const canvas = document.createElement('canvas');

@@ -338,8 +338,8 @@ export function sunLayers(pois) {
 }
 
 /** How big a sun mark is drawn, in whole cells — see `CELL_PX` for why the
- *  drawing inside one comes out a little smaller than this. */
-const SUN_PX = 23;
+ *  drawing inside one comes out a sixth smaller than this. */
+const SUN_PX = 30;
 
 /** Built once and kept: the palette is read once per page too, so there is no
  *  colour in here that can change under it. Not memoised until it EXISTS, so the
@@ -477,7 +477,7 @@ export function mediaLayers(pois, atlas) {
  * or a race the phone itself called done.
  *
  * Pure, and separated out because it decides the two most visible things on the
- * map — whether the orange dot pulses, and whether a chequered flag stands over it
+ * map — whether the orange dot pulses, and whether a finish flag stands over it
  * — and neither of those can be unit-tested through a deck.gl layer.
  *
  * `finished` is the phone's own assertion and outranks everything: `is_finish` on
@@ -669,7 +669,7 @@ export function pointLayers(all, pulse, course = null, forecast = null) {
       getFillColor: [...accent(), 255]
     }),
 
-    // The chequered flag, planted on the last fix of a finished race.
+    // The finish flag, planted on the last fix of a finished race.
     //
     // Not pickable, in the sun glyph's idiom: the dot underneath is the position
     // and owns the tooltip — which already says `· finish` — and the flag is the
@@ -695,23 +695,18 @@ export function pointLayers(all, pulse, course = null, forecast = null) {
   ];
 }
 
-/** How big the flag is drawn, in whole cells. Bigger than the sun marks because
- *  it is a statement about the whole race rather than an annotation on it. */
-const FLAG_PX = 48;
+/** How big the flag is drawn, in whole cells. Twice the sun marks because it is a
+ *  statement about the whole race rather than an annotation on it. */
+const FLAG_PX = 60;
 
 /** Built once and kept, and — like the sun's — not memoised until it exists. */
 let flagAtlasMemo = null;
 
 /**
- * The chequered flag, from `icons/finish.svg`.
+ * The finish flag, from `icons/finish.svg`.
  *
  * The accent rather than the course colour: this is the runner's own mark, the
  * one the whole page is about, and the runner is orange.
- *
- * Mono, which a chequered flag has to be talked about carefully. The squares are
- * not black and white — they are the accent at full strength and the accent at a
- * third of it, which is a distinction the tint keeps because it works on colour
- * and leaves alpha alone. See `glyphs.js`.
  */
 function finishAtlas() {
   if (!flagAtlasMemo) {

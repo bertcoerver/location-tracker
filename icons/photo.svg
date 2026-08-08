@@ -6,14 +6,27 @@
   tall and has no room to show one, so there it is this instead: a mark that says
   a picture was taken at this distance, and go to the map to see it.
 
+  SOLID, unlike the other three, and that is the point of it: on the strip this
+  mark sits among pings and a hover line and a drawn skyline, and an outline the
+  same weight as those disappears into them. A filled body is a silhouette, and a
+  silhouette is legible at a size where an outline is only texture.
+
+  Which is why the lens is a HOLE rather than a ring drawn over the body. It is one
+  path with `fill-rule="evenodd"`: the body, then the lens, then the pupil inside
+  it, then the viewfinder — each nested subpath flips fill to empty and back. That
+  matters here because the tint refills the drawing with one colour and cannot
+  paint anything back OUT of it (see src/glyphs.js), so any detail on a solid shape
+  has to be genuinely transparent in this file to survive.
+
   One ink, tinted on the way to the screen. See sunrise.svg.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
      color="#000" fill="none" stroke="currentColor" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round">
-  <!-- The body, with the viewfinder hump over the lens. -->
-  <path d="M3.8 7.6h2.9l1.5-2.4h7.6l1.5 2.4h2.9A1.8 1.8 0 0 1 22 9.4v8.8a1.8 1.8 0
-           0 1-1.8 1.8H3.8A1.8 1.8 0 0 1 2 18.2V9.4a1.8 1.8 0 0 1 1.8-1.8Z"/>
-  <!-- The lens. -->
-  <circle cx="12" cy="13.8" r="3.5"/>
+  <path fill="currentColor" fill-rule="evenodd" stroke="none"
+        d="M3.3 6.8h4.3l1.6-2.6h5.6l1.6 2.6h4.3a1.8 1.8 0 0 1 1.8 1.8v10.8a1.8 1.8
+           0 0 1-1.8 1.8H3.3a1.8 1.8 0 0 1-1.8-1.8V8.6a1.8 1.8 0 0 1 1.8-1.8Z
+           M12 10a4 4 0 1 0 0 8 4 4 0 1 0 0-8Z
+           M12 12.3a1.7 1.7 0 1 0 0 3.4 1.7 1.7 0 1 0 0-3.4Z
+           M5.5 9.4a1 1 0 1 0 0 2 1 1 0 1 0 0-2Z"/>
 </svg>

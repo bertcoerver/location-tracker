@@ -319,10 +319,16 @@ hanging off them is a lot of furniture on a route for a fact nobody reads off a 
 mark has to say from across the screen is *here is where the light changed*; the tooltip says the
 minute, the date and the race clock, and it says them to anyone who asks.
 
-**A rising moon for sunset, not a setting sun.** The pair has to be told apart at 22 px, which rules
-out the obvious drawing — a sun on a horizon with the arrow the other way is the same picture as
-sunrise until you look hard. A crescent coming up is unmistakable beside a sun coming up, and it says
-the thing the runner actually cares about: the head torch goes on.
+**A rising moon for sunset, not a setting sun.** The pair has to be told apart at a couple of dozen
+pixels, which rules out the obvious drawing — a sun on a horizon with the arrow the other way is the
+same picture as sunrise until you look hard. A crescent coming up is unmistakable beside a sun coming
+up, and it says the thing the runner actually cares about: the head torch goes on.
+
+**The arrow sits directly above** what is rising, in both, rather than off to one side, so each mark
+is one stacked thing instead of two things next to each other. That costs the sun its twelve-o-clock
+ray: with an arrow overhead, a vertical ray and the arrow's tail line up into a single stem and the
+whole mark reads as an anchor. Four rays on the diagonals instead, which is a thing worth knowing
+before redrawing either file.
 
 Both are SVG files — see "The marks are files" below.
 
@@ -373,12 +379,26 @@ picture on every operating system, which is what made the old pair so hard to ch
 **Every mark is mono.** Whatever colour a file states is discarded — the raster is used as a stencil
 and refilled with one of the page's own five colours, so a mark follows the palette in either scheme
 and a replacement cannot arrive carrying a sixth colour. *Opacity* survives, because it is the
-stencil's alpha, which is how the chequered flag gets its light squares out of a single ink.
+stencil's alpha — a half-strength shape stays half-strength, and a hole stays a hole.
+
+That second half is why the camera on the height strip is one path with `fill-rule="evenodd"` rather
+than a body with a lens drawn on top of it. The mark is a filled silhouette, because among pings and a
+hover line and a drawn skyline an outline of the same weight is texture rather than a shape; and once
+it is solid, the only way to get a lens back out of it is genuine transparency, since the tint can
+refill the drawing but cannot paint anything out of it.
 
 **Two families, one rule apart.** The four *drawn* marks go onto a canvas and so must state a `color`
 of their own; the three *inlined* ones go into a button as markup, where `currentColor` is the whole
 point — it inherits the button's ink — so they must not. That is the one difference that fails
 silently in opposite directions, so there is a test for it.
+
+**A downloaded drawing needs fitting, and the fitting lives in the file.** `finish.svg` is a flag from
+SVG Repo, its path verbatim, wrapped in a `<g transform>` that does two things: it scales the art up to
+fill the 24-grid the other marks fill, and it puts the foot of the pole near the bottom-left corner —
+because that corner is the point `layers.js` plants the flag on the last fix by, and a drawing whose
+pole sits in the middle of its own grid would fly *beside* the finish rather than stand on it. Its
+`stroke-width` is pre-divided by the scale so the stroke still comes out at the 2 everything else uses.
+Fitting a swapped-in icon is three numbers in one attribute, and no code.
 
 **Two icons are still in code, on purpose.** The battery and the signal bars in a ping tooltip carry
 their *reading* in their geometry: the fill rectangle's width **is** the charge, and which bars are lit

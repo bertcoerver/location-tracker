@@ -61,7 +61,7 @@ const DRAG_SLOP_PX = 4;
  * glance and then get out of the way. No halo on any of them — this canvas owns
  * its own background, unlike the map, which sits on whatever imagery it is given.
  */
-const MARK_PX = 15;
+const MARK_PX = 19;
 
 /**
  * How long after a tap has been dealt with a `click` is still assumed to belong
