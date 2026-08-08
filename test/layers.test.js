@@ -787,7 +787,7 @@ test('hover produces no tooltip at all while a point is pinned', () => {
 // --- what the newest fix is doing ---------------------------------------------
 //
 // The decision behind the two loudest marks on the map: whether the orange dot
-// pulses, and whether a finish flag stands on it. The layers themselves need
+// pulses, and whether a still ring stands around it. The layers themselves need
 // deck.gl's global, so the rule is pure and exported and the cases are all here.
 
 const HOUR = 60 * MINUTE;
@@ -799,7 +799,7 @@ const recent = (agoMs, now) => [
   { name: 'c', t: now - agoMs, lat: LAT0, lon: 0 }
 ];
 
-test('a run pinging now is live, and neither finished nor flagged', () => {
+test('a run pinging now is live, and not finished', () => {
   const now = Date.parse('2026-07-28T12:00:00+02:00');
   const state = latestState(recent(2 * MINUTE, now), null, now);
 
@@ -825,10 +825,10 @@ test('a race the phone called finished never pulses again', () => {
   assert.deepEqual([later.finished, later.live], [true, false]);
 });
 
-test('a run that simply went quiet stops pulsing too, without a flag', () => {
+test('a run that simply went quiet stops pulsing too, without finishing', () => {
   // No finish marker and no course to predict one from — a phone that died, or a
-  // race abandoned. The dot must stop claiming "now", but nothing here earns a
-  // finish flag: nobody said this run crossed a line.
+  // race abandoned. The dot must stop claiming "now", but nothing here earns the
+  // finished state either: nobody said this run crossed a line.
   const now = Date.parse('2026-07-28T12:00:00+02:00');
   const state = latestState(recent(3 * HOUR, now), null, now);
 

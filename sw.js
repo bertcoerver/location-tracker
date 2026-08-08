@@ -71,7 +71,6 @@ const SHELL_URLS = [
   // of this file with a regex over quoted strings, and one would look like an entry.
   './icons/sunrise.svg',
   './icons/sunset.svg',
-  './icons/finish.svg',
   './icons/photo.svg',
   './icons/prev.svg',
   './icons/next.svg',

@@ -390,7 +390,7 @@ of that fix's 16 px, and the ping is still there six pixels away.
 ### The marks are files
 
 Every drawn mark on this page is an SVG in `icons/`, and swapping one is editing one small file and
-touching no code at all. There are seven: `sunrise`, `sunset`, `finish`, `photo`, and the three
+touching no code at all. There are six: `sunrise`, `sunset`, `photo`, and the three
 controls on a photo card — `prev`, `next`, `expand`. `src/glyphs.js` is the plumbing, and
 `test/glyphs.test.js` guards the invariants a browser would otherwise break silently.
 
@@ -412,18 +412,15 @@ hover line and a drawn skyline an outline of the same weight is texture rather t
 it is solid, the only way to get a lens back out of it is genuine transparency, since the tint can
 refill the drawing but cannot paint anything out of it.
 
-**Two families, one rule apart.** The four *drawn* marks go onto a canvas and so must state a `color`
+**Two families, one rule apart.** The three *drawn* marks go onto a canvas and so must state a `color`
 of their own; the three *inlined* ones go into a button as markup, where `currentColor` is the whole
 point — it inherits the button's ink — so they must not. That is the one difference that fails
 silently in opposite directions, so there is a test for it.
 
-**A downloaded drawing needs fitting, and the fitting lives in the file.** `finish.svg` is a flag from
-SVG Repo, its path verbatim, wrapped in a `<g transform>` that does two things: it scales the art up to
-fill the 24-grid the other marks fill, and it puts the foot of the pole near the bottom-left corner —
-because that corner is the point `layers.js` plants the flag on the last fix by, and a drawing whose
-pole sits in the middle of its own grid would fly *beside* the finish rather than stand on it. Its
-`stroke-width` is pre-divided by the scale so the stroke still comes out at the 2 everything else uses.
-Fitting a swapped-in icon is three numbers in one attribute, and no code.
+**A downloaded drawing needs fitting, and the fitting lives in the file.** Wrap the imported path in a
+`<g transform>` that scales the art up to fill the 24-grid the other marks fill, and pre-divide its
+`stroke-width` by that scale so the stroke still comes out at the 2 everything else uses. Fitting a
+swapped-in icon is a couple of numbers in one attribute, and no code.
 
 **Two icons are still in code, on purpose.** The battery and the signal bars in a ping tooltip carry
 their *reading* in their geometry: the fill rectangle's width **is** the charge, and which bars are lit

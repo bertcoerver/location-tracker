@@ -7,7 +7,7 @@ import {
   prefersDark
 } from './colors.js';
 import { courseHoverAt, pathsBetween } from './course.js';
-import { CELL_PX, glyphAtlas, inkOf, inlineGlyph, INSET_PX } from './glyphs.js';
+import { glyphAtlas, inkOf, inlineGlyph } from './glyphs.js';
 import { isLive } from './github.js';
 import { stillRunning } from './predict.js';
 import { interpolateAt, originOf } from './stats.js';
@@ -477,8 +477,8 @@ export function mediaLayers(pois, atlas) {
  * or a race the phone itself called done.
  *
  * Pure, and separated out because it decides the two most visible things on the
- * map — whether the orange dot pulses, and whether a finish flag stands over it
- * — and neither of those can be unit-tested through a deck.gl layer.
+ * map — whether the orange dot pulses, and whether a still ring stands around it
+ * instead — and neither of those can be unit-tested through a deck.gl layer.
  *
  * `finished` is the phone's own assertion and outranks everything: `is_finish` on
  * the last fix means the runner crossed the line, and that stays true tomorrow, in
@@ -667,64 +667,8 @@ export function pointLayers(all, pulse, course = null, forecast = null) {
       getLineWidth: 2,
       getLineColor: [...ring, 255],
       getFillColor: [...accent(), 255]
-    }),
-
-    // The finish flag, planted on the last fix of a finished race.
-    //
-    // Not pickable, in the sun glyph's idiom: the dot underneath is the position
-    // and owns the tooltip — which already says `· finish` — and the flag is the
-    // one word the dot cannot say on its own. Anchored at the foot of its pole so
-    // the pole stands ON the fix with its base tucked under the dot, rather than
-    // floating beside it like a label.
-    //
-    // Nothing until the drawing has loaded, for the sun's reason: the dot is the
-    // reading and is already on screen.
-    ...(finished && finishAtlas() ? [
-      new deck.IconLayer({
-        id: 'finish-flag',
-        data: latestData,
-        iconAtlas: finishAtlas().atlas,
-        iconMapping: finishAtlas().mapping,
-        getIcon: () => 'finish',
-        getPosition: posOf,
-        getSize: FLAG_PX,
-        sizeUnits: 'pixels',
-        updateTriggers: { getIcon: finishAtlas() }
-      })
-    ] : [])
+    })
   ];
-}
-
-/** How big the flag is drawn, in whole cells. Twice the sun marks because it is a
- *  statement about the whole race rather than an annotation on it. */
-const FLAG_PX = 60;
-
-/** Built once and kept, and — like the sun's — not memoised until it exists. */
-let flagAtlasMemo = null;
-
-/**
- * The finish flag, from `icons/finish.svg`.
- *
- * The accent rather than the course colour: this is the runner's own mark, the
- * one the whole page is about, and the runner is orange.
- */
-function finishAtlas() {
-  if (!flagAtlasMemo) {
-    flagAtlasMemo = glyphAtlas(['finish'], inkOf(accent()), inkOf(surface()));
-    // Planted on the fix rather than centred over it, so the pole stands ON the
-    // last position with its base tucked under the dot. The bottom-left corner of
-    // the DRAWING AREA, not of the pole — stated that way on purpose, because the
-    // whole point of keeping these in their own files is that one can be swapped
-    // without editing this line. It is a couple of pixels off the pole itself,
-    // which at this size is nothing.
-    if (flagAtlasMemo) {
-      Object.assign(flagAtlasMemo.mapping.finish, {
-        anchorX: INSET_PX,
-        anchorY: CELL_PX - INSET_PX
-      });
-    }
-  }
-  return flagAtlasMemo;
 }
 
 /**

@@ -1,4 +1,4 @@
-// The drawn marks: sunrise, sunset, the finish flag, and a photograph.
+// The drawn marks: sunrise, sunset, and a photograph.
 //
 // The drawings themselves live in `icons/*.svg` rather than in here, so that
 // changing what a mark LOOKS like is editing one small file — with a drawing
@@ -35,7 +35,7 @@
 // `color`, and their colours are their own. `icons/prev.svg` says so at the top.
 
 /** The marks drawn onto a canvas, and so the filenames under `icons/`. */
-export const GLYPHS = ['sunrise', 'sunset', 'finish', 'photo'];
+export const GLYPHS = ['sunrise', 'sunset', 'photo'];
 
 /** The marks inlined into markup. */
 export const INLINE_GLYPHS = ['prev', 'next', 'expand'];
