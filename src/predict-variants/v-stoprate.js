@@ -54,8 +54,8 @@ export function stopRate(legs, fit, anchorAlong) {
   return clamp(slow / metres, 0, STOP_RATE_CAP * fit.flat);
 }
 
-export function buildForecast(points, course) {
-  const base = baseBuild(points, course);
+export function buildForecast(points, course, options) {
+  const base = baseBuild(points, course, options);
   if (!base) return null;
 
   const snapped = points.filter(p => p.snap);

@@ -2,12 +2,11 @@
     "id": "UTMB",
     "label": "Ultra Trail de Mont Blanc",
     "start_datetime": "2026-08-28T18:00:00+02:00",
-    "ping_frequency": {
-        "min_interval": 5,
-        "max_interval": 30,
-        "k": 0.3,
-        "midpoint": 25
-    },
+    "ping_min_interval": 25,
+    "ping_max_interval": 40,
+    "ping_k": 0.3,
+    "ping_midpoint": 25,
+    "crew": ["Mariam"],
     "news_banner": "Official Race Odometer [here](https://some.url)",
     "distance": 174,
     "total_ascent": 9900

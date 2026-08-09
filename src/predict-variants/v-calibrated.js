@@ -28,8 +28,8 @@ const CAL_C = Number(globalThis.process?.env?.CAL_C) || 0.15;
 /** Horizon exponent: 1 = proportional to remaining time. */
 const CAL_P = Number(globalThis.process?.env?.CAL_P) || 1.0;
 
-export function buildForecast(points, course) {
-  const base = fadeBuild(points, course);
+export function buildForecast(points, course, options) {
+  const base = fadeBuild(points, course, options);
   if (!base) return null;
 
   return { ...base, infl: clamp(grossRatio(points, course, base), 1, 2) };

@@ -3,9 +3,13 @@
 //   1. A settings file is written by hand, mid-race, quite possibly on a phone. One
 //      mistyped field must cost that field and nothing else — a parser that throws
 //      the document away over a bad distance takes the race's name off the screen.
-//   2. `ping_frequency` is a file in a repo reaching into the poll scheduler, and
+//   2. The ping curve is a file in a repo reaching into the poll scheduler, and
 //      the API budget is 60 requests an hour. It is the one thing here that is
 //      clamped rather than merely validated.
+//
+// The file is flat — the phone app that writes it cannot nest — so the curve's four
+// numbers are top-level `ping_*` keys rather than a block. They are still refused as
+// a unit, which is what most of the cases below are about.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -82,7 +86,7 @@ test('seconds are optional and a bare date is not a start', () => {
 
 test('a ping curve in minutes becomes one in milliseconds', () => {
   const { ping } = parseSettings({
-    ping_frequency: { min_interval: 5, max_interval: 30, k: 0.3, midpoint: 25 }
+    ping_min_interval: 5, ping_max_interval: 30, ping_k: 0.3, ping_midpoint: 25
   });
 
   assert.deepEqual(ping, {
@@ -90,10 +94,26 @@ test('a ping curve in minutes becomes one in milliseconds', () => {
   });
 });
 
+test('the curve is flat in the file, and nested is not a curve', () => {
+  // The whole point of the change: the phone app that writes these files cannot
+  // produce a nested object, so the four numbers live at the top level. A file still
+  // carrying the old block names no `ping_*` key, so it gets the CONFIG curve — the
+  // same thing a file that never mentioned the curve gets.
+  const old = parseSettings({
+    ping_frequency: { min_interval: 5, max_interval: 30, k: 0.3, midpoint: 25 },
+    label: 'Lac'
+  });
+
+  assert.equal('ping' in old, false);
+  // And it costs that run its curve, not its name.
+  assert.equal(old.label, 'Lac');
+});
+
 test('each key of the curve falls back on its own', () => {
   // The units are not uniform, and this is the test that says so out loud: the
-  // intervals are minutes, `k` is per battery-point, `midpoint` is a percentage.
-  const { ping } = parseSettings({ ping_frequency: { midpoint: 40 } });
+  // intervals are minutes, `ping_k` is per battery-point, `ping_midpoint` is a
+  // percentage.
+  const { ping } = parseSettings({ ping_midpoint: 40 });
 
   assert.equal(ping.batteryMid, 40);
   assert.equal(ping.minPingMs, CONFIG.minPingMs);
@@ -101,17 +121,17 @@ test('each key of the curve falls back on its own', () => {
   assert.equal(ping.batteryK, CONFIG.batteryK);
 });
 
-test('a min_interval under the floor is refused, not clamped up to it', () => {
+test('a ping_min_interval under the floor is refused, not clamped up to it', () => {
   // The whole reason `pingFloorMs` exists. `nextPollMs` sleeps about one ping
   // interval, so a zero here makes every branch return the 30-second floor, which
   // spends 60 requests an hour in half an hour and locks the map out for everyone
   // behind the same IP — with nothing on screen saying why.
-  assert.equal('ping' in parseSettings({ ping_frequency: { min_interval: 0 } }), false);
-  assert.equal('ping' in parseSettings({ ping_frequency: { min_interval: 0.5 } }), false);
+  assert.equal('ping' in parseSettings({ ping_min_interval: 0 }), false);
+  assert.equal('ping' in parseSettings({ ping_min_interval: 0.5 }), false);
 
   const floorMinutes = CONFIG.pingFloorMs / 60000;
   assert.equal(
-    parseSettings({ ping_frequency: { min_interval: floorMinutes } }).ping.minPingMs,
+    parseSettings({ ping_min_interval: floorMinutes }).ping.minPingMs,
     CONFIG.pingFloorMs,
     'exactly at the floor is allowed — it is a floor, not a threshold'
   );
@@ -120,32 +140,48 @@ test('a min_interval under the floor is refused, not clamped up to it', () => {
 test('a malformed curve falls back whole, never half', () => {
   // A sane min beside a nonsense max is not four independent numbers, it is one
   // shape — and half of it applied to half of the default is a curve nobody chose.
+  // Flattening the file is exactly what could have lost this: the four keys now sit
+  // beside `distance`, which IS read on its own.
   const cases = [
-    { min_interval: 5, max_interval: 'thirty' },
-    { min_interval: 30, max_interval: 5 },     // ends the wrong way round
-    { min_interval: 5, k: -1 },                 // a curve that slows down on charge
-    { min_interval: 5, midpoint: 150 },         // a knee no battery can reach
-    { min_interval: 5, midpoint: -10 }
+    { ping_min_interval: 5, ping_max_interval: 'thirty' },
+    { ping_min_interval: 30, ping_max_interval: 5 },  // ends the wrong way round
+    { ping_min_interval: 5, ping_k: -1 },             // a curve that slows down on charge
+    { ping_min_interval: 5, ping_midpoint: 150 },     // a knee no battery can reach
+    { ping_min_interval: 5, ping_midpoint: -10 }
   ];
 
-  for (const ping_frequency of cases) {
-    assert.equal('ping' in parseSettings({ ping_frequency }), false,
-      `${JSON.stringify(ping_frequency)} must not produce a partial curve`);
+  for (const curve of cases) {
+    assert.equal('ping' in parseSettings(curve), false,
+      `${JSON.stringify(curve)} must not produce a partial curve`);
   }
+});
+
+test('a malformed curve costs the curve and nothing else', () => {
+  // The flat file's own hazard: the bad key is now a sibling of the good fields
+  // rather than buried in a block of its own.
+  const found = parseSettings({ ping_min_interval: 0, label: 'UTMB', distance: 174 });
+
+  assert.equal('ping' in found, false);
+  assert.equal(found.label, 'UTMB');
+  assert.equal(found.distance, 174);
 });
 
 test('equal ends are a legal fixed-interval curve', () => {
   // `min + 0 / anything` is `min` at every battery level, which is a phone that
   // pings on a timer. Nothing about that is malformed.
-  const { ping } = parseSettings({ ping_frequency: { min_interval: 10, max_interval: 10 } });
+  const { ping } = parseSettings({ ping_min_interval: 10, ping_max_interval: 10 });
   assert.equal(ping.minPingMs, 600000);
   assert.equal(ping.maxPingMs, 600000);
 });
 
-test('anything that is not an object is not a curve', () => {
-  assert.equal('ping' in parseSettings({ ping_frequency: 5 }), false);
-  assert.equal('ping' in parseSettings({ ping_frequency: null }), false);
-  assert.equal('ping' in parseSettings({ ping_frequency: {} }), true, 'but an empty one is');
+test('naming none of the four keys is not a curve at all', () => {
+  // Absent rather than a copy of CONFIG, so `dueInMs` falls through to its own
+  // default and there is one place the fallback curve is written down.
+  assert.equal('ping' in parseSettings({ label: 'Lac' }), false);
+  // A key given as null or a string is still a key given, and an unusable one — the
+  // curve is refused rather than half-built.
+  assert.equal('ping' in parseSettings({ ping_k: null }), false);
+  assert.equal('ping' in parseSettings({ ping_midpoint: 'twenty' }), false);
 });
 
 // --- the stated figures ------------------------------------------------------
@@ -210,7 +246,7 @@ test('a malformed crew costs the crew and nothing else', () => {
 });
 
 test('one unusable name does not take the rest of the crew with it', () => {
-  // Unlike `ping_frequency`, which is all-or-nothing because four numbers are one
+  // Unlike the `ping_*` keys, which are all-or-nothing because four numbers are one
   // curve. A list of people with a blank in it is still a list of people, and
   // dropping it whole would put every crew photograph back on the runner's course.
   assert.deepEqual(parseSettings({ crew: ['Mariam', '', 7, null, 'Jo'] }).crew, ['Mariam', 'Jo']);

@@ -15,7 +15,14 @@
 //
 // So every field is read the way `fetchPoint` reads a ping's optional ones: taken if
 // it is the shape it should be, dropped without comment if it isn't. The one
-// exception is `ping_frequency`, and the reason is below.
+// exception is the ping curve, and the reason is below.
+//
+// The file is FLAT — one level of keys, no nested objects anywhere. The four numbers
+// of the ping curve used to live in a `ping_frequency` block and are now spelled
+// `ping_min_interval`, `ping_max_interval`, `ping_k` and `ping_midpoint`, because the
+// phone app that writes this file can only produce a flat document. They keep the
+// shared prefix precisely because they are still ONE shape rather than four settings:
+// see `parsePing`, which accepts or refuses them as a unit.
 
 import { CONFIG } from './config.js';
 import { parseStamp } from './util.js';
@@ -27,6 +34,13 @@ function positive(value) {
 }
 
 /**
+ * The four top-level keys that together are the ping curve. Named in one place
+ * because `parsePing` has to ask whether ANY of them was given before it can read
+ * each of them — the flat file has no block whose presence answers that.
+ */
+const PING_KEYS = ['ping_min_interval', 'ping_max_interval', 'ping_k', 'ping_midpoint'];
+
+/**
  * The four constants of the phone's ping curve, as this run reports them.
  *
  * ┌─────────────────────────────────────────────────────────────────────────┐
@@ -35,7 +49,7 @@ function positive(value) {
  * └─────────────────────────────────────────────────────────────────────────┘
  *
  * `nextPollMs` sleeps for about one ping interval, and GitHub allows 60 API
- * requests an hour per IP. A `min_interval` of 0 — a plausible typo, and the
+ * requests an hour per IP. A `ping_min_interval` of 0 — a plausible typo, and the
  * default value of an empty form field — makes every branch of that function
  * return the 30-second floor, which spends the entire hourly budget in half an
  * hour and locks the map out for everyone behind the same connection, on every run,
@@ -44,23 +58,32 @@ function positive(value) {
  * Hence `pingFloorMs`. And hence the all-or-nothing rule: a curve with a sane `min`
  * and a nonsense `max` is not four independent numbers, it is one shape, and half
  * of it applied to the other half of the default is a curve nobody chose. A
- * malformed block falls back to CONFIG entirely, which is a curve somebody did.
+ * malformed curve falls back to CONFIG entirely, which is a curve somebody did.
+ * Flattening the file did not weaken this: the four keys sit beside `distance` and
+ * `crew` now, but they are still refused together, unlike every other field here.
  *
  * Note the units, which are NOT uniform and are the likeliest thing to get wrong:
- * `min_interval` and `max_interval` are MINUTES, `k` is per battery-percentage-
- * point, and `midpoint` is a PERCENTAGE. Only the first two are times.
+ * `ping_min_interval` and `ping_max_interval` are MINUTES, `ping_k` is per
+ * battery-percentage-point, and `ping_midpoint` is a PERCENTAGE. Only the first two
+ * are times.
+ *
+ * The four keys are read off the top level of the file rather than out of a block of
+ * their own, so "did this run name a curve at all" is a question about the four names
+ * rather than about one. A file mentioning NONE of them gets `undefined` and the
+ * CONFIG curve, exactly as an absent `ping_frequency` block used to.
  *
  * @returns {{minPingMs, maxPingMs, batteryK, batteryMid}|undefined}
  */
 function parsePing(raw) {
-  if (!raw || typeof raw !== 'object') return undefined;
+  if (!PING_KEYS.some(key => raw[key] !== undefined)) return undefined;
 
-  // Each key independently falls back, so `{ "midpoint": 20 }` is a legal file that
-  // moves the knee of the curve and leaves its ends where the phone's script has them.
-  const minPingMs  = raw.min_interval === undefined ? CONFIG.minPingMs : positive(raw.min_interval) * 60000;
-  const maxPingMs  = raw.max_interval === undefined ? CONFIG.maxPingMs : positive(raw.max_interval) * 60000;
-  const batteryK   = raw.k === undefined ? CONFIG.batteryK : positive(raw.k);
-  const batteryMid = raw.midpoint === undefined ? CONFIG.batteryMid : Number(raw.midpoint);
+  // Each key independently falls back, so `"ping_midpoint": 20` alone is a legal file
+  // that moves the knee of the curve and leaves its ends where the phone's script has
+  // them.
+  const minPingMs  = raw.ping_min_interval === undefined ? CONFIG.minPingMs : positive(raw.ping_min_interval) * 60000;
+  const maxPingMs  = raw.ping_max_interval === undefined ? CONFIG.maxPingMs : positive(raw.ping_max_interval) * 60000;
+  const batteryK   = raw.ping_k === undefined ? CONFIG.batteryK : positive(raw.ping_k);
+  const batteryMid = raw.ping_midpoint === undefined ? CONFIG.batteryMid : Number(raw.ping_midpoint);
 
   // `positive` returns undefined on anything unusable, and `undefined * 60000` is
   // NaN, so one finite check catches every way the four could have been mistyped.
@@ -146,7 +169,7 @@ export function parseSettings(raw) {
   const start = parseStamp(raw.start_datetime);
   if (start !== null) out.start = start;
 
-  const ping = parsePing(raw.ping_frequency);
+  const ping = parsePing(raw);
   if (ping) out.ping = ping;
 
   if (typeof raw.news_banner === 'string' && raw.news_banner.trim()) {

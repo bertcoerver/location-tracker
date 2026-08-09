@@ -10,7 +10,10 @@
 // The names are the vocabulary of the URL switch, so they are short and stay
 // stable: `classic` the original moving-pace regression, `blend` the
 // gross-pace blend, `stoprate` the stop budget, `fade` the fatigue exponent on
-// top of it, `calibrated` fade with the empirically-sized band. The backtests
+// top of it, `calibrated` fade with the empirically-sized band, and `cadence`
+// calibrated corrected for how often the phone actually pings — the same model
+// whenever that is every five minutes, which is every run recorded so far, and
+// a narrower band with an earlier first answer when it is not. The backtests
 // behind the ranking live in the prediction-diag repo.
 //
 // The last two are a different family altogether. `kalman` and `bootstrap` do
@@ -25,7 +28,10 @@ import * as blend from './v-gross-blend.js';
 import * as stoprate from './v-stoprate.js';
 import * as fade from './v-fade.js';
 import * as calibrated from './v-calibrated.js';
+import * as cadence from './v-cadence.js';
 import * as kalman from './v-kalman.js';
 import * as bootstrap from './v-bootstrap.js';
 
-export const MODELS = { classic, blend, stoprate, fade, calibrated, kalman, bootstrap };
+export const MODELS = {
+  classic, blend, stoprate, fade, calibrated, cadence, kalman, bootstrap
+};

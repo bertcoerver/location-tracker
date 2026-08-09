@@ -11,11 +11,12 @@ import * as blend from '../src/predict-variants/v-gross-blend.js';
 import * as stoprate from '../src/predict-variants/v-stoprate.js';
 import * as fade from '../src/predict-variants/v-fade.js';
 import * as calibrated from '../src/predict-variants/v-calibrated.js';
+import * as cadence from '../src/predict-variants/v-cadence.js';
 import * as kalman from '../src/predict-variants/v-kalman.js';
 import * as bootstrap from '../src/predict-variants/v-bootstrap.js';
 import { effortBlocks, effortNodes } from '../src/predict-variants/effort.js';
 
-const VARIANTS = { blend, stoprate, fade, calibrated, kalman, bootstrap };
+const VARIANTS = { blend, stoprate, fade, calibrated, cadence, kalman, bootstrap };
 
 // Fixtures copied from predict.test.js — they are file-local there.
 
@@ -41,10 +42,16 @@ function ping(name, minutes, along, extra = {}) {
   return point;
 }
 
-/** A run of pings every 5 minutes, each `metres` further on than the last. */
-function steady(count, metres, course) {
+/**
+ * A run of pings every `minutes`, each `metres` further on than the last.
+ *
+ * Five minutes is the cadence every recorded run in `locations/` actually pings
+ * at, and therefore the cadence every model here was tuned on. The parameter is
+ * for `cadence`, which is the one model that asks how far apart these are.
+ */
+function steady(count, metres, course, minutes = 5) {
   const points = Array.from({ length: count },
-    (_, i) => ping(`p${i}`, i * 5, i * metres));
+    (_, i) => ping(`p${i}`, i * minutes, i * metres));
   deriveStats(points, course);
   return points;
 }
@@ -72,6 +79,10 @@ for (const [name, variant] of Object.entries(VARIANTS)) {
     const course = flat();
     assert.equal(variant.buildForecast([], course), null);
     assert.equal(variant.buildForecast(steady(8, 1000, course), null), null);
+    // Load-bearing for `cadence`, which is the one model that can lower this
+    // gate: two pings 1 km apart over five minutes clear neither the ground nor
+    // the time it asks for, so it refuses them exactly like everything else. The
+    // gate opens on evidence, not on cadence alone — see the cold-start test.
     assert.equal(variant.buildForecast(steady(2, 1000, course), course), null);
 
     const finished = steady(8, 1000, course);
@@ -152,7 +163,7 @@ for (const [name, variant] of Object.entries(VARIANTS)) {
     // no run here long enough to argue. Those models are held to a tenth of the
     // time still to come; the rest, which claim nothing about fatigue, have to
     // land on the baseline's answer.
-    const prior = ['fade', 'calibrated', 'kalman', 'bootstrap'].includes(name);
+    const prior = ['fade', 'calibrated', 'cadence', 'kalman', 'bootstrap'].includes(name);
     const slack = prior ? 0.1 * (base.t - baseBuild(points, course).from.t) : 30 * 1000;
     assert.ok(Math.abs(at.t - base.t) < slack,
       `drifted ${(at.t - base.t) / 1000}s from the baseline`);
@@ -347,4 +358,113 @@ test('calibrated: the band floor engages far out and leaves the mean alone', () 
   // The floor is a fraction of remaining time; hours out it must be the binder.
   const remaining = (after.t - wrapped.from.t) / 1000;
   assert.ok(after.sd >= 0.09 * remaining * 1000, 'floor not engaged');
+});
+
+// --- cadence -----------------------------------------------------------------
+//
+// Distances to compare two models over: the whole course ahead of the anchor,
+// which `steady(8, 1000, ...)` leaves at 7 km of the 20 km `flat()`.
+const AHEAD = [8000, 10000, 13000, 16000, 20000];
+
+test('cadence: at five-minute pings it is calibrated, exactly', () => {
+  const course = flat();
+  const points = withStop(10, 1000, 30, course);
+
+  const cad = cadence.buildForecast(points, course);
+  const cal = calibrated.buildForecast(points, course);
+
+  // This is the test that makes `cadence` safe as the shipped default. Every run
+  // recorded in `locations/` pings at 5.1 minutes, so if this holds, switching
+  // the default cannot have moved a single forecast the repo has ever drawn.
+  assert.equal(cad.rho, 1, 'a five-minute run was not read as the reference');
+  assert.equal(cad.sigma2, cal.sigma2, 'leg scatter was shrunk at the reference');
+  assert.deepEqual(cad.cov, cal.cov, 'parameter covariance was shrunk');
+
+  for (const along of AHEAD) {
+    assert.deepEqual(
+      cadence.predictAt(cad, along),
+      calibrated.predictAt(cal, along),
+      `the two disagreed at ${along} m`
+    );
+  }
+});
+
+test('cadence: coarse pings narrow the band and leave the estimate alone', () => {
+  const course = flat();
+  // Even 25-minute pings, but uneven ground under them — 600 m then 1400 m,
+  // alternating. A perfectly steady fixture will not do here: with no residuals
+  // the fit sits on its own sigma floor, calibrated's `0.15 × remaining` floor
+  // wins at every distance, and the shrink is real but invisible in `sd`. Real
+  // legs have scatter, and this is the smallest fixture that produces some
+  // while leaving the median gap exactly 25 minutes.
+  const points = Array.from({ length: 8 },
+    (_, i) => ping(`p${i}`, i * 25, Math.floor(i / 2) * 2000 + (i % 2) * 600));
+  deriveStats(points, course);
+
+  const cad = cadence.buildForecast(points, course);
+  const cal = calibrated.buildForecast(points, course);
+
+  // Just under 5: the reference is the phone's MEASURED 5-minute cadence, which
+  // carries its upload lag, not a round 300 seconds. See `PING_REF_S`.
+  assert.ok(cad.rho > 4.5 && cad.rho < 5, `25-minute pings read as rho ${cad.rho}`);
+  // sigma2 / rho^0.5, and the same divisor through the covariance. Asserted on
+  // the forecast rather than only on `sd`, because calibrated's own floor is a
+  // fraction of the time remaining and can mask the shrink hours out.
+  const shrink = Math.sqrt(cad.rho);
+  assert.ok(Math.abs(cad.sigma2 * shrink - cal.sigma2) < 1e-6, 'sigma2 not shrunk');
+  for (let j = 0; j < 3; j++) {
+    for (let k = 0; k < 3; k++) {
+      assert.ok(Math.abs(cad.cov[j][k] * shrink - cal.cov[j][k]) < 1e-9,
+        `cov[${j}][${k}] not shrunk with it`);
+    }
+  }
+
+  let narrower = 0;
+  for (const along of AHEAD) {
+    const after = cadence.predictAt(cad, along);
+    const before = calibrated.predictAt(cal, along);
+    assert.equal(after.t, before.t, `the estimate moved at ${along} m`);
+    assert.ok(after.sd <= before.sd, `the band widened at ${along} m`);
+    if (after.sd < before.sd) narrower++;
+  }
+  assert.ok(narrower > 0, 'the band never actually narrowed');
+});
+
+test('cadence: the cold start opens on ground and time, not on leg count', () => {
+  const course = flat();
+  // One leg: two pings, 25 minutes and 4 km apart. Three pings is fifty-two
+  // minutes of race at this cadence, and this run is not less informed than a
+  // five-minute run that has already been forecasting for a quarter of an hour.
+  const points = [ping('p0', 0, 0), ping('p1', 25, 4000)];
+  deriveStats(points, course);
+
+  assert.equal(calibrated.buildForecast(points, course), null,
+    'the leg-counting gate no longer refuses this');
+
+  const forecast = cadence.buildForecast(points, course);
+  assert.ok(forecast, 'cadence refused a leg worth 4 km');
+  assert.equal(forecast.legs, 1);
+
+  const at = cadence.predictAt(forecast, course.length);
+  assert.ok(Number.isFinite(at.t) && at.t > forecast.from.t);
+  // And it says so widely. A one-leg fit that quoted a tight window would be
+  // worse than the blank panel it replaces.
+  const remaining = (at.t - forecast.from.t) / 1000;
+  assert.ok(at.sd >= 0.1 * remaining * 1000,
+    `one leg claimed a window of ±${at.sd / 1000}s over ${remaining}s`);
+});
+
+test('cadence: rho is clamped, so an hourly phone is not extrapolated to', () => {
+  const course = flat();
+  const points = steady(8, 1000, course, 60);
+
+  const cad = cadence.buildForecast(points, course);
+  const cal = calibrated.buildForecast(points, course);
+
+  // 60 minutes over the 5-minute reference is 12, and the model must not believe
+  // it: the backtest measured the effect out to ~25-minute pings, and past the
+  // clamp the band stays wider than the power law asks for.
+  assert.equal(cad.rho, 6, `hourly pings read as rho ${cad.rho}`);
+  assert.ok(Math.abs(cal.sigma2 / cad.sigma2 - Math.sqrt(6)) < 1e-9,
+    'the shrink was not taken at the clamped rho');
 });

@@ -1,12 +1,10 @@
 {
     "id": "Lac",
     "label": "Easy semi at Lac",
-    "ping_frequency": {
-        "min_interval": 5,
-        "max_interval": 30,
-        "k": 0.3,
-        "midpoint": 25
-    },
+    "ping_min_interval": 5,
+    "ping_max_interval": 30,
+    "ping_k": 0.3,
+    "ping_midpoint": 25,
     "crew": ["Mariam"],
     "runners_name": "Bert"
 }

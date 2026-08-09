@@ -128,12 +128,21 @@ function between(from, to) {
  *
  * @param {Array}  legs from `legsOf`
  * @param {number} anchorAlong metres — where recency is measured back from
+ * @param {number} halfLifeM
+ * @param {number} minLegs how few legs this caller will fit from. Defaults to
+ *   `predictMinLegs`, which is every caller but [v-cadence.js](v-cadence.js) —
+ *   see the note at `buildForecast`.
  * @returns {{flat, up, down, cov, sigma2, meanDist, meanDt, legs}|null} null when
  *   there is nothing to fit: too few legs, or a run that has not moved.
  */
-export function fitPace(legs, anchorAlong, halfLifeM = CONFIG.predictHalfLifeM) {
+export function fitPace(
+  legs,
+  anchorAlong,
+  halfLifeM = CONFIG.predictHalfLifeM,
+  minLegs = CONFIG.predictMinLegs
+) {
   const n = legs.length;
-  if (n < CONFIG.predictMinLegs) return null;
+  if (n < minLegs) return null;
 
   let totalDist = 0;
   let totalDt = 0;
@@ -256,26 +265,37 @@ export function fitPace(legs, anchorAlong, halfLifeM = CONFIG.predictHalfLifeM) 
  * spoke would be exactly the kind of extrapolation this file exists to do
  * carefully.
  *
+ * The `minLegs` option exists for one caller, [v-cadence.js](v-cadence.js), and
+ * the reason is that this gate counts LEGS while everything else about the fit
+ * is denominated in ground. `predictHalfLifeM` is in metres precisely so that a
+ * phone dropping to half-hourly pings does not silently halve the history the
+ * model looks at; the gate never got the same treatment, so the same phone
+ * silently quintuples how long the page says nothing at all. A model that has
+ * decided one long leg is evidence enough passes 1 here. Absent, the option is
+ * `predictMinLegs` and this is the function it always was.
+ *
  * @param {Array}       points sorted oldest-first
  * @param {object|null} course
+ * @param {{minLegs?: number}} [options]
  */
-export function buildForecast(points, course) {
+export function buildForecast(points, course, options = {}) {
   if (!course || !points?.length) return null;
   // A finished run has no rest of the course. Same rule as the panel's clock:
   // the finish is an assertion by the phone, and it outranks the arithmetic.
   if (finishOf(points)) return null;
 
+  const minLegs = options.minLegs ?? CONFIG.predictMinLegs;
   const snapped = points.filter(p => p.snap);
-  if (snapped.length <= CONFIG.predictMinLegs) return null;
+  if (snapped.length <= minLegs) return null;
 
-  return assemble(course, snapped[snapped.length - 1], legsOf(snapped, course));
+  return assemble(course, snapped[snapped.length - 1], legsOf(snapped, course), minLegs);
 }
 
 /** The fit plus its anchor, which is what everything downstream needs. Separate
  *  from `buildForecast` so the backtest can build one per ping off legs it has
  *  already cut, rather than re-cutting them n times. */
-function assemble(course, anchor, legs) {
-  const fit = fitPace(legs, anchor.snap.along);
+function assemble(course, anchor, legs, minLegs = CONFIG.predictMinLegs) {
+  const fit = fitPace(legs, anchor.snap.along, CONFIG.predictHalfLifeM, minLegs);
   if (!fit) return null;
   return { ...fit, course, from: { t: anchor.t, along: anchor.snap.along } };
 }

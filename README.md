@@ -1190,7 +1190,9 @@ terms that comment always promised, each selectable with `?model=<name>`:
 - **`fade`** — the stop budget plus a within-run Riegel exponent read from the run's own gross
   halves, so a positive split slows the far forecast down further.
 - **`calibrated`** — `fade`'s estimate with the band floored at a fraction of the predicted time
-  remaining, sized so the 80% window means 80% again. **The default.**
+  remaining, sized so the 80% window means 80% again.
+- **`cadence`** — `calibrated`, corrected for how often the phone actually pings. **The default**,
+  and the identity at the five-minute cadence everything above was tuned on. See below.
 
 The ranking comes from [`prediction-diag`](../prediction-diag)'s walk-forward backtest over all 31
 recorded runs, tuned on two thirds of them and judged on the held-out third: on the 165 km Diagonale
@@ -1198,6 +1200,69 @@ des Fous the median finish error went from −354 minutes under `classic` to +54
 the 80% band's real coverage from 14% to 57%, and pooled across the holdout the beyond-8-hours bias
 moved from −32% of time remaining to −14% — while the road marathons stayed within a couple of
 minutes of what `classic` already said.
+
+### When the phone pings every 25 minutes instead of every 5
+
+Every model above was fitted and judged on runs that ping every five minutes. Measured across
+`locations/`, the phone delivers a median gap of 307–308 seconds on every run but one — five minutes
+plus its upload lag. A race can ask for something else: `ping_min_interval` and `ping_max_interval`
+in a run's `course_settings.json` name the ends of the battery curve, and UTMB's are 25 and 40.
+
+Thinning every recorded run 3:1 and 5:1 says the **estimate** survives that and two things do not.
+The comparison is on the 252,725 cells every configuration answered — a coarse cadence starts
+forecasting later, and the columns it skips are the worst in the run, so it flatters itself badly if
+you let it decline to answer — and it is checked against the phase of the thinning, since dropping
+two pings in three can start at any of three offsets and that spread is pure noise.
+
+- **The band inflates**, and this is the real regression. Median run coverage of the nominal-80%
+  window goes 92% → 94% → 98% at 5, 15 and 25-minute pings, monotone, phase-stable, and 100% by 45.
+  The cause is the leg-noise term in `predictAt`: `(dist / meanDist) · sigma2` charges one leg's
+  scatter per remaining leg, which is the right sum only if leg residuals are independent. Measured,
+  per-leg sigma grows 2.46× for a 3× longer leg and 4.11× for 5×, where independence predicts 1.73×
+  and 2.24× — a long leg swallows a stop and a recovery whole and the two do not cancel. Dividing
+  `sigma2` and the parameter covariance by `rho^0.5`, where rho is the run's median ping gap over the
+  reference, restores the 5-minute coverage profile bin for bin. The exponent was swept over
+  {0, 0.3, 0.5, 0.63, 0.8, 1}; 0.5 wins, and its paired MAE ratio is exactly 1.000 on all 33 runs,
+  which is the point — it touches the band and cannot move the estimate.
+- **The cold start stalls.** `predictMinLegs` counts legs, so the first forecast slips from 10
+  minutes into the race to 31 to 52 — 23% of the way through — while holding five times more evidence
+  than the 5-minute run had when it started answering. `predictHalfLifeM` is denominated in metres
+  for exactly this reason and the gate never was. Re-asking it in ground and time (2.5 km and 15
+  minutes buy a one-leg fit) roughly halves the silence; the cells that unlocks carry about twice the
+  MAE of the run's later ones and cover at 84–86%, which is a wide and honest window where there was
+  a blank panel.
+
+The **mean needs nothing**, which was the surprise. Paired per-run MAE is only ×1.09 at 15-minute
+pings and ×1.16 at 25, bias is unchanged at −0.7% of the time remaining, and pooled MAE is
+non-monotone out to about 30 minutes because the phase noise is the same size as the effect. Coarse
+cadence turns out to be self-compensating: flat pace comes back 3–6% slower and the climb coefficient
+23–29% higher as the ridge prior takes over the fit.
+
+Two corrections to the mean were tried and **both lost**, in the same spirit as the `kalman` trend
+below. The stop budget really does collapse — median `stopRate` falls 23.6 → 11.2 → 5.4 s/km, and 23%
+of 25-minute cutoffs price stops at zero, because `max(0, dt − fitted)` lets fast running cancel an
+aid station inside a long leg — but multiplying it back by `rho^0.3` to `rho^0.8` is a coin flip on
+the median and worse on the mean. Scaling `predictPriorLegs` by `1/rho` is worse on 19 of 33 runs.
+Both looked like clear wins on an *unpaired* median of per-run MAE and failed once the runs were
+paired, which is the methodological note worth keeping: judge a change here on paired per-run ratios
+and a win count, never on an unpaired median.
+
+One caveat the backtest cannot reach. Thinning real pings holds *fix quality* constant, and a phone
+genuinely set to 25–40 minutes is also running its GPS in a battery-saving mode. That would show up
+as worse snapping rather than as a wider band, and none of the above addresses it.
+
+Run the whole tree through `prediction-diag` under `cadence` and under `calibrated` and 33 of the 34
+outputs are **byte-identical**, which is the identity claim checked rather than asserted. The
+exception is `marathon-rotterdam-2018`, the only recorded run whose phone was not on the five-minute
+curve — 27.3-minute pings, and 11 of them in total. It is worth reading carefully, because it splits:
+the cold-start fix unlocks nine cells that are *better* than the run's own average (22.4 min of MAE
+against 29.3, covering 67% against 44%, mean |z| 0.86 against 2.04), while the band shrink costs 2.7
+points of coverage on the 36 cells both models answer, at an MAE identical to the decimal. That is
+the shrink pointing the wrong way — but at 11 pings this run's band is far too *narrow* already
+(44% against a nominal 80%), which is a sparsity failure rather than a cadence one: `sigma2` is being
+estimated from three or four legs and there is no over-counted independent noise there to remove. It
+was excluded from the tuning set for exactly this confound. UTMB will produce 60–90 pings, which is
+the regime the 33-run study measured; a race that is both coarse *and* short is the case to watch.
 
 ### Two that are not the regression at all
 
@@ -1475,28 +1540,47 @@ the route goes. This one file is the only place a run makes a **statement** abou
   "id": "UTMB",
   "label": "Ultra Trail de Mont Blanc",
   "start_datetime": "2026-08-28T09:00:00+02:00",
-  "ping_frequency": { "min_interval": 5, "max_interval": 30, "k": 0.3, "midpoint": 25 },
+  "ping_min_interval": 5,
+  "ping_max_interval": 30,
+  "ping_k": 0.3,
+  "ping_midpoint": 25,
+  "crew": ["Mariam"],
+  "runners_name": "Bert",
   "news_banner": "Official Race Odometer [here](https://some.url)",
   "distance": 165,
-  "total_ascent": 9900
+  "total_ascent": 9900,
+  "max_speed": 22
 }
 ```
+
+**The file is flat.** One level of keys, no nested objects — the only structured value is `crew`,
+which is a list of strings. The phone app these files are edited from cannot produce nested JSON, and
+a format the person editing mid-race can't actually type is not a format. The ping curve is the one
+thing this costs: its four numbers used to be a `ping_frequency` block and are now four top-level
+keys sharing a prefix, `ping_min_interval` / `ping_max_interval` / `ping_k` / `ping_midpoint`. They
+are still read as **one shape** — see below.
 
 The whole file is optional, **so is every field in it**, and an unusable field costs that field and
 nothing else. These are written by hand, mid-race, quite possibly on a phone: a parser that threw the
 document away over a distance typed as `"165 km"` would take the race's name off the screen. So every
 field is read the way a ping's optional fields are — taken if it is the shape it should be, dropped
-without comment if it isn't. `ping_frequency` is the one exception, and there is a reason below.
+without comment if it isn't. The ping curve is the one exception, and there is a reason below.
 
-| field | type | what it does |
-| --- | --- | --- |
-| `id` | string | **ignored.** For whoever is editing the file, so a block pasted into the wrong folder is visible to a human reading it. The folder name is the run's identity and a file may not rename its own run. |
-| `label` | string | what the run is **called**, everywhere on screen: the heading, the picker, the tab title. Plain text — emoji and accents are fine, markup is not. The folder name stays the `?run=` key. |
-| `start_datetime` | ISO 8601 | the gun. See "When the race starts". |
-| `ping_frequency` | object | the phone's own ping curve, for this run. See below. |
-| `news_banner` | string | one line shown between the height strip and the map. A tiny Markdown subset. |
-| `distance` | number, **km** | shown under the course name. |
-| `total_ascent` | number, **m** | shown beside it. |
+| field | type | default when absent | what it does |
+| --- | --- | --- | --- |
+| `id` | string | — | **ignored.** For whoever is editing the file, so a block pasted into the wrong folder is visible to a human reading it. The folder name is the run's identity and a file may not rename its own run. |
+| `label` | string | the folder name | what the run is **called**, everywhere on screen: the heading, the picker, the tab title. Plain text — emoji and accents are fine, markup is not. The folder name stays the `?run=` key. |
+| `start_datetime` | ISO 8601 | no gun: no countdown, and every ping is on the course | the gun. See "When the race starts". |
+| `ping_min_interval` | number, **minutes** | `CONFIG.minPingMs`, 5 min | fastest the phone ever pings — on a full battery. Floored at 2 min; see below. |
+| `ping_max_interval` | number, **minutes** | `CONFIG.maxPingMs`, 30 min | slowest it ever pings — on a flat one. |
+| `ping_k` | number, per battery-**point** | `CONFIG.batteryK`, `0.3` | how sharply the curve slews between the two. |
+| `ping_midpoint` | number, battery **%** | `CONFIG.batteryMid`, `25` | the battery level the knee of the curve sits at. |
+| `crew` | array of strings | nobody: every photograph in the folder is the runner's | who else is out there with a camera. A name here makes `MARIAM_*.jpg` a picture **of** the crew rather than of the runner — see "Photographs". |
+| `runners_name` | string | no byline on any photograph | who is running, for signing their own photographs. |
+| `news_banner` | string | no bar at all | one line shown between the height strip and the map. A tiny Markdown subset. |
+| `distance` | number, **km** | the course's own measured length | shown under the course name. |
+| `total_ascent` | number, **m** | the course's own measured climb | shown beside it. |
+| `max_speed` | number, **km/h** | `CONFIG.snapMaxSpeedKmh`, `22` | the fastest a leg of *this* run may imply before the snapper doubts the fix. See "Snapping". |
 
 **The stated figures win.** Everywhere else on this page a measurement beats a claim, because the
 claim is a guess about what happened; here the claim *is* the race. An official 165 km is what the
@@ -1517,36 +1601,41 @@ HTML-escaped *first*, so markup in it is text; only `http:` and `https:` are eve
 that reflows the map every time you edit a sentence — and a message too long for the width scrolls
 right-to-left at a constant speed, or becomes scrollable by hand under `prefers-reduced-motion`.
 
-#### `ping_frequency`, and why it is the one clamped field
+#### The `ping_*` keys, and why they are the one clamped field
 
 The phone picks its own ping interval from a logistic on its battery, and this page derives its poll
 schedule from the same curve — see "Polling when a ping is due". Naming the curve per run is what
 lets one repo hold races tracked by two differently-configured phones. Anything you leave out falls
-back to `config.js`, so `{ "midpoint": 20 }` is a legal file that moves the knee and leaves the ends
-alone.
+back to `config.js`, so `"ping_midpoint": 20` on its own is a legal file that moves the knee and
+leaves the ends alone.
 
 **The units are not uniform**, and this is the likeliest thing to get wrong:
 
 | key | unit |
 | --- | --- |
-| `min_interval` | minutes |
-| `max_interval` | minutes |
-| `k` | per battery-percentage-**point** — not a time |
-| `midpoint` | a battery **percentage** — not a time |
+| `ping_min_interval` | minutes |
+| `ping_max_interval` | minutes |
+| `ping_k` | per battery-percentage-**point** — not a time |
+| `ping_midpoint` | a battery **percentage** — not a time |
 
 This is a file in a repo reaching into the poll scheduler, and GitHub allows **60 API requests an
-hour per IP**. A `min_interval` of `0` — a plausible typo, and the default value of an empty form
-field — makes every branch of `nextPollMs` return its 30-second floor, which spends the entire hourly
-budget in half an hour and locks the map out for everyone behind that connection, on every run, until
-the reset. Nothing on screen would say why. So:
+hour per IP**. A `ping_min_interval` of `0` — a plausible typo, and the default value of an empty
+form field — makes every branch of `nextPollMs` return its 30-second floor, which spends the entire
+hourly budget in half an hour and locks the map out for everyone behind that connection, on every
+run, until the reset. Nothing on screen would say why. So:
 
-- **`min_interval` may not go below two minutes** (`CONFIG.pingFloorMs`). At two minutes the page
-  polls about 30 times an hour, leaving room for a second viewer.
-- **A malformed curve falls back whole, never half.** A sane `min` beside a nonsense `max` is not
-  four independent numbers, it is one shape, and half of it applied to half of the default is a curve
+- **`ping_min_interval` may not go below two minutes** (`CONFIG.pingFloorMs`). At two minutes the
+  page polls about 30 times an hour, leaving room for a second viewer.
+- **A malformed curve falls back whole, never half.** A sane min beside a nonsense max is not four
+  independent numbers, it is one shape, and half of it applied to half of the default is a curve
   nobody chose. A file asking for less than the floor is *ignored*, not clamped up to it — silently
   honouring a curve you didn't write is how you end up debugging a schedule that matches neither the
-  file nor the default.
+  file nor the default. This is the one rule flattening the file put at risk: the four keys now sit
+  beside `distance`, which *is* read on its own, and they are still refused together.
+- **The four are the only reason to care that the format changed.** A file still carrying the old
+  `ping_frequency` block names none of the four keys, so it is read as a run that said nothing about
+  its curve and gets the `config.js` one. Nothing else in it is affected — the label, the gun and the
+  figures were always flat.
 
 Only those four constants are per-run. The fallback rate, the refresh floor, the backoff cap, the
 poll guard and the jitter window all stay in `config.js`: they are properties of *this page's*
@@ -1645,10 +1734,10 @@ and everything downstream — the sleep, and the countdown in the panel — is b
 on `t + interval`. Leaving it out would mean one guaranteed-empty request per ping, per run, forever,
 and a panel reading "overdue" for a minute of every cycle in which nothing was wrong.
 
-Those four constants are the **fallback**. A run whose `course_settings.json` names a
-`ping_frequency` uses its own curve instead, so one repo can hold races tracked by two
+Those four constants are the **fallback**. A run whose `course_settings.json` names any of the
+`ping_*` keys uses its own curve instead, so one repo can hold races tracked by two
 differently-configured phones — see [`course_settings.json`](#course_settingsjson) for the units and
-for why `min_interval` is the one clamped field in this app. Nothing else about the schedule is
+for why `ping_min_interval` is the one clamped field in this app. Nothing else about the schedule is
 per-run: the refresh floor, the backoff cap, the poll guard and the jitter window belong to this
 page's relationship with the GitHub API, not to any phone.
 
@@ -1963,8 +2052,9 @@ side: settings cost zero API requests, an unchanged sha is never refetched, a **
 the last known values** rather than dropping a gun time, a file that will not parse costs its run
 nothing it already had, a deleted file is mirrored, and a **truncated listing is not a deletion**. On
 the parsing side: any subset is legal, an unusable field costs that field alone, `id` is ignored, and
-a `min_interval` under the floor is *refused* rather than clamped — with a case for every way a
-partial ping curve could sneak through, because that one reaches the API budget.
+a `ping_min_interval` under the floor is *refused* rather than clamped — with a case for every way a
+partial ping curve could sneak through, because that one reaches the API budget, and one that reads
+a leftover `ping_frequency` block as no curve at all rather than as a broken file.
 
 The news bar's Markdown gets a test per ordering bug it is built to avoid, since all of them are
 invisible until the wrong day: that a code span containing `*` is not emphasised from the inside,

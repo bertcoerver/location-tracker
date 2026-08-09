@@ -59,8 +59,8 @@ export function fadeExponent(points) {
   return clamp(shrunk, 1, FADE_K_MAX);
 }
 
-export function buildForecast(points, course) {
-  const base = stopBuild(points, course);
+export function buildForecast(points, course, options) {
+  const base = stopBuild(points, course, options);
   if (!base) return null;
 
   const gross = grossStats(points);

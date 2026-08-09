@@ -32,9 +32,10 @@ export const CONFIG = {
   // mismatch is SILENT — the map would just poll at the wrong times, with no
   // symptom anyone would notice. Retune the phone, retune these.
   //
-  // They are the FALLBACK now: a run whose `course_settings.json` names a
-  // `ping_frequency` overrides them for that run alone, which is what lets one repo
-  // hold races tracked by two differently-configured phones. See settings.js.
+  // They are the FALLBACK now: a run whose `course_settings.json` names any of
+  // `ping_min_interval`, `ping_max_interval`, `ping_k` or `ping_midpoint` overrides
+  // them for that run alone, which is what lets one repo hold races tracked by two
+  // differently-configured phones. See settings.js.
   minPingMs: 300000,
   maxPingMs: 1800000,
   batteryK: 0.3,
@@ -61,8 +62,8 @@ export const CONFIG = {
   // before it could exist. Like the four constants above, this mirrors the
   // phone's script and a mismatch is silent — retune the phone, retune this.
   //
-  // Not part of `ping_frequency`: a settings file names its phone's curve, and
-  // this lag is the same on every phone writing to this repo.
+  // Not one of the per-run `ping_*` keys: a settings file names its phone's curve,
+  // and this lag is the same on every phone writing to this repo.
   uploadLagMs: 60000,
   pollGuardMs: 30000, // the commit still has to land AND reach the tree API
   maxPollMs: 900000,  // backoff cap, and the floor poll on a long wait
@@ -250,10 +251,18 @@ export const CONFIG = {
   // +54 and lifted the 80% band's real coverage from 14% to 57%, while leaving
   // road marathons within a couple of minutes of what `classic` said.
   //
+  // `cadence` is that model with two corrections for how often the phone pings,
+  // and it is the default because it is the IDENTITY at the five-minute cadence
+  // `calibrated` was tuned on — every run recorded so far forecasts exactly as
+  // it did. What it changes is a race whose phone is set slower, which is what
+  // `ping_min_interval` in a settings file declares: the band stops inflating
+  // (a nominal 80% window really covered 98% at 25-minute pings) and the first
+  // forecast stops arriving 52 minutes into the race. See v-cadence.js.
+  //
   // `kalman` is the one to reach for on a mountain race, and the only model
   // whose band is derived rather than floored — it covers 86% against this
   // one's 62% on the holdout, at some cost in accuracy. See the README.
-  predictModel: 'calibrated',
+  predictModel: 'cadence',
   //
   // 15 km leaves a 20 km run very nearly evenly weighted — there isn't enough
   // of it for recency to mean much — while on a 160 km ultra the last ~45 km
@@ -271,6 +280,11 @@ export const CONFIG = {
   predictClimbFactor: 7.92,
   // Two legs is three snapped pings. Below that there is nothing to fit and no
   // forecast is offered, which is honester than one drawn through two dots.
+  //
+  // The one gate here counted in LEGS rather than in ground, which is why
+  // `cadence` overrides it per call: three pings is fifteen minutes of race at
+  // five-minute pings and fifty-two at twenty-five, and the second run is not
+  // less informed than the first. See `warmEnough` in v-cadence.js.
   predictMinLegs: 2,
   // Half-width of the quoted window, in standard deviations: 1.2816 is the 80%
   // central interval. Wide enough to be right most of the time, narrow enough
