@@ -463,6 +463,43 @@ test('a waypoint is described as a place, not as a moment', () => {
   assert.ok(!out.html.includes('since last'));
 });
 
+test('a waypoint says what kind of place it is, sentence-cased from a shouty <type>', () => {
+  const html = waypointTooltipHtml(
+    { name: 'Les Contamines', type: 'AID STATION', ele: 1140, lat: 45.8, lon: 6.7 });
+
+  assert.ok(text(html).includes('Aid station'), html);
+  assert.ok(!html.includes('AID STATION'), html);
+  // Beside the name on the top line, not down in the column of readings.
+  assert.ok(!html.includes('<div class="row"><span class="i" aria-hidden="true">Aid'), html);
+});
+
+test('a mixed-case kind keeps its own capitals', () => {
+  // Only an all-caps value is an enum being shouted; anything else was written
+  // by someone who may have meant the capitals.
+  const html = waypointTooltipHtml({ name: 'La Balme', sym: 'Water Source', lat: 45.7, lon: 6.7 });
+  assert.ok(text(html).includes('Water Source'), html);
+});
+
+test('a kind that says nothing is not shown', () => {
+  // UTMB writes GENERIC where it has no category; MapOut writes "Waypoint" into
+  // every <sym> it exports. Both would be a label repeating the card's own title.
+  for (const w of [{ name: 'Notre Dame Gorge', type: 'GENERIC', lat: 45.7, lon: 6.7 },
+                   { name: 'Route de Foussais', sym: 'Waypoint', lat: 46.5, lon: -0.7 }]) {
+    const html = waypointTooltipHtml(w);
+    assert.ok(!/generic/i.test(html), html);
+    assert.ok(!html.includes('class="k"'), html);
+  }
+});
+
+test('an unnamed waypoint is titled by its kind rather than by "Waypoint"', () => {
+  const html = waypointTooltipHtml({ type: 'SUMMIT', lat: 46.5, lon: 8.1 });
+
+  assert.ok(text(html).includes('Summit'), html);
+  assert.ok(!text(html).includes('Waypoint'), html);
+  // Spent as the title, so it must not also appear as the aside beside itself.
+  assert.equal(html.match(/Summit/g).length, 2, `${html}`);   // title and pin label
+});
+
 test('fmtDistance switches units the same way everywhere it is shown', () => {
   assert.equal(fmtDistance(850), '850 m');
   assert.equal(fmtDistance(12400), '12.4 km');

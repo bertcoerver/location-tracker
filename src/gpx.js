@@ -90,10 +90,15 @@ export function parseGpx(text) {
 
   // Waypoints are top-level, so anything already inside a <trkseg> or <rte> is
   // excluded by construction — <wpt> can't legally appear there.
+  // `type` as well as `sym` because the two are the same claim made by different
+  // exporters — what KIND of place this is — and a file picks one. The UTMB
+  // course writes `<type>AID STATION</type>` and no `<sym>` at all; MapOut does
+  // the reverse.
   const waypoints = points(text, ['wpt']).map(({ body, ...p }) => ({
     ...p,
     name: child(body, 'name'),
-    sym: child(body, 'sym')
+    sym: child(body, 'sym'),
+    type: child(body, 'type')
   }));
 
   // Partial elevation is treated as none: a profile with holes in it would be

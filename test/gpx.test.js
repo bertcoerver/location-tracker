@@ -41,6 +41,16 @@ test('waypoint names come through, including one that is not just "Waypoint"', (
   assert.equal(parseGpx(REAL).waypoints[2].ele, 83);
 });
 
+test('a waypoint <type> is read, for the exporters that use it instead of <sym>', () => {
+  const gpx = parseGpx(
+    '<gpx><wpt lat="46.5" lon="8.1"><name>Col</name><type>SUMMIT</type></wpt>' +
+    '<trk><trkseg><trkpt lat="46.5" lon="8.1"/><trkpt lat="46.6" lon="8.2"/>' +
+    '</trkseg></trk></gpx>');
+
+  assert.equal(gpx.waypoints[0].type, 'SUMMIT');
+  assert.equal(gpx.waypoints[0].sym, null);
+});
+
 test('<extensions> inside a waypoint does not leak into it', () => {
   // The real file wraps a <mapout:color> in <extensions>; a sloppier reader
   // would pick that up as the waypoint's own data.

@@ -188,6 +188,42 @@ test('a course needs at least two points to exist', () => {
   assert.equal(buildCourse(null, 'sha'), null);
 });
 
+// --- waypoint heights ---------------------------------------------------------
+
+/** A course due east, 100 m a vertex, climbing 0 → 2000 m, plus some waypoints. */
+function withWaypoints(waypoints) {
+  const segments = [Array.from({ length: 21 }, (_, i) => ({
+    lat: LAT0, lon: (i * 100) / M_LON, ele: i * 100
+  }))];
+  return buildCourse({ segments, waypoints, hasElevation: true }, 'sha');
+}
+
+test('a waypoint takes its height from the course, not from a placeholder <ele>', () => {
+  // The UTMB export writes 0.0 into every waypoint, which read as sea level in
+  // the middle of a 2000 m climb.
+  const [w] = withWaypoints([{ ...at(1000, 0), ele: 0, name: 'Aid station' }]).waypoints;
+
+  assert.ok(Math.abs(w.ele - 1000) < 1, `${w.ele}`);
+});
+
+test('a waypoint beside the course is grounded on it, one far off it is not', () => {
+  const near = { ...at(500, 40), ele: 0, name: 'Near' };
+  const far = { ...at(500, 5000), ele: 0, name: 'Far' };
+  const [a, b] = withWaypoints([near, far]).waypoints;
+
+  assert.ok(Math.abs(a.ele - 500) < 20, `${a.ele}`);
+  assert.equal(b.ele, 0);
+});
+
+test('a course with no elevation leaves its waypoints alone', () => {
+  const segments = [[{ lat: LAT0, lon: 0 }, { lat: LAT0, lon: 1000 / M_LON }]];
+  const course = buildCourse({
+    segments, waypoints: [{ ...at(500, 0), ele: 12, name: 'Bridge' }], hasElevation: false
+  }, 'sha');
+
+  assert.equal(course.waypoints[0].ele, 12);
+});
+
 // --- climb along the course ---------------------------------------------------
 
 /** A course running due east, one vertex every 100 m, with the given heights. */

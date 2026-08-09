@@ -116,7 +116,7 @@ export function buildCourse(parsed, sha = null) {
   const eles = parsed.hasElevation ? path.map(p => p.ele) : [];
   const { cumUp, cumDown } = climb(parsed.hasElevation ? path : null, n);
 
-  return {
+  const course = {
     sha,
     name: parsed.name,
     segments: parsed.segments,
@@ -139,6 +139,35 @@ export function buildCourse(parsed, sha = null) {
 
     grid: gridIndex(xy, CONFIG.snapMeters, breaks)
   };
+
+  // Needs the finished course to ask where the ground is, so it can't be an
+  // entry in the literal above.
+  course.waypoints = course.waypoints.map(w => grounded(course, w));
+  return course;
+}
+
+/**
+ * A waypoint with its height taken from the course under it, not from the file.
+ *
+ * Course exports routinely ship `<wpt>` elements with a placeholder `<ele>` —
+ * every waypoint in the UTMB file says `0.0` — and an aid station reading 0 m
+ * between two track points reading 2300 m is worse than no figure at all. The
+ * track is the authority on how high the ground is anyway, so a waypoint sitting
+ * on it that disagrees with it is wrong whatever the number came from.
+ *
+ * Only for waypoints actually ON the course: one further off than a snap would
+ * reach is somewhere the track says nothing about, and it keeps whatever height
+ * the file gave it. Same for a course with no elevation at all, where there is
+ * nothing better to offer.
+ */
+function grounded(course, waypoint) {
+  if (!course.hasElevation) return waypoint;
+
+  let best = null;
+  for (const c of nearestOnCourse(course, waypoint.lon, waypoint.lat)) {
+    if (!best || c.perp < best.perp) best = c;
+  }
+  return best ? { ...waypoint, ele: best.ele } : waypoint;
 }
 
 /**

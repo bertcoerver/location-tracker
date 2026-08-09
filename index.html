@@ -593,6 +593,16 @@
     color: var(--text-secondary);
   }
   .tip .st .c { display: flex; align-items: center; gap: 3px; }
+  /* A waypoint's kind, in the same slot and the same quiet register as the phone's
+     status: on the right of the top line, qualifying the name rather than competing
+     with it. "Aid station" is what this place IS — the elevation under it is the
+     reading — so it belongs on the title line and not in the column of figures. */
+  .tip .k {
+    flex: none;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
   /* Sized in `em` so the drawn icons track the line they sit on, at the same visual
      weight as the emoji elsewhere. `width: auto` with the viewBox doing the work, so
      the battery stays wider than the signal without either being told a number. */

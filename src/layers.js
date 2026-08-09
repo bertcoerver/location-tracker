@@ -1029,15 +1029,45 @@ export function tooltipHtml(point, isLatest, origin = null) {
   return rows.filter(Boolean).join('');
 }
 
+/**
+ * What KIND of place a waypoint is — "Aid station", "Summit" — or '' when the
+ * file doesn't say.
+ *
+ * Not to be confused with the `kind` the layer stamps on its data, which is what
+ * the tooltip dispatches on. This is the waypoint's own `<type>`, or its `<sym>`
+ * for the exporters that use that instead.
+ *
+ * Two values are treated as silence rather than as answers: "GENERIC" is the
+ * UTMB export's way of saying it has no category for this one, and MapOut writes
+ * "Waypoint" into every `<sym>` it produces. Both would put a label on the card
+ * that says nothing the card doesn't already say.
+ *
+ * Shouty enum values are sentence-cased — "AID STATION" is a database column, not
+ * a thing to read — but anything already mixed-case is left alone, because there
+ * the exporter chose the capitals and may have had a proper noun in mind.
+ */
+function waypointKind(waypoint) {
+  const raw = (waypoint.type || waypoint.sym || '').trim();
+  if (!raw || /^(generic|waypoint)$/i.test(raw)) return '';
+  return raw === raw.toUpperCase() ? raw[0] + raw.slice(1).toLowerCase() : raw;
+}
+
 /** Tooltip markup for a course waypoint — a place, not a moment. */
 export function waypointTooltipHtml(waypoint) {
-  const rows = [titleHtml(escapeHtml(waypoint.name || waypoint.sym || 'Waypoint'))];
+  const kind = waypointKind(waypoint);
+  // The kind stands in as the title for a waypoint with no name of its own — an
+  // unnamed summit is better called "Summit" than "Waypoint" — and in that case
+  // it has been spent, so it doesn't also appear as the aside beside itself.
+  const name = waypoint.name || kind || 'Waypoint';
+  const aside = kind && kind !== name ? `<span class="k">${escapeHtml(kind)}</span>` : '';
+
+  const rows = [titleHtml(escapeHtml(name), aside)];
   if (waypoint.ele !== null && waypoint.ele !== undefined) {
     rows.push(reading(ICON.ele, metres(waypoint.ele)));
   }
   // No coordinate row, for the reason the ping tooltip no longer has one. A named
   // place with no height is then a name and a link, which is all a waypoint is.
-  rows.push(mapsLink(waypoint.lat, waypoint.lon, waypoint.name || waypoint.sym || 'Waypoint'));
+  rows.push(mapsLink(waypoint.lat, waypoint.lon, name));
   return rows.join('');
 }
 
