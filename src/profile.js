@@ -12,7 +12,7 @@ import { CONFIG } from './config.js';
 import { accent, course as courseColor, crew as crewColor, surface } from './colors.js';
 import { pointAt } from './course.js';
 import { glyph, inkOf, loadGlyphs } from './glyphs.js';
-import { hoverTooltipHtml, tooltipHtml } from './layers.js';
+import { bandAlpha, hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
 import { latestOf, posOf } from './points.js';
 import { positionAt } from './predict.js';
@@ -565,6 +565,10 @@ export function createProfile(root, {
    * says — opaque and heavier than the terrain line so it reads as an assertion
    * over the profile rather than a shadow of it.
    *
+   * `positionAt` cuts the range at half an hour of running, so on a long silence
+   * this is a mark on a stretch of profile rather than a stroke across the whole
+   * chart. An end it cut fades out instead of stopping square — see `bandStroke`.
+   *
    * @param {object} scale from `scaleFor`
    * @param {ArrayLike<number>} ridge the smoothed series the skyline was drawn
    *   from, so the mark lands ON the line rather than near it.
@@ -579,7 +583,11 @@ export function createProfile(root, {
     const from = Math.max(0, Math.min(ridge.length - 1, Math.round(scale.x(marker.lo)) - left));
     const to = Math.max(from + 1, Math.min(ridge.length, Math.round(scale.x(marker.hi)) - left));
 
-    ctx.strokeStyle = `rgb(${ink.join(',')})`;
+    // The gradient spans the band itself, not the part of it on screen: a strip
+    // scrolled so that half the band is off the left edge must still fade where the
+    // band ends, and clamping it to the drawn columns would slide the fade about as
+    // the strip is panned.
+    ctx.strokeStyle = bandStroke(ink, scale.x(marker.lo), scale.x(marker.hi));
     ctx.lineWidth = 4;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
@@ -590,6 +598,31 @@ export function createProfile(root, {
     }
     ctx.stroke();
     ctx.lineCap = 'butt';
+  }
+
+  /**
+   * The band's ink: flat accent, or a gradient when the half-hour cap cut an end
+   * off it.
+   *
+   * The stops are `bandAlpha` sampled at its own breakpoints, which is what makes
+   * this the same fade the map draws rather than a second one that looks like it.
+   * Between the breakpoints the rule is linear and so is the gradient, so four
+   * stops reproduce it exactly.
+   *
+   * A band under a pixel wide gets the flat colour: `createLinearGradient` between
+   * two coincident points paints nothing at all, and a marker that vanishes because
+   * the forecast got MORE confident is the wrong way round.
+   */
+  function bandStroke(ink, x0, x1) {
+    const flat = `rgb(${ink.join(',')})`;
+    if ((!marker.cutLo && !marker.cutHi) || x1 - x0 < 1) return flat;
+
+    const fade = CONFIG.forecastFadeFrac;
+    const grad = ctx.createLinearGradient(x0, 0, x1, 0);
+    for (const f of [0, fade, 1 - fade, 1]) {
+      grad.addColorStop(f, `rgba(${ink.join(',')},${bandAlpha(f, marker)})`);
+    }
+    return grad;
   }
 
   /**

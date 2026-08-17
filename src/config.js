@@ -302,7 +302,8 @@ export const CONFIG = {
   // hits one of them is a fit that has gone wrong.
   predictMinPaceSpm: 0.1,
   predictMaxPaceSpm: 3.0,
-  // The full width of a tooltip's uncertainty bar, as a span of time.
+  // The full width of a tooltip's uncertainty bar, as a span of time — and the
+  // most forecast the "probably here now" band is drawn at full length.
   //
   // That bar's LENGTH is the width of the forecast window, so it has to be a length
   // OF something fixed: at half an hour, a fifteen-minute window fills half the
@@ -313,7 +314,25 @@ export const CONFIG = {
   //
   // Windows wider than this pin at full width rather than overflowing. A forecast
   // that uncertain is simply "very", and the figures are written out beside it.
+  //
+  // `positionAt` reads the same number as a length of course: half an hour of
+  // running, centred on the estimate. An hour of silence on a long course puts the
+  // 80% range across most of the route, and a band that long has stopped saying
+  // "probably here" — see there for why it is cut rather than drawn.
   uncertaintyRefMs: 1800000,
+  // How much of the band's drawn length is spent fading out, at an end the cap
+  // above cut short.
+  //
+  // The fade is the difference between "the band ends here" and "the band carries
+  // on past here, and is no longer worth drawing" — a hard edge at the cut claims a
+  // bound the model never asserted, which is the one thing the marker has always
+  // refused to do. As a fraction of the band rather than a count of pixels, so the
+  // map and the height strip fade over the same stretch of COURSE at whatever
+  // scale each happens to be drawn at.
+  //
+  // Must stay under 0.5: at a half the two fades would meet in the middle, and
+  // `bandAlpha`'s breakpoints would cross over.
+  forecastFadeFrac: 0.25,
   // The shortest leg that can carry a pace, in metres of course.
   //
   // A pace divides a distance by a time, so a short enough distance divides noise by
