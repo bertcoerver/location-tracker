@@ -979,12 +979,36 @@ function fadedBand(paths, ink, marker) {
 }
 
 /**
+ * How much of each end of the band is fade, as a fraction of the band's length:
+ * `[near, far]`, either of them 0 for an end that ends.
+ *
+ * **The band fades over as much of itself as the cap took off it**, up to
+ * `forecastFadeFrac`. So the fade grows in from nothing at the moment the half hour
+ * first bites and settles at a quarter of the band once a quarter of the band's
+ * worth has been lost — which is what keeps the mark continuous through the
+ * crossing. A fixed fade would appear at full width the instant the cut did, and a
+ * band that has overrun the cap by two metres would announce it with the same mark
+ * as one that has overrun it by ten kilometres.
+ *
+ * It is a fraction of the band rather than a count of pixels because the map and the
+ * strip draw the same stretch of course at wildly different scales, and the fade has
+ * to mean the same thing on both.
+ *
+ * @param {{lo, hi, cutLo, cutHi}} marker from `positionAt`
+ */
+export function bandFades({ lo, hi, cutLo, cutHi }) {
+  const span = hi - lo;
+  const of = cut => (span > 0 ? Math.min(cut / span, CONFIG.forecastFadeFrac) : 0);
+  return [of(cutLo), of(cutHi)];
+}
+
+/**
  * How solid the "probably here now" band is at `f`, 0 to 1 along its length.
  *
- * Full everywhere, except within `forecastFadeFrac` of an end the half-hour cap cut
- * short, where it ramps to nothing. An uncut end keeps its square finish: that end
- * is where the 80% range actually stops, and fading it would say the model trails
- * off there when what it does is end.
+ * Full everywhere, except across the fade `bandFades` gives each end, where it ramps
+ * to nothing. An uncut end keeps its square finish: that end is where the 80% range
+ * actually stops, and fading it would say the model trails off there when what it
+ * does is end.
  *
  * Exported and shared rather than written once per view. The map fades a path
  * vertex by vertex and the strip fades a canvas gradient — two different mechanisms
@@ -992,13 +1016,13 @@ function fadedBand(paths, ink, marker) {
  * fade for one forecast.
  *
  * @param {number} f 0 at the near end of the band, 1 at the far end
- * @param {{cutLo, cutHi}} marker from `positionAt`
+ * @param {{lo, hi, cutLo, cutHi}} marker from `positionAt`
  */
-export function bandAlpha(f, { cutLo, cutHi }) {
-  const fade = CONFIG.forecastFadeFrac;
+export function bandAlpha(f, marker) {
+  const [near, far] = bandFades(marker);
   return Math.min(
-    cutLo ? Math.min(1, f / fade) : 1,
-    cutHi ? Math.min(1, (1 - f) / fade) : 1
+    near > 0 ? Math.min(1, f / near) : 1,
+    far > 0 ? Math.min(1, (1 - f) / far) : 1
   );
 }
 

@@ -320,7 +320,7 @@ export const CONFIG = {
   // 80% range across most of the route, and a band that long has stopped saying
   // "probably here" — see there for why it is cut rather than drawn.
   uncertaintyRefMs: 1800000,
-  // How much of the band's drawn length is spent fading out, at an end the cap
+  // The MOST of the band's drawn length that is spent fading out, at an end the cap
   // above cut short.
   //
   // The fade is the difference between "the band ends here" and "the band carries
@@ -329,6 +329,11 @@ export const CONFIG = {
   // refused to do. As a fraction of the band rather than a count of pixels, so the
   // map and the height strip fade over the same stretch of COURSE at whatever
   // scale each happens to be drawn at.
+  //
+  // A ceiling rather than a fixed width: an end fades over as much of the band as
+  // the cap actually took off it, and only reaches this once that much has gone.
+  // See `bandFades` — the growth is what carries the mark through the moment the
+  // cap first bites without the fade popping into existence at full width.
   //
   // Must stay under 0.5: at a half the two fades would meet in the middle, and
   // `bandAlpha`'s breakpoints would cross over.

@@ -12,7 +12,7 @@ import { CONFIG } from './config.js';
 import { accent, course as courseColor, crew as crewColor, surface } from './colors.js';
 import { pointAt } from './course.js';
 import { glyph, inkOf, loadGlyphs } from './glyphs.js';
-import { bandAlpha, hoverTooltipHtml, tooltipHtml } from './layers.js';
+import { bandAlpha, bandFades, hoverTooltipHtml, tooltipHtml } from './layers.js';
 import { clampLeft, createPin } from './pin.js';
 import { latestOf, posOf } from './points.js';
 import { positionAt } from './predict.js';
@@ -604,10 +604,12 @@ export function createProfile(root, {
    * The band's ink: flat accent, or a gradient when the half-hour cap cut an end
    * off it.
    *
-   * The stops are `bandAlpha` sampled at its own breakpoints, which is what makes
-   * this the same fade the map draws rather than a second one that looks like it.
-   * Between the breakpoints the rule is linear and so is the gradient, so four
-   * stops reproduce it exactly.
+   * The stops are `bandAlpha` sampled at the breakpoints `bandFades` puts them at,
+   * which is what makes this the same fade the map draws rather than a second one
+   * that looks like it. Between the breakpoints the rule is linear and so is the
+   * gradient, so four stops reproduce it exactly — and when the cap has only just
+   * bitten, the two inner stops sit almost on the outer ones and the gradient is a
+   * flat colour with barely a fade on it, which is the point.
    *
    * A band under a pixel wide gets the flat colour: `createLinearGradient` between
    * two coincident points paints nothing at all, and a marker that vanishes because
@@ -615,11 +617,11 @@ export function createProfile(root, {
    */
   function bandStroke(ink, x0, x1) {
     const flat = `rgb(${ink.join(',')})`;
-    if ((!marker.cutLo && !marker.cutHi) || x1 - x0 < 1) return flat;
+    const [near, far] = bandFades(marker);
+    if ((!near && !far) || x1 - x0 < 1) return flat;
 
-    const fade = CONFIG.forecastFadeFrac;
     const grad = ctx.createLinearGradient(x0, 0, x1, 0);
-    for (const f of [0, fade, 1 - fade, 1]) {
+    for (const f of [0, near, 1 - far, 1]) {
       grad.addColorStop(f, `rgba(${ink.join(',')},${bandAlpha(f, marker)})`);
     }
     return grad;

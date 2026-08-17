@@ -94,8 +94,10 @@ export function predictAt(forecast, along) {
  * @param {number}      when epoch ms
  * @returns {{along, lo, hi, cutLo, cutHi}|null} null once the whole course is behind
  *   the prediction — past that there is nothing left to be in the middle of.
- *   `cutLo`/`cutHi` say which ends the cap shortened, which is where the views fade
- *   the band out rather than ending it square.
+ *   `cutLo`/`cutHi` are how much ground the cap took off each end, in metres, and 0
+ *   at an end it did not reach. The views fade a cut end by that much rather than
+ *   ending it square — the amount, not just the fact, because a band that has just
+ *   crossed the half hour has lost nothing worth drawing a fade for.
  */
 export function positionAt(forecast, when) {
   if (!forecast || !Number.isFinite(when)) return null;
@@ -116,8 +118,8 @@ export function positionAt(forecast, when) {
     along,
     lo: Math.max(lo, near),
     hi: Math.min(hi, far),
-    cutLo: near > lo,
-    cutHi: far < hi
+    cutLo: Math.max(0, near - lo),
+    cutHi: Math.max(0, hi - far)
   };
 }
 

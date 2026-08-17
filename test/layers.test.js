@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { buildCourse } from '../src/course.js';
 import { CONFIG } from '../src/config.js';
 import {
-  bandAlpha, beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml,
+  bandAlpha, bandFades, beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml,
   makeTooltip, latestState, mediaTooltipHtml, splitWeather, sunTooltipHtml, tooltipHtml,
   viewerLayers, waypointTooltipHtml
 } from '../src/layers.js';
@@ -903,19 +903,24 @@ test('forecastLayers draws nothing without both a course and a marker', () => {
   assert.deepEqual(forecastLayers(null, null), []);
 });
 
+// A band a kilometre long, with `cutLo`/`cutHi` metres taken off its ends.
+const band = (cutLo, cutHi) => ({ lo: 4000, hi: 5000, cutLo, cutHi });
+
 test('the band fades out only at an end the half-hour cap cut', () => {
   const fade = CONFIG.forecastFadeFrac;
   assert.ok(fade < 0.5, 'two fades meeting in the middle would cross the breakpoints over');
 
   // An uncut end is where the 80% range actually stops. Fading it would say the
   // model trails off there, when what it does is end.
-  const whole = { cutLo: false, cutHi: false };
+  const whole = band(0, 0);
+  assert.deepEqual(bandFades(whole), [0, 0]);
   assert.equal(bandAlpha(0, whole), 1);
   assert.equal(bandAlpha(0.5, whole), 1);
   assert.equal(bandAlpha(1, whole), 1);
 
-  // A cut end reaches nothing exactly at the cut, and full strength one fade in.
-  const far = { cutLo: false, cutHi: true };
+  // A well-cut end reaches nothing exactly at the cut, and full strength one fade in.
+  const far = band(0, 1000);
+  assert.deepEqual(bandFades(far), [0, fade]);
   assert.equal(bandAlpha(1, far), 0);
   assert.equal(bandAlpha(1 - fade, far), 1);
   assert.equal(bandAlpha(0, far), 1, 'the uncut end faded too');
@@ -924,10 +929,34 @@ test('the band fades out only at an end the half-hour cap cut', () => {
 
   // Both cut is the long-silence case, and the middle of it stays solid: the
   // fades are a fraction of the band each, and the band is the mark.
-  const both = { cutLo: true, cutHi: true };
+  const both = band(1000, 1000);
   assert.equal(bandAlpha(0, both), 0);
   assert.equal(bandAlpha(1, both), 0);
   assert.equal(bandAlpha(0.5, both), 1);
+});
+
+test('the fade grows with the cut rather than appearing at full width', () => {
+  const fade = CONFIG.forecastFadeFrac;
+
+  // The moment the cap first bites it has taken nothing off, and the band is still
+  // the band: no fade, so nothing pops into existence as the half hour is crossed.
+  assert.deepEqual(bandFades(band(0, 0.0001)), [0, 0.0001 / 1000]);
+  assert.ok(bandAlpha(0.999, band(0, 0.0001)) > 0.99, 'a nothing cut drew a real fade');
+
+  // From there it grows in proportion — 100 m off a 1 km band is a tenth of it —
+  // until it reaches the ceiling and stays there however long the silence runs.
+  assert.deepEqual(bandFades(band(0, 100)), [0, 0.1]);
+  assert.deepEqual(bandFades(band(0, 200)), [0, 0.2]);
+  assert.deepEqual(bandFades(band(0, 100000)), [0, fade], 'the ceiling did not hold');
+
+  // Monotone across the whole range, which is the property that makes it read as
+  // one mark growing rather than as a sequence of different marks.
+  let previous = -1;
+  for (let cut = 0; cut <= 400; cut += 10) {
+    const [, at] = bandFades(band(0, cut));
+    assert.ok(at >= previous, `fade shrank as the cut grew, at ${cut} m`);
+    previous = at;
+  }
 });
 
 // --- the other runs -----------------------------------------------------------

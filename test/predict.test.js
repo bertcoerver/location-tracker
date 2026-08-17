@@ -259,14 +259,21 @@ test('the positional range is cut to half an hour of running, and says which end
   // Ten minutes on, the 80% range is narrower than the cap and comes through
   // untouched — nothing is cut that did not need cutting.
   const near = positionAt(forecast, last + 10 * MINUTE);
-  assert.equal(near.cutLo, false, 'a narrow band was cut anyway');
-  assert.equal(near.cutHi, false, 'a narrow band was cut anyway');
+  assert.equal(near.cutLo, 0, 'a narrow band was cut anyway');
+  assert.equal(near.cutHi, 0, 'a narrow band was cut anyway');
 
   // Two hours on, the range would otherwise cover most of the route.
   const far = positionAt(forecast, last + 120 * MINUTE);
-  assert.equal(far.cutLo, true, 'the near end was not cut');
-  assert.equal(far.cutHi, true, 'the far end was not cut');
+  assert.ok(far.cutLo > 0, 'the near end was not cut');
+  assert.ok(far.cutHi > 0, 'the far end was not cut');
   assert.ok(far.lo < far.along && far.along < far.hi, 'the cut lost its own estimate');
+
+  // How much came off, not just that something did: the views fade by the amount,
+  // and an amount that came back as a flag would fade a two-metre overrun the same
+  // as this one. Kilometres came off here — comfortably enough for the fade to have
+  // grown all the way to its ceiling, which is the state this case is drawn in.
+  assert.ok(far.cutHi / (far.hi - far.lo) > CONFIG.forecastFadeFrac,
+    `only ${Math.round(far.cutHi)} m came off a ${Math.round(far.hi - far.lo)} m band`);
 
   // The cap is a span of RUNNING rather than of ground, so it is read back off the
   // model's own clock: half an hour between the ends, whatever the terrain in
@@ -286,7 +293,7 @@ test('the cut never reaches back past the ping the forecast is anchored to', () 
 
   const soon = positionAt(forecast, forecast.from.t + MINUTE);
   assert.ok(soon.lo >= forecast.from.along, `${soon.lo} is behind the anchor`);
-  assert.equal(soon.cutLo, false, 'the near end was cut by the clamp, not by the cap');
+  assert.equal(soon.cutLo, 0, 'the near end was cut by the clamp, not by the cap');
 });
 
 // --- refusing to answer -----------------------------------------------------
