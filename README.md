@@ -923,6 +923,34 @@ With a course present, three things change:
   what stops the elapsed clock — see "The race clock" — so the map and the panel cannot disagree
   about whether the run is still on.
 
+  The band is **cut to half an hour of running**, centred on the estimate. Left alone it grows with
+  the silence, and an hour without a ping on a mountain course puts it across most of the route —
+  at which point it has quietly changed what it says, because "probably somewhere along here" is a
+  claim about a stretch of trail and a stretch of trail the length of the race is the same
+  statement as no mark at all. Half an hour is where the tooltips already give up: a window wider
+  than `uncertaintyRefMs` pins their bar at full width, and the band is cut under exactly the
+  condition that pins it. It is centred rather than trimmed off the far end, because the estimate
+  is the one position in the range the model actually prefers, and cutting only ahead of it would
+  leave the near edge looking like a bound somebody had measured.
+
+  An end the cut shortened **fades out** instead of stopping square. A hard edge there would assert
+  a bound the model never claimed — the one thing this mark has always refused to do — so the fade
+  is the difference between "the band ends here" and "the band carries on past here, and is no
+  longer worth drawing". An end the cut *didn't* touch keeps its square finish: that end is where
+  the 80% range genuinely stops.
+
+  The fade covers **as much of the band as the cut took off it**, up to a quarter. So it grows in
+  from nothing at the moment the half hour first bites, and settles at a quarter once a quarter of
+  the band's worth has been lost. A fixed-width fade — which is what this was first written as —
+  appears at full size the instant the cut does, so a band crossing the threshold pops from square
+  to feathered between one second and the next, and a band that has overrun by two metres is drawn
+  with the same mark as one that has overrun by ten kilometres. Growing it fixes both: the mark is
+  continuous through the crossing, and how much is being withheld is legible in how soft the end is.
+
+  The rule is one function, `bandAlpha` over `bandFades`, read by both views; the strip fades a
+  canvas gradient and the map fades the path vertex by vertex, and two copies of the rule would
+  eventually draw two lengths of fade for one forecast.
+
   In both views the band is drawn **under the pings**. It is a guess about the course; a ping is a
   measurement. Drawn on top, as it was on the map, it covered the pulsing dot whenever the phone went
   quiet long enough for the band to slide over the newest fix — hiding the one mark on screen that is
@@ -2134,7 +2162,10 @@ that slowed recently is forecast slower than its own average, and shortening the
 moves it further that way, monotonically. The band always straddles its own estimate and
 always widens with distance, and `positionAt` round-trips through `predictAt` to within a
 metre — the two are the same model read in opposite directions, so nothing else would catch
-them drifting apart.
+them drifting apart. Its half-hour cut is checked the same way: a wandering pace on a 100 km
+course, stood two hours past its last ping, comes back spanning `uncertaintyRefMs` of running
+when the two ends are read back through `predictAt` — a length of time, measured on the
+model's own clock, rather than a length of ground that only looks right on flat terrain.
 
 Two cases carry the design. A leg where the runner did not move must leave every coefficient
 **bit-identical** and yet strictly widen the band: that is the whole reason the regression is

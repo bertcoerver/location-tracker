@@ -70,10 +70,34 @@ export function predictAt(forecast, along) {
  * reaches `when` is the nearest the runner might have got — which is why the two
  * are solved off opposite edges.
  *
+ * The band is then CUT to `uncertaintyRefMs` of running, half an hour, centred on
+ * the estimate. An hour of silence on a mountain course widens the 80% range until
+ * it covers most of the route, and a mark that long has quietly changed what it
+ * says: "probably somewhere along here" is a claim about a stretch of trail, and a
+ * stretch of trail the length of the race is the same statement as no mark at all.
+ * Half an hour is where the tooltips already draw the line — a window wider than
+ * `uncertaintyRefMs` pins their bar at full width for the same reason — so the two
+ * marks give up at the same point, and the bar being full is exactly the condition
+ * under which the band is cut.
+ *
+ * Centred on the estimate rather than trimmed off one end, because the estimate is
+ * the one position in the range the model actually prefers, and cutting only the far
+ * end would leave the near edge looking like a bound that had been measured.
+ *
+ * Both edges are solved off the MEAN, not off the band: what is being asked for is
+ * the ground half an hour of running either side of the estimate covers, and the
+ * band edges answer a different question. `solve` clamps to the anchor and the
+ * finish, so an estimate less than fifteen minutes past the last ping simply reaches
+ * back to the ping and no further.
+ *
  * @param {object|null} forecast
  * @param {number}      when epoch ms
- * @returns {{along, lo, hi}|null} null once the whole course is behind the
- *   prediction — past that there is nothing left to be in the middle of.
+ * @returns {{along, lo, hi, cutLo, cutHi}|null} null once the whole course is behind
+ *   the prediction — past that there is nothing left to be in the middle of.
+ *   `cutLo`/`cutHi` are how much ground the cap took off each end, in metres, and 0
+ *   at an end it did not reach. The views fade a cut end by that much rather than
+ *   ending it square — the amount, not just the fact, because a band that has just
+ *   crossed the half hour has lost nothing worth drawing a fade for.
  */
 export function positionAt(forecast, when) {
   if (!forecast || !Number.isFinite(when)) return null;
@@ -83,10 +107,19 @@ export function positionAt(forecast, when) {
   if (!finish || when >= finish.t) return null;
   if (when <= forecast.from.t) return null;
 
+  const reach = CONFIG.uncertaintyRefMs / 2;
+  const along = solve(forecast, end, when, at => at.t);
+  const lo = solve(forecast, end, when, at => at.hi);
+  const hi = solve(forecast, end, when, at => at.lo);
+  const near = solve(forecast, end, when - reach, at => at.t);
+  const far = solve(forecast, end, when + reach, at => at.t);
+
   return {
-    along: solve(forecast, end, when, at => at.t),
-    lo: solve(forecast, end, when, at => at.hi),
-    hi: solve(forecast, end, when, at => at.lo)
+    along,
+    lo: Math.max(lo, near),
+    hi: Math.min(hi, far),
+    cutLo: Math.max(0, near - lo),
+    cutHi: Math.max(0, hi - far)
   };
 }
 

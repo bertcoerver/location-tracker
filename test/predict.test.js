@@ -239,6 +239,63 @@ test('the positional range brackets the estimate, and runs out at the finish', (
   assert.equal(positionAt(forecast, points[0].t), null);
 });
 
+test('the positional range is cut to half an hour of running, and says which ends', () => {
+  // 100 km of course and a pace that wandered, which is what it takes to reach the
+  // cap at all: a steady run on a 20 km course never gets near it, and that is the
+  // point — this is for the hour of silence on a mountain section, not for every
+  // frame of every run.
+  const course = hills(Array.from({ length: 1001 }, () => 100));
+  const gaps = [600, 1400, 500, 1500, 700, 1300, 600];
+  const points = [ping('p0', 0, 0)];
+  gaps.reduce((along, gap, i) => {
+    points.push(ping(`p${i + 1}`, (i + 1) * 5, along + gap));
+    return along + gap;
+  }, 0);
+  deriveStats(points, course);
+
+  const forecast = buildForecast(points, course);
+  const last = points[points.length - 1].t;
+
+  // Ten minutes on, the 80% range is narrower than the cap and comes through
+  // untouched — nothing is cut that did not need cutting.
+  const near = positionAt(forecast, last + 10 * MINUTE);
+  assert.equal(near.cutLo, 0, 'a narrow band was cut anyway');
+  assert.equal(near.cutHi, 0, 'a narrow band was cut anyway');
+
+  // Two hours on, the range would otherwise cover most of the route.
+  const far = positionAt(forecast, last + 120 * MINUTE);
+  assert.ok(far.cutLo > 0, 'the near end was not cut');
+  assert.ok(far.cutHi > 0, 'the far end was not cut');
+  assert.ok(far.lo < far.along && far.along < far.hi, 'the cut lost its own estimate');
+
+  // How much came off, not just that something did: the views fade by the amount,
+  // and an amount that came back as a flag would fade a two-metre overrun the same
+  // as this one. Kilometres came off here — comfortably enough for the fade to have
+  // grown all the way to its ceiling, which is the state this case is drawn in.
+  assert.ok(far.cutHi / (far.hi - far.lo) > CONFIG.forecastFadeFrac,
+    `only ${Math.round(far.cutHi)} m came off a ${Math.round(far.hi - far.lo)} m band`);
+
+  // The cap is a span of RUNNING rather than of ground, so it is read back off the
+  // model's own clock: half an hour between the ends, whatever the terrain in
+  // between costs. This is the same number the tooltip bar fills at.
+  const span = predictAt(forecast, far.hi).t - predictAt(forecast, far.lo).t;
+  assert.ok(Math.abs(span - CONFIG.uncertaintyRefMs) < 2000,
+    `cut band spans ${(span / MINUTE).toFixed(1)} minutes of running`);
+});
+
+test('the cut never reaches back past the ping the forecast is anchored to', () => {
+  // Fifteen minutes before the estimate can be before the run got there at all, and
+  // the band must not grow backwards to fill its allowance: the anchor is measured
+  // ground, and the forecast has nothing to say about it.
+  const course = flat();
+  const points = steady(8, 1000, course);
+  const forecast = buildForecast(points, course);
+
+  const soon = positionAt(forecast, forecast.from.t + MINUTE);
+  assert.ok(soon.lo >= forecast.from.along, `${soon.lo} is behind the anchor`);
+  assert.equal(soon.cutLo, 0, 'the near end was cut by the clamp, not by the cap');
+});
+
 // --- refusing to answer -----------------------------------------------------
 
 test('nothing to fit means no forecast rather than a bad one', () => {

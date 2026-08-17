@@ -904,30 +904,126 @@ export function hoverLayers(position) {
  * is not pickable: `course-hit` underneath owns the tooltip, and two answers to
  * one hover is a bug.
  *
+ * An end the half-hour cap cut fades out instead of stopping — see `bandAlpha`.
+ * The fade is per VERTEX of the trace rather than a smooth ramp: deck colours a
+ * path segment by segment, so this is as gradual as the course's own vertices,
+ * which on a GPX is every few metres and reads as continuous.
+ *
  * @param {object|null} course
- * @param {{along, lo, hi}|null} marker from `positionAt`
+ * @param {{along, lo, hi, cutLo, cutHi}|null} marker from `positionAt`
  */
 export function forecastLayers(course, marker) {
   if (!course || !marker) return [];
 
-  const ink = accent();
+  const data = fadedBand(pathsBetween(course, marker.lo, marker.hi), accent(), marker);
+  // The band slides along the course as the clock runs, and shortens and lengthens
+  // as the forecast tightens, so its contents change without the array identity
+  // saying anything about it.
+  const key = `${marker.lo},${marker.hi},${marker.cutLo},${marker.cutHi}`;
 
   return [
     new deck.PathLayer({
       id: 'forecast-range',
-      data: pathsBetween(course, marker.lo, marker.hi),
-      getPath: p => p,
+      data,
+      getPath: d => d.path,
       widthUnits: 'pixels',
       getWidth: 6,
       widthMinPixels: 4,
       capRounded: true,
       jointRounded: true,
-      getColor: [...ink, 255],
-      // The band slides along the course as the clock runs, so its contents
-      // change without the array identity saying anything about it.
-      updateTriggers: { getPath: `${marker.lo},${marker.hi}` }
+      getColor: d => d.colors,
+      updateTriggers: { getPath: key, getColor: key }
     })
   ];
+}
+
+/**
+ * The band's paths, each carrying one colour per vertex.
+ *
+ * The fade is a fraction of the WHOLE band, so the running total carries across the
+ * segment breaks `pathsBetween` splits at: a band straddling a join is one mark that
+ * happens to be drawn in two pieces, and fading each piece from its own ends would
+ * put a hole in the middle of it.
+ *
+ * Distance is measured in raw lon/lat rather than in metres. It is only ever used as
+ * a ratio of one part of the band to the rest of it, over a few kilometres at most,
+ * and over that a degree of longitude does not change enough to move the fade by a
+ * pixel — projecting properly here would be arithmetic nobody could see.
+ *
+ * @param {Array<Array<[number, number]>>} paths from `pathsBetween`
+ * @param {[number, number, number]} ink
+ * @param {{cutLo, cutHi}} marker
+ */
+function fadedBand(paths, ink, marker) {
+  const runs = paths.map(path => {
+    const at = [0];
+    for (let i = 1; i < path.length; i++) {
+      at.push(at[i - 1] + Math.hypot(path[i][0] - path[i - 1][0], path[i][1] - path[i - 1][1]));
+    }
+    return at;
+  });
+  // Guarded, because a band with no length still has to come back with colours in
+  // it rather than with NaN in it.
+  const total = runs.reduce((sum, at) => sum + at[at.length - 1], 0) || 1;
+
+  let before = 0;
+  return paths.map((path, p) => {
+    const start = before;
+    before += runs[p][runs[p].length - 1];
+    return {
+      path,
+      colors: runs[p].map(d =>
+        [...ink, Math.round(255 * bandAlpha((start + d) / total, marker))])
+    };
+  });
+}
+
+/**
+ * How much of each end of the band is fade, as a fraction of the band's length:
+ * `[near, far]`, either of them 0 for an end that ends.
+ *
+ * **The band fades over as much of itself as the cap took off it**, up to
+ * `forecastFadeFrac`. So the fade grows in from nothing at the moment the half hour
+ * first bites and settles at a quarter of the band once a quarter of the band's
+ * worth has been lost — which is what keeps the mark continuous through the
+ * crossing. A fixed fade would appear at full width the instant the cut did, and a
+ * band that has overrun the cap by two metres would announce it with the same mark
+ * as one that has overrun it by ten kilometres.
+ *
+ * It is a fraction of the band rather than a count of pixels because the map and the
+ * strip draw the same stretch of course at wildly different scales, and the fade has
+ * to mean the same thing on both.
+ *
+ * @param {{lo, hi, cutLo, cutHi}} marker from `positionAt`
+ */
+export function bandFades({ lo, hi, cutLo, cutHi }) {
+  const span = hi - lo;
+  const of = cut => (span > 0 ? Math.min(cut / span, CONFIG.forecastFadeFrac) : 0);
+  return [of(cutLo), of(cutHi)];
+}
+
+/**
+ * How solid the "probably here now" band is at `f`, 0 to 1 along its length.
+ *
+ * Full everywhere, except across the fade `bandFades` gives each end, where it ramps
+ * to nothing. An uncut end keeps its square finish: that end is where the 80% range
+ * actually stops, and fading it would say the model trails off there when what it
+ * does is end.
+ *
+ * Exported and shared rather than written once per view. The map fades a path
+ * vertex by vertex and the strip fades a canvas gradient — two different mechanisms
+ * for one rule, and two copies of the rule would eventually draw two lengths of
+ * fade for one forecast.
+ *
+ * @param {number} f 0 at the near end of the band, 1 at the far end
+ * @param {{lo, hi, cutLo, cutHi}} marker from `positionAt`
+ */
+export function bandAlpha(f, marker) {
+  const [near, far] = bandFades(marker);
+  return Math.min(
+    near > 0 ? Math.min(1, f / near) : 1,
+    far > 0 ? Math.min(1, (1 - f) / far) : 1
+  );
 }
 
 /**
