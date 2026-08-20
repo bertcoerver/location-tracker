@@ -6,7 +6,7 @@
     "ping_max_interval": 40,
     "ping_k": 0.3,
     "ping_midpoint": 25,
-    "crew": ["Mariam"],
+    "crew": ["Mariam", "Soline"],
     "news_banner": "     📈🏔️ [Official Race Results](https://live.utmb.world/utmb/2026/runners/2112)      |     🔴 [Race Live Stream](https://live.utmb.world/utmb/2026/utmb) 🎥     ",
     "distance": 174,
     "total_ascent": 9900
