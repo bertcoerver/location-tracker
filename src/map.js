@@ -696,10 +696,11 @@ export function createMap(container, {
 
     let fit = null;
     try {
-      // The profile strip covers the bottom of the window, so the fit has to
-      // clear it or the start of the course hides behind it.
+      // The profile strip covers the bottom of the window and the news bar
+      // covers the top, so the fit has to clear both or the course hides
+      // behind one of them.
       fit = new deck.WebMercatorViewport(base).fitBounds(bounds, {
-        padding: { top: 80, left: 80, right: 80, bottom: 80 + bottomInset() }
+        padding: { top: 80 + topInset(), left: 80, right: 80, bottom: 80 + bottomInset() }
       });
     } catch { /* degenerate bounds */ }
 
@@ -720,21 +721,20 @@ export function createMap(container, {
   }
 
   /**
-   * How much of the bottom of the window the overlays are covering, if any: the
-   * height strip, plus the news bar stacked on top of it.
+   * How much of an edge of the window an overlay is covering, if any: the
+   * height strip at the bottom, or the news bar at the top.
    *
-   * Summed HERE rather than read from one combined custom property, and that is a
-   * platform constraint rather than a preference. An unregistered custom property
-   * holding a `calc()` comes back from `getComputedStyle` as the unresolved token
-   * string "calc(112px + 30px)", which `parseFloat` reads as NaN — the substitution
-   * only happens where the value is actually used in a declaration. Two reads and an
-   * addition is the version that works.
+   * Read HERE rather than through a shared custom property holding a `calc()`,
+   * and that is a platform constraint rather than a preference: an unregistered
+   * custom property holding a `calc()` comes back from `getComputedStyle` as the
+   * unresolved token string, which `parseFloat` reads as NaN — the substitution
+   * only happens where the value is actually used in a declaration.
    */
-  function bottomInset() {
-    const style = getComputedStyle(document.documentElement);
-    const px = name => parseFloat(style.getPropertyValue(name)) || 0;
-    return px('--profile-h') + px('--news-h');
+  function insetPx(name) {
+    return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || 0;
   }
+  const bottomInset = () => insetPx('--profile-h');
+  const topInset = () => insetPx('--news-h');
 
   return {
     /** Replace the drawn set. Fits on first data, then follows new arrivals. */
