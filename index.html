@@ -500,14 +500,15 @@
     line-height: 1;
     color: var(--text-secondary);
     /* The two things .panel paints that a moving child must not sit inside —
-       the fill and the 20 px blur behind it — move to #news-glass below. A
+       the fill and the blur behind it — move to #news-glass below. A
        backdrop-filter samples what is BEHIND its element, so the element
        carrying one cannot also be the element whose children move: leaving them
        together made WebKit re-evaluate a full-width blur over a live deck.gl
-       canvas on every frame of the scroll. Everything else about the box —
-       border, shadow, padding — stays here, so the text is centred in exactly
-       the same 29 px it always was. `transparent` rather than `none`, because
-       .panel sets a colour and this has to beat it. */
+       canvas on every frame of the scroll. The radius comes down there too.
+       Everything else about the box — border, shadow, padding — stays here, so
+       the text is centred in exactly the same 29 px it always was.
+       `transparent` rather than `none`, because .panel sets a colour and this
+       has to beat it. */
     background: transparent;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -532,8 +533,18 @@
     z-index: 0;
     pointer-events: none;
     background: var(--surface-2);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    /* 12 px rather than the 20 the other panels use, and the one place in this
+       file where the bar is deliberately not the same material as .panel. Cost
+       scales with the radius over an area, and this is the widest frosted thing
+       on the page — full window width, sampling a live deck.gl canvas that
+       redraws under it whether or not the text is moving. On an older phone
+       that is the difference between a lap that holds 60 fps and one that does
+       not. The tooltips already frost at 12 px (see `.tip`), and against a
+       30 px strip the two radii are hard to tell apart: it is the saturate
+       that does most of the work of keeping the map underneath looking like a
+       map rather than like fog. */
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
     /* The seam against the map. Drawn here rather than on #news because this
        covers that border — see there for why the width stays behind. */
     border-bottom: 1px solid var(--border);
