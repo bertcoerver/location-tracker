@@ -1,0 +1,19 @@
+<!--
+  Aid station: a cup, for the food and drink laid out on the table.
+
+  Drawn on a 24x24 grid in one ink, like sunrise.svg — whatever colour is stated
+  here is discarded on the way to the screen (see src/glyphs.js) and only the
+  shape survives. Adapted from Lucide's "cup-soda" icon (ISC License,
+  https://lucide.dev) to this file's own house style.
+
+  Used for a waypoint whose <type> or <sym> reads "aid station" — see
+  `waypointGlyph` in src/layers.js.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     color="#000" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="m6 8 1.75 12.28a2 2 0 0 0 2 1.72h4.54a2 2 0 0 0 2-1.72L18 8"/>
+  <path d="M5 8h14"/>
+  <path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/>
+  <path d="m12 8 1-6h2"/>
+</svg>

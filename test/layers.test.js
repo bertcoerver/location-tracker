@@ -9,7 +9,7 @@ import { CONFIG } from '../src/config.js';
 import {
   bandAlpha, bandFades, beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml,
   makeTooltip, latestState, mediaTooltipHtml, splitWeather, sunTooltipHtml, tooltipHtml,
-  viewerLayers, waypointTooltipHtml
+  viewerLayers, waypointGlyph, waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
@@ -472,6 +472,28 @@ test('a waypoint says what kind of place it is, sentence-cased from a shouty <ty
   assert.ok(!html.includes('AID STATION'), html);
   // Beside the name on the top line, not down in the column of readings.
   assert.ok(!html.includes('<div class="row"><span class="i" aria-hidden="true">Aid'), html);
+});
+
+test('waypointGlyph picks the mark by category, however the exporter wrote it', () => {
+  // The three spellings the UTMB course's own exporters actually use, plus
+  // "SUMMIT" for the one category none of them currently write.
+  const cases = [
+    [{ type: 'Checkpoint' }, 'checkpoint'],
+    [{ type: 'Aid_station' }, 'aid-station'],
+    [{ type: 'First_aid' }, 'first-aid'],
+    [{ type: 'AID STATION' }, 'aid-station'],
+    [{ type: 'SUMMIT' }, 'summit'],
+    [{ sym: 'Peak' }, 'summit']
+  ];
+  for (const [waypoint, want] of cases) {
+    assert.equal(waypointGlyph(waypoint), want, JSON.stringify(waypoint));
+  }
+});
+
+test('waypointGlyph draws nothing for a category with no mark of its own', () => {
+  for (const waypoint of [{ type: 'GENERIC' }, { sym: 'Waypoint' }, { name: 'Col' }]) {
+    assert.equal(waypointGlyph(waypoint), undefined, JSON.stringify(waypoint));
+  }
 });
 
 test('an underscore-joined kind reads as separate words', () => {

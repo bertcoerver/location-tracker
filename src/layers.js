@@ -93,11 +93,13 @@ export function courseLayers(course) {
   ];
 
   if (course.waypoints.length) {
+    const withKind = course.waypoints.map(w => ({ ...w, kind: 'waypoint' }));
+
     layers.push(new deck.ScatterplotLayer({
       id: 'waypoints',
       // `kind` is what the tooltip dispatches on — a waypoint is not a fix and
       // shouldn't be described like one.
-      data: course.waypoints.map(w => ({ ...w, kind: 'waypoint' })),
+      data: withKind,
       pickable: true,
       radiusUnits: 'pixels',
       getPosition: w => [w.lon, w.lat],
@@ -108,6 +110,30 @@ export function courseLayers(course) {
       getLineColor: [...ring, 255],
       getFillColor: [...line, 255]
     }));
+
+    // A category mark over the dot, for the waypoints whose <type> or <sym>
+    // names one — see `waypointGlyph`. Same idiom as `sunLayers`' glyph: not
+    // pickable, because the dot underneath already owns the tooltip, and drawn
+    // large enough to cover the plain dot outright rather than sit beside it,
+    // since the point here is to REPLACE the generic mark, not to label it.
+    const marks = waypointAtlas();
+    const glyphed = withKind.filter(w => waypointGlyph(w));
+    if (marks && glyphed.length) {
+      layers.push(new deck.IconLayer({
+        id: 'waypoint-glyph',
+        data: glyphed,
+        pickable: false,
+        iconAtlas: marks.atlas,
+        iconMapping: marks.mapping,
+        getIcon: waypointGlyph,
+        getPosition: w => [w.lon, w.lat],
+        getSize: WAYPOINT_ICON_PX,
+        sizeUnits: 'pixels',
+        // The atlas is null until the SVGs load and then never changes again,
+        // so this is one rebuild in the life of the page.
+        updateTriggers: { getIcon: marks }
+      }));
+    }
 
     const labelled = course.waypoints.filter(w => waypointName(w));
 
@@ -369,6 +395,57 @@ let sunAtlasMemo = null;
 function sunAtlas() {
   return sunAtlasMemo ??=
     glyphAtlas(['sunrise', 'sunset'], inkOf(courseColor()), inkOf(surface()));
+}
+
+/**
+ * What KIND of waypoint each drawn mark stands for, tested against the same
+ * text `waypointKind` shows in the tooltip — so a course whose label reads
+ * "Aid station" gets the cup, whatever the file's own spelling of that was
+ * (`AID STATION`, `Aid_station`, …).
+ *
+ * A ladder rather than a lookup, in the same idiom as `WEATHER` below: none of
+ * these four words appears inside another, so order does not matter here, but
+ * the pattern is kept for the one case an exporter's own wording is not exactly
+ * one of these tokens — "Checkpoint control" should still draw the flag.
+ */
+const WAYPOINT_GLYPHS = [
+  [/aid station/i, 'aid-station'],
+  [/first aid/i, 'first-aid'],
+  [/checkpoint/i, 'checkpoint'],
+  [/summit|peak/i, 'summit']
+];
+
+/** The names in `WAYPOINT_GLYPHS`, and so the filenames `waypointAtlas` loads
+ *  and the icon names `waypointGlyph` answers with. */
+const WAYPOINT_ICONS = WAYPOINT_GLYPHS.map(([, name]) => name);
+
+/** How big a waypoint's category mark is drawn, in pixels — bigger than the
+ *  6 px dot it sits over, since it exists to cover that dot rather than to
+ *  decorate it. */
+const WAYPOINT_ICON_PX = 22;
+
+/** Built once and kept, like `sunAtlasMemo`. */
+let waypointAtlasMemo = null;
+
+/** The category marks as one texture. Null until `loadGlyphs` has settled. */
+function waypointAtlas() {
+  return waypointAtlasMemo ??=
+    glyphAtlas(WAYPOINT_ICONS, inkOf(courseColor()), inkOf(surface()));
+}
+
+/**
+ * Which drawn mark, if any, stands for this waypoint's category — or
+ * `undefined` for one whose `<type>`/`<sym>` names no category `waypointAtlas`
+ * carries a drawing for, which leaves it as the plain dot.
+ *
+ * Exported for its own sake as well as `courseLayers`': the selection is pure,
+ * and it is the one part of the icon pipeline that does not need `deck` or a
+ * canvas to check.
+ */
+export function waypointGlyph(waypoint) {
+  const kind = waypointKind(waypoint);
+  const hit = WAYPOINT_GLYPHS.find(([pattern]) => pattern.test(kind));
+  return hit ? hit[1] : undefined;
 }
 
 /**
