@@ -35,7 +35,7 @@
 // Bump on every deploy that changes a shell file. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '13';
+const VERSION = '14';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes
@@ -74,6 +74,10 @@ const SHELL_URLS = [
   './icons/sunrise.svg',
   './icons/sunset.svg',
   './icons/photo.svg',
+  './icons/checkpoint.svg',
+  './icons/aid-station.svg',
+  './icons/first-aid.svg',
+  './icons/summit.svg',
   './icons/prev.svg',
   './icons/next.svg',
   './icons/expand.svg',

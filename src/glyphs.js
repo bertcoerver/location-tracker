@@ -35,7 +35,9 @@
 // `color`, and their colours are their own. `icons/prev.svg` says so at the top.
 
 /** The marks drawn onto a canvas, and so the filenames under `icons/`. */
-export const GLYPHS = ['sunrise', 'sunset', 'photo'];
+export const GLYPHS = [
+  'sunrise', 'sunset', 'photo', 'checkpoint', 'aid-station', 'first-aid', 'summit'
+];
 
 /** The marks inlined into markup. */
 export const INLINE_GLYPHS = ['prev', 'next', 'expand'];

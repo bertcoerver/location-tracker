@@ -1,0 +1,16 @@
+<!--
+  Checkpoint: a planted flag.
+
+  Drawn on a 24x24 grid in one ink, like sunrise.svg — whatever colour is stated
+  here is discarded on the way to the screen (see src/glyphs.js) and only the
+  shape survives. Adapted from Lucide's "flag" icon (ISC License,
+  https://lucide.dev) to this file's own house style.
+
+  Used for a waypoint whose <type> or <sym> reads "checkpoint" — see
+  `waypointGlyph` in src/layers.js.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     color="#000" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"/>
+</svg>

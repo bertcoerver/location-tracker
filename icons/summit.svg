@@ -1,0 +1,17 @@
+<!--
+  Summit: a snow-capped peak.
+
+  Drawn on a 24x24 grid in one ink, like sunrise.svg — whatever colour is stated
+  here is discarded on the way to the screen (see src/glyphs.js) and only the
+  shape survives. Adapted from Lucide's "mountain-snow" icon (ISC License,
+  https://lucide.dev) to this file's own house style.
+
+  Used for a waypoint whose <type> or <sym> reads "summit" (or "peak") — see
+  `waypointGlyph` in src/layers.js.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     color="#000" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="m8 3 4 8 5-5 5 15H2L8 3z"/>
+  <path d="M4.14 15.08c2.62-1.57 5.24-1.43 7.86.42 2.74 1.94 5.49 2 8.23.19"/>
+</svg>
