@@ -82,14 +82,29 @@ function labelOutline() {
   };
 }
 
+/**
+ * The three subdomain templates a style's tiles come from.
+ *
+ * Held rather than rebuilt, because deck decides whether a layer's data has
+ * changed by comparing the prop BY REFERENCE — a fresh array of the same three
+ * strings reads as a whole new dataset. There are only two of these ever, so a
+ * plain object keyed on the style is the whole cache.
+ */
+const TILE_URLS = {};
+
+function tileUrls(style) {
+  TILE_URLS[style] ??= ['a', 'b', 'c'].map(sub =>
+    `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}@2x.png`);
+  return TILE_URLS[style];
+}
+
 /** Keyless CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
   const style = prefersDark() ? 'dark_all' : 'light_all';
 
   return new deck.TileLayer({
     id: 'basemap',
-    data: ['a', 'b', 'c'].map(sub =>
-      `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}@2x.png`),
+    data: tileUrls(style),
     minZoom: 0,
     maxZoom: 19,
     tileSize: 256,
@@ -102,6 +117,34 @@ export function basemapLayer() {
       });
     }
   });
+}
+
+/**
+ * The waypoints that draw a category mark and the ones that draw a plain dot,
+ * held steady between frames.
+ *
+ * Memoised for the reason `tracedPath` is, and it matters more here: `courseLayers`
+ * runs on every repaint, and deck compares a layer's `data` by reference — so
+ * rebuilding these arrays re-uploaded every waypoint to the GPU on every frame to
+ * arrive at the same three lists. The atlas is part of the key because it arrives
+ * a moment after the first paint and moves waypoints from one list to the other
+ * exactly once.
+ */
+let waypointMemo = { from: null, marks: null, split: { glyphed: [], dotted: [] } };
+
+function splitWaypoints(waypoints, marks) {
+  if (waypoints !== waypointMemo.from || marks !== waypointMemo.marks) {
+    const withKind = waypoints.map(w => ({ ...w, kind: 'waypoint' }));
+    waypointMemo = {
+      from: waypoints,
+      marks,
+      split: {
+        glyphed: marks ? withKind.filter(w => waypointGlyph(w)) : [],
+        dotted: marks ? withKind.filter(w => !waypointGlyph(w)) : withKind
+      }
+    };
+  }
+  return waypointMemo.split;
 }
 
 /**
@@ -161,16 +204,13 @@ export function courseLayers(course, zoom) {
   ];
 
   if (course.waypoints.length) {
-    const withKind = course.waypoints.map(w => ({ ...w, kind: 'waypoint' }));
-
     // Split by whether a category mark is actually going to be drawn this
     // frame: `waypointGlyph` is pure and answers before the atlas has loaded,
     // but the icon itself only appears once `marks` is ready, so a waypoint
     // must not lose its dot before its replacement is there to take over —
     // that would flash it invisible for the one frame in between.
     const marks = waypointAtlas();
-    const glyphed = marks ? withKind.filter(w => waypointGlyph(w)) : [];
-    const dotted = marks ? withKind.filter(w => !waypointGlyph(w)) : withKind;
+    const { glyphed, dotted } = splitWaypoints(course.waypoints, marks);
 
     layers.push(new deck.ScatterplotLayer({
       id: 'waypoints',
@@ -901,38 +941,76 @@ export function latestState(points, forecast = null, now = Date.now()) {
 }
 
 /**
+ * The four ways `pointLayers` slices the run, held steady between frames.
+ *
+ * All four used to be rebuilt on every repaint, and since deck compares a layer's
+ * `data` by reference that re-uploaded every ping on the course to the GPU sixty
+ * times a second to arrive at the same four lists. They are a function of the
+ * points and the course and nothing else — neither of which changes between
+ * frames of an animation — so the memo is exact rather than approximate.
+ *
+ *   `points`  media that carried its own coordinates rides in the points array so
+ *             that it snaps and counts, but it gets no dot, no hit disc and no
+ *             halo here: it has a thumbnail of its own, and a dot under that
+ *             thumbnail is one mark claimed by two layers, with two tooltips to
+ *             match. See `mediaLayers`.
+ *
+ *   `moved`   only the ones the snapper actually moved. For an unsnapped ping the
+ *             two positions are the same, so there is nothing to draw faintly and
+ *             nothing to join up. Media IS included, and this is the one place it
+ *             is: what the audit trail shows is how far the snapper moved a
+ *             reading, and that question is asked of a photograph for exactly the
+ *             reasons it is asked of a ping — more so, since a thumbnail sits
+ *             30 px above its anchor and the eye has further to travel to check
+ *             it.
+ *
+ *   `rejected`/`placed`  the fixes the snapper declined to place and the ones it
+ *             placed. Both pings only: a turned-down photograph already draws its
+ *             own anchor at the raw position, and a snapped one draws it on the
+ *             course. Split only when there IS a course — `rejected` has to be
+ *             empty on a run without one, or every ping on it would be drawn as a
+ *             refusal.
+ */
+let splitMemo = { from: null, course: null, split: null };
+
+function pointSplits(all, course) {
+  if (all !== splitMemo.from || course !== splitMemo.course || !splitMemo.split) {
+    const points = fixesOf(all);
+    splitMemo = {
+      from: all,
+      course,
+      split: {
+        points,
+        moved: all.filter(p => p.snap),
+        rejected: course ? points.filter(p => !p.snap) : [],
+        placed: course ? points.filter(p => p.snap) : points
+      }
+    };
+  }
+  return splitMemo.split;
+}
+
+/** The newest fix as a one-element layer input, held for the same reason — the
+ *  three layers drawn from it are the ones a live run repaints most often. */
+let latestMemo = { from: null, data: [] };
+
+function latestArray(latest) {
+  if (latest !== latestMemo.from) {
+    latestMemo = { from: latest, data: latest ? [latest] : [] };
+  }
+  return latestMemo.data;
+}
+
+/**
  * @param {object|null} [forecast] for the liveness the halo rides on — see
  *   `latestState`.
  */
 export function pointLayers(all, pulse, course = null, forecast = null) {
-  // Media that carried its own coordinates rides in the points array so that it
-  // snaps and counts, but it gets no dot, no hit disc and no halo here: it has a
-  // thumbnail of its own, and a dot under that thumbnail is one mark claimed by
-  // two layers — with two tooltips to match. See `mediaLayers`.
-  const points = fixesOf(all);
+  const { points, moved, rejected, placed } = pointSplits(all, course);
   const { latest, finished, live } = latestState(points, forecast);
-  const latestData = latest ? [latest] : [];
+  const latestData = latestArray(latest);
   const ring = surface();
   const fill = accent();
-
-  // Only the ones that actually moved. For an unsnapped ping the two positions
-  // are the same, so there is nothing to draw faintly and nothing to join up.
-  //
-  // Media IS included, and this is the one place it is. What the audit trail shows
-  // is how far the snapper moved a reading, and that question is asked of a
-  // photograph for exactly the reasons it is asked of a ping — more so, since a
-  // thumbnail sits 30 px above its anchor and the eye has further to travel to
-  // check it. Excluding media here would have made the map quieter about the marks
-  // it had corrected most recently.
-  const moved = all.filter(p => p.snap);
-
-  // Fixes the snapper declined to place, and the ones it placed. Both pings only:
-  // a turned-down photograph already draws its own anchor at the raw position, and
-  // a snapped one draws it on the course. Split only when there is a course —
-  // `rejected` has to be empty on a run without one, or every ping on it would be
-  // drawn as a refusal.
-  const rejected = course ? points.filter(p => !p.snap) : [];
-  const placed = course ? points.filter(p => p.snap) : points;
   const audit = moved.length ? [
     // Which faint dot belongs to which snapped one. Dashed rather than solid so
     // it reads as an annotation and can't be mistaken for a leg of the route.
@@ -1262,6 +1340,23 @@ export function hoverLayers(position) {
   })];
 }
 
+/** `fadedBand` held between frames, keyed on the marker that positions it —
+ *  see the comment on `key` in `forecastLayers` for why that key is the right one.
+ *  The course is in the key as well, since a run switch keeps the same marker
+ *  arithmetic over an entirely different route. */
+let bandMemo = { course: null, key: null, data: [] };
+
+function band(course, key, marker) {
+  if (course !== bandMemo.course || key !== bandMemo.key) {
+    bandMemo = {
+      course,
+      key,
+      data: fadedBand(pathsBetween(course, marker.lo, marker.hi), accent(), marker)
+    };
+  }
+  return bandMemo.data;
+}
+
 /**
  * Where the runner probably is right now, on the map: the stretch of trace the
  * 80% range covers, and nothing else.
@@ -1289,11 +1384,15 @@ export function hoverLayers(position) {
 export function forecastLayers(course, marker) {
   if (!course || !marker) return [];
 
-  const data = fadedBand(pathsBetween(course, marker.lo, marker.hi), accent(), marker);
   // The band slides along the course as the clock runs, and shortens and lengthens
   // as the forecast tightens, so its contents change without the array identity
-  // saying anything about it.
+  // saying anything about it. Which makes the key the memo's key too: the band is
+  // recomputed when it has actually moved, and not on every repaint of a halo
+  // that has nothing to do with it. It is the most expensive thing in this file
+  // to rebuild — `pathsBetween` cuts a stretch out of a course that is fourteen
+  // thousand points long on UTMB, and `fadedBand` then walks it twice.
   const key = `${marker.lo},${marker.hi},${marker.cutLo},${marker.cutHi}`;
+  const data = band(course, key, marker);
 
   return [
     new deck.PathLayer({

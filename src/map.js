@@ -6,8 +6,8 @@ import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import { loadGlyphs } from './glyphs.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
-  labelZoomBucket, makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers, sunLayers,
-  sunTooltipHtml, tooltipHtml, traceLayers, viewerLayers, waypointTooltipHtml
+  labelZoomBucket, latestState, makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers,
+  sunLayers, sunTooltipHtml, tooltipHtml, traceLayers, viewerLayers, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, fixesOf, latestOf, posOf, unionBounds } from './points.js';
@@ -24,6 +24,33 @@ import { interpolateAt, originOf } from './stats.js';
 const withoutTransition = ({
   transitionDuration, transitionInterpolator, onTransitionEnd, onTransitionInterrupt, ...rest
 }) => rest;
+
+/**
+ * How many steps the halo's cycle is rounded to.
+ *
+ * The halo is a sine on the clock, so read continuously it takes a NEW value on
+ * every frame the browser offers — and since the only way to show it is to redraw
+ * the whole map, that is a full-screen WebGL repaint at 60 fps for as long as the
+ * page is open. On a phone that is the difference between a map and a hand warmer.
+ *
+ * Rounding it to a step means the value only changes when the picture would, and
+ * `tick` paints on nothing else. Sixteen steps over a ~3.1 s cycle works out at
+ * about ten repaints a second, and at most sixteen — the sine is steepest at the
+ * midpoint and idles at both ends, which is exactly the right shape: the frames go
+ * where the movement is.
+ *
+ * Sixteen because of what the step is worth on screen. The halo runs 11 px to
+ * 20 px with its alpha going 70 to 25 (see `pointLayers`), so one step is half a
+ * pixel of radius and three of alpha, on a soft translucent blob easing through a
+ * three-second breath. Fewer steps would band it; more would buy frames nobody
+ * can see.
+ */
+const PULSE_STEPS = 16;
+
+/** Where the halo is in its cycle at `now`, 0 to 1, rounded to `PULSE_STEPS`. */
+function pulseAt(now) {
+  return Math.round(((Math.sin(now / 500) + 1) / 2) * PULSE_STEPS) / PULSE_STEPS;
+}
 
 export function createMap(container, {
   onFollowChange = () => {},
@@ -79,6 +106,13 @@ export function createMap(container, {
   // `settle`.
   let flight = 0;
   let pulse = 0;
+  // Whether anything on the map is mid-animation, and so whether a frame is worth
+  // painting at all. Held rather than asked per frame: the question runs
+  // `stillRunning`, which falls through to a 40-step bisection in `positionAt` as
+  // soon as the phone goes quiet — which is exactly the state it is asked about
+  // most. It changes on the scale of minutes, so it is answered on the second
+  // (`tickForecast`) and whenever the data behind it moves (`render`).
+  let beating = false;
   // Mid-drag: the pinned point is being slid along the course. While this is
   // true the camera controller is switched off entirely — see `pointerdown`.
   let dragging = false;
@@ -154,16 +188,50 @@ export function createMap(container, {
   }
 
   /**
-   * Recompute where the runner probably is. The strip's `refreshMarker` gates a
-   * redraw on it; here there is nothing to gate — `tick()` rebuilds the stack
-   * every frame regardless.
+   * What the band is drawn from, as a string — the four numbers `forecastLayers`
+   * actually reads off a marker. A marker is rebuilt from the clock every second
+   * and is a new object every time, so its identity says nothing about whether
+   * the band has moved.
+   */
+  const markerKey = m => (m ? `${m.lo},${m.hi},${m.cutLo},${m.cutHi}` : '');
+
+  /**
+   * Recompute where the runner probably is, and say whether that moved the band.
+   *
+   * Gated exactly as the strip's `refreshMarker` is, and for the same reason it
+   * always should have been: `tick()` used to rebuild the stack on every frame
+   * regardless, so this could just assign and let the next frame carry it. Now
+   * that a frame is only paid for when the picture changes, a band that slid
+   * along the course is one of the things that changes it, and it has to say so.
    *
    * `positionAt` gives null once the prediction has run off the end of the
    * course, which is what takes the marker away when a run goes quiet: a phone
    * that stopped reporting three days ago is not "probably at the finish line".
    */
   function refreshMarker() {
-    marker = course && forecast ? positionAt(forecast, Date.now()) : null;
+    const next = course && forecast ? positionAt(forecast, Date.now()) : null;
+    const moved = markerKey(next) !== markerKey(marker);
+    marker = next;
+    return moved;
+  }
+
+  /**
+   * Recompute whether anything is animating, and say whether that changed.
+   *
+   * Two marks pulse and BOTH are conditional: the newest fix only while the run is
+   * live — `latestState` is the same rule the status panel's dot is drawn from, so
+   * a finished race and a phone that has gone quiet stop the halo, and stop this —
+   * and the viewer's own dot whenever there is one. That second case is the one
+   * with no pings behind it: a run that hasn't started yet is exactly when someone
+   * checks where they are relative to it.
+   *
+   * A change is itself a reason to repaint, since it adds or removes the halo.
+   */
+  function refreshLive() {
+    const next = Boolean(viewer) || latestState(fixesOf(points), forecast).live;
+    const changed = next !== beating;
+    beating = next;
+    return changed;
   }
 
   /**
@@ -581,6 +649,10 @@ export function createMap(container, {
    * `tick()` has always updated layers alone for the same reason.
    */
   function render() {
+    // Here because this is the funnel every data change already passes through —
+    // new points, a new forecast, the viewer's dot arriving — and each of those is
+    // exactly a thing that can start or stop the halo. See `refreshLive`.
+    refreshLive();
     if (flying) return deckgl.setProps({ layers: allLayers() });
     paint();
   }
@@ -591,6 +663,16 @@ export function createMap(container, {
   // this: a map that held its first paint back for an icon would be a map that
   // holds its first paint back.
   loadGlyphs().then(render);
+
+  // The basemap comes in a light and a dark cut, and `basemapLayer` picks between
+  // them by asking the OS every time it is built. That used to need no listener
+  // because the stack was rebuilt sixty times a second: flipping the phone into
+  // dark mode swapped the tiles within a frame, by accident. Now that a repaint
+  // has to be asked for, it has to be asked for here — otherwise a run that has
+  // finished, and so is painting nothing at all, would keep the light basemap
+  // until something happened to pan the map.
+  globalThis.matchMedia?.('(prefers-color-scheme: dark)')
+    .addEventListener('change', render);
 
   /**
    * Drop the transition props once a flight ends, so a later render() doesn't
@@ -868,10 +950,15 @@ export function createMap(container, {
     /**
      * Slide the marker along as the clock runs. Called once a second from
      * main.js, beside the strip's, because it is the same mark on the same beat.
-     * No render — `tick()` paints it on the next frame.
+     * Renders only when the band actually moved — see `refreshMarker`.
      */
     tickForecast() {
-      refreshMarker();
+      // Both called, never short-circuited: a band that slid and a run that went
+      // quiet are each a reason to repaint, and the second one is the only thing
+      // that ever notices a phone falling silent.
+      const moved = refreshMarker();
+      const woke = refreshLive();
+      if (moved || woke) render();
     },
 
     /**
@@ -1012,26 +1099,25 @@ export function createMap(container, {
 
     /** Drive the halo animation. Called once per frame from main.js. */
     tick() {
-      pulse = (Math.sin(Date.now() / 500) + 1) / 2;
-      // Two things pulse, and either one is reason enough to repaint. The viewer's
-      // dot is the case with no pings behind it: a run that hasn't started yet is
-      // exactly when someone checks where they are relative to it, and without
-      // this the halo would sit frozen.
-      //
-      // A zoom that has crossed a label step is the third reason, and the only one
-      // that isn't an animation. Either of the two above already rebuilds the stack
-      // on every frame of a pinch — but a course with no pings and no viewer dot
-      // repaints on neither, and `onViewStateChange` hands deck the camera by
-      // itself. Without this the names on a race that hasn't started yet would
-      // stay thinned for whatever zoom the map last drew at.
+      // A zoom that has crossed a label step is the other reason to repaint, and
+      // the only one that isn't an animation. `onViewStateChange` hands deck the
+      // camera by itself, so without this the names on a race nothing is animating
+      // on would stay thinned for whatever zoom the map last drew at.
       const bucket = labelZoomBucket(viewState.zoom);
-      if (points.length || viewer || bucket !== paintedZoom) {
+      const step = beating ? pulseAt(Date.now()) : pulse;
+
+      // The whole point of the two comparisons: a repaint is a full WebGL redraw
+      // of a full-screen canvas, and one that draws the same picture as the last
+      // one is heat and nothing else. See `pulseAt` for why the sine is rounded.
+      if (step !== pulse || bucket !== paintedZoom) {
+        pulse = step;
         paintedZoom = bucket;
         deckgl.setProps({ layers: allLayers() });
       }
-      // Here rather than in render(): a fly-to moves the camera for a second
-      // without anything calling render, and a pinned tooltip left behind at
-      // the old screen position would be pointing at nothing.
+      // Here rather than in render(), and outside the guard above: a fly-to moves
+      // the camera for a second without anything calling render OR changing the
+      // halo, and a pinned tooltip left behind at the old screen position would be
+      // pointing at nothing.
       placePin();
     }
   };
