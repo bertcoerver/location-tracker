@@ -53,6 +53,34 @@ test('an inlined mark is one self-contained element', () => {
   }
 });
 
+test('the marks meant to read as solid are actually filled', () => {
+  // These four are drawn small — 22 px on the map, 18 on the height strip — and
+  // at that size an outline is texture rather than a shape. Each of them says so
+  // in its own header, and each is one `fill="currentColor"` away from being the
+  // hollow Lucide original again: dropping in a replacement icon from upstream is
+  // exactly how that happens, and on the map it shows up as a flag with the
+  // basemap visible through it rather than as anything that looks like a fault.
+  for (const name of ['first-aid', 'checkpoint', 'aid-station', 'photo']) {
+    assert.match(read(name), /fill="currentColor"/,
+      `icons/${name}.svg has no filled path, so it draws as an outline`);
+  }
+});
+
+test('the drink in the cup starts where the cup says it does', () => {
+  // The aid station is a cup with something in it, which takes two paths that
+  // have to agree: the surface line, and the fill whose top edge IS that line.
+  // Nudge the wave and leave the fill behind and the drink pulls away from the
+  // glass — a gap or an overlap of a pixel or two, which at 22 px reads as a
+  // dirty mark rather than as a mistake anybody would go looking for.
+  const [fill, wave] = [...read('aid-station').matchAll(/d="([^"]+)"/g)]
+    .map(m => m[1].replace(/\s+/g, ' '))
+    .filter(d => d.startsWith('M7 15'));
+
+  assert.ok(wave, 'icons/aid-station.svg has no surface line starting at M7 15');
+  assert.ok(fill.startsWith(wave),
+    'the fill in icons/aid-station.svg no longer begins with the surface line');
+});
+
 test('sunrise and sunset are not the same picture', () => {
   // Two marks a night that look alike are two marks that say nothing. The pair is
   // meant to differ in what is RISING — a sun with rays, a crescent moon — rather

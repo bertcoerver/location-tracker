@@ -18,6 +18,70 @@ import {
 import { finishOf, fixesOf, latestOf, posOf, tracePath } from './points.js';
 import { isVideo, THUMB_PX } from './media.js';
 
+/**
+ * The outline every DRAWN mark on the map carries — a sunrise, a moonrise, a
+ * waypoint's category.
+ *
+ * White in both schemes, and the one colour on this page that is NOT read from
+ * the palette. Everything else here is: a ping is the accent, a course is the
+ * course purple, and both follow the light and dark stylesheets. This does not,
+ * because it is not saying anything — it is the gap between a mark and whatever
+ * tile happens to be under it.
+ *
+ * It used to be `surface()`, which is right for a panel sitting on the page and
+ * wrong for a mark sitting on a map: on the dark scheme that is near black, laid
+ * over a dark basemap, and an outline you cannot see is doing a job that is
+ * entirely about being seen. White works on both of CARTO's tile sets.
+ *
+ * The NAMES do not use this — see `labelOutline` for the one place where white
+ * in both schemes is the wrong answer.
+ */
+const HALO = [255, 255, 255];
+
+/**
+ * The glyph atlas the names are typeset from.
+ *
+ * `buffer` is the padding around each character in it, and so the room the
+ * outline below has to grow into: deck's default 4 clips that outline at half
+ * its width. It costs a slightly larger texture and nothing else — in
+ * particular it is not letter spacing, which comes from the font's own advance
+ * widths either way. Hoisted so it is one object rather than a fresh one per
+ * frame: deck compares this prop shallowly, and a new object every frame would
+ * be a font atlas rebuilt sixty times a second.
+ */
+const LABEL_FONT = { sdf: true, radius: 12, cutoff: 0.25, buffer: 8 };
+
+/**
+ * The SDF outline both of this file's `TextLayer`s put behind their names.
+ *
+ * `outlineWidth` is NOT a fraction of the font size, whatever it looks like.
+ * deck divides it by `fontSettings.radius` before handing it to the shader, so
+ * the outline comes out `0.75 * outlineWidth` atlas pixels wide at the atlas's
+ * own 64 px font — which is `0.14 * outlineWidth` pixels at the 12 px these
+ * names are drawn at. The 0.3 this used to be was therefore four HUNDREDTHS of
+ * a pixel: the labels have never actually had an outline, which is most of why
+ * they were so hard to read over a busy tile. Eight gives a pixel and an eighth.
+ *
+ * The colour is `surface()` and not the `HALO` the marks get, which on the light
+ * scheme is the same white and on the dark scheme is its opposite. That is not
+ * an inconsistency, it is the difference between a mark and a word: an outline
+ * around a SHAPE only has to differ from the map, and white does that on both
+ * schemes, but an outline around a LETTER has to differ from the letter too, or
+ * it fills the counters in and eats the letterform. The dark scheme's ink is a
+ * pale lavender, so white around it turns a name into a white smear with a
+ * violet ghost inside — legible at 40 px, unreadable at 12.
+ *
+ * Slightly under full strength either way, because it surrounds every letter and
+ * at 255 the word starts to read as a block of colour with type cut out of it.
+ */
+function labelOutline() {
+  return {
+    fontSettings: LABEL_FONT,
+    outlineWidth: 8,
+    outlineColor: [...surface(), 235]
+  };
+}
+
 /** Keyless CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
   const style = prefersDark() ? 'dark_all' : 'light_all';
@@ -183,14 +247,11 @@ export function courseLayers(course, zoom) {
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'bottom',
       getColor: [...line, 255],
-      // A halo in the page's own background colour, because the basemap
-      // underneath is whatever it happens to be — town, forest, water.
-      //
-      // `outlineWidth` is a FRACTION OF THE FONT SIZE here, not pixels, and
-      // only means anything with an SDF font.
-      fontSettings: { sdf: true, radius: 12, cutoff: 0.25 },
-      outlineWidth: 0.3,
-      outlineColor: [...ring, 235]
+      // Outlined, for the same reason the marks below it are: the basemap
+      // underneath is whatever it happens to be — town, forest, water. See
+      // `labelOutline` for what the numbers in it mean, and for why a name's
+      // outline is not the white a mark's is.
+      ...labelOutline()
 
       // No CollisionFilterExtension, though thinning out crowded labels is
       // exactly what it is for, and it is why `thinLabels` above is hand-rolled
@@ -611,7 +672,7 @@ let sunAtlasMemo = null;
 /** The two marks as one texture. Null until `loadGlyphs` has settled. */
 function sunAtlas() {
   return sunAtlasMemo ??=
-    glyphAtlas(['sunrise', 'sunset'], inkOf(courseColor()), inkOf(surface()));
+    glyphAtlas(['sunrise', 'sunset'], inkOf(courseColor()), inkOf(HALO));
 }
 
 /**
@@ -647,7 +708,7 @@ let waypointAtlasMemo = null;
 /** The category marks as one texture. Null until `loadGlyphs` has settled. */
 function waypointAtlas() {
   return waypointAtlasMemo ??=
-    glyphAtlas(WAYPOINT_ICONS, inkOf(courseColor()), inkOf(surface()));
+    glyphAtlas(WAYPOINT_ICONS, inkOf(courseColor()), inkOf(HALO));
 }
 
 /**
@@ -1064,12 +1125,10 @@ export function beaconLayers(beacons) {
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'bottom',
       getColor: b => [...ink, alpha(b)],
-      // Same halo as the waypoint labels, for the same reason: whatever basemap
-      // happens to be under a name, the name has to survive it. See the note
-      // there for why there is no CollisionFilterExtension.
-      fontSettings: { sdf: true, radius: 12, cutoff: 0.25 },
-      outlineWidth: 0.3,
-      outlineColor: [...paper, 235],
+      // Same outline as the waypoint labels, for the same reason: whatever
+      // basemap happens to be under a name, the name has to survive it. See the
+      // waypoint labels for why there is no CollisionFilterExtension.
+      ...labelOutline(),
       updateTriggers: { getPosition: trigger, getText: trigger, getColor: trigger }
     })
   ];
