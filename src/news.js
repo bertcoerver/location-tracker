@@ -1,4 +1,5 @@
-// The news bar: one line, full width, sitting between the height strip and the map.
+// The news bar: one line, full width, pinned to the top of the screen, above
+// the status box.
 //
 // It is the only thing on this page that says something a human wrote rather than
 // something a phone measured, which is why it gets its own module and its own rules.
@@ -111,8 +112,8 @@ export function marqueeState({ contentPx, boxPx, reduced = false }) {
  * The bar itself.
  *
  * Mirrors [`createProfile`](./profile.js)'s `sync`: one function owns the custom
- * property saying how much of the bottom of the window this is covering, and
- * everything anchored down there reads it rather than keeping its own copy.
+ * property saying how much of the top of the window this is covering, and
+ * everything anchored up there reads it rather than keeping its own copy.
  *
  * @param {HTMLElement} root the `#news` element.
  */
@@ -134,8 +135,8 @@ export function createNews(root) {
     const on = Boolean(text);
     root.hidden = !on;
     // Set even when hidden, and to an explicit `0px` rather than being removed:
-    // `bottomInset` and the profile's tooltip both add this in, and a missing custom
-    // property makes the whole `calc()` invalid rather than making it zero.
+    // `topInset` and #status both add this in, and a missing custom property
+    // makes the whole `calc()` invalid rather than making it zero.
     document.documentElement.style.setProperty('--news-h', on ? `${CONFIG.newsHeight}px` : '0px');
     if (!on) return;
 

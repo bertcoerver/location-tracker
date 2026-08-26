@@ -253,7 +253,7 @@ finished: a forecast is a claim about a phone that is still out there. See "Pred
 ### The news bar
 
 `news_banner` in a run's [`course_settings.json`](#course_settingsjson) puts one line across the
-bottom of the window, directly above the height strip:
+top of the window, above the status box:
 
 > Official Race Odometer [here](https://some.url)
 
@@ -1605,7 +1605,7 @@ without comment if it isn't. The ping curve is the one exception, and there is a
 | `ping_midpoint` | number, battery **%** | `CONFIG.batteryMid`, `25` | the battery level the knee of the curve sits at. |
 | `crew` | array of strings | nobody: every photograph in the folder is the runner's | who else is out there with a camera. A name here makes `MARIAM_*.jpg` a picture **of** the crew rather than of the runner — see "Photographs". |
 | `runners_name` | string | no byline on any photograph | who is running, for signing their own photographs. |
-| `news_banner` | string | no bar at all | one line shown between the height strip and the map. A tiny Markdown subset. |
+| `news_banner` | string | no bar at all | one line shown across the top of the window, above the status box. A tiny Markdown subset. |
 | `distance` | number, **km** | the course's own measured length | shown under the course name. |
 | `total_ascent` | number, **m** | the course's own measured climb | shown beside it. |
 | `max_speed` | number, **km/h** | `CONFIG.snapMaxSpeedKmh`, `22` | the fastest a leg of *this* run may imply before the snapper doubts the fix. See "Snapping". |
@@ -2352,9 +2352,8 @@ mountains, and the signal there is bad exactly when you most want to look.
 
 **Installing.** Android and desktop Chrome offer it themselves. iOS never does:
 Share → *Add to Home Screen*. Installed, it runs without browser chrome, which is
-worth more here than it sounds — the height strip and the news bar anchor to the
-bottom of the window, and Safari's URL bar spends its life moving around down
-there.
+worth more here than it sounds — the height strip anchors to the bottom of the
+window, and Safari's URL bar spends its life moving around down there.
 
 **Do not add `viewport-fit=cover`.** It is the obvious thing to want — it is what
 makes a page go edge to edge — and on an installed iOS app it is broken. The app

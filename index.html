@@ -57,10 +57,10 @@
     --course:         #7b6cc4;
     --shadow:         0 1px 2px rgba(11,11,11,.08), 0 8px 24px rgba(11,11,11,.10);
 
-    /* How much of the bottom of the window each of the two bottom overlays is
-       covering: the height strip, set by profile.js, and the news bar above it,
-       set by news.js — both from config.js. Everything anchored to the bottom of
-       the window adds BOTH so nothing can disagree about where the bottom is.
+    /* How much of an edge of the window an overlay is covering: the height
+       strip at the bottom, set by profile.js, and the news bar at the top, set
+       by news.js — both from config.js. Everything anchored to that edge reads
+       the matching property so nothing can disagree about where the edge is.
        Either may be 0px, and both are always set rather than removed: a missing
        custom property makes a calc() invalid rather than making it zero. */
     --profile-h: 0px;
@@ -155,7 +155,10 @@
   }
 
   #status {
-    top: max(12px, env(safe-area-inset-top));
+    /* Stacked under the news bar exactly as the profile-tip stacks under the
+       height strip: the bar is full-width and this panel's own top offset
+       doesn't know its height, so it reads --news-h rather than guess. */
+    top: calc(max(12px, env(safe-area-inset-top)) + var(--news-h));
     left: max(12px, env(safe-area-inset-left));
     padding: 10px 13px;
     min-width: 176px;
@@ -467,21 +470,24 @@
   #profile[data-dragging="true"] #profile-canvas { touch-action: none; cursor: grabbing; }
 
   /* --- the news bar ------------------------------------------------------- */
-  /* Directly on top of the height strip, and an overlay like it, so a run with
-     nothing to say looks exactly as it did before this existed.
+  /* Pinned to the top of the window, full width, above everything else up
+     there — see #status, which reads --news-h to stack under it. An overlay
+     like the height strip, so a run with nothing to say looks exactly as it
+     did before this existed.
 
-     One `bottom` expression covers both cases, which is why the safe-area term is
-     here as well as inside #profile's height. With the strip up, #profile has
-     already absorbed the inset and --profile-h alone stacks this on it; with the
-     strip hidden (display:none, above) nothing is consuming the inset and the
-     env() is what keeps the bar off the home indicator. */
+     `top` is the safe-area inset alone, not max()'d against a fixed pixel
+     value the way #status's is: the bar is meant to sit flush against
+     whatever the notch leaves, not float a further 12px below it. */
   #news {
     left: 0; right: 0;
-    bottom: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px));
+    top: env(safe-area-inset-top, 0px);
     height: var(--news-h);
     padding: 0 14px;
     border-radius: 0;
-    border-left: 0; border-right: 0; border-bottom: 0;
+    /* Flush with the top of the window on all three sides that touch it — the
+       fourth, the bottom edge, is the one border the bar keeps, since that's
+       the seam against the map rather than the screen. */
+    border-left: 0; border-right: 0; border-top: 0;
     display: flex;
     align-items: center;
     /* One line, always — see news.js. */
@@ -881,11 +887,13 @@
   /* The profile's tooltip. Same `.tip` skin as the map's, but positioned by us:
      deck.gl isn't involved, and the canvas sits inside a horizontally scrolled
      container, so canvas coordinates are not page coordinates. Fixed, and sitting
-     ON TOP of the strip rather than below it, where there is no room. */
+     ON TOP of the strip rather than below it, where there is no room. The news
+     bar lives at the top of the window now, so only the strip's own height (and
+     the safe area beneath it) has to be cleared. */
   #profile-tip {
     position: fixed;
     z-index: 2;
-    bottom: calc(var(--profile-h) + var(--news-h) + env(safe-area-inset-bottom, 0px) + 8px);
+    bottom: calc(var(--profile-h) + env(safe-area-inset-bottom, 0px) + 8px);
     /* Deliberately NOT `none`: the Google Maps link inside has to be clickable,
        and reaching it means moving the cursor off the canvas and into here.
        profile.js allows exactly that move and dismisses on any other. */
@@ -1072,6 +1080,17 @@
 
 <div id="map"></div>
 
+<!-- The top of the screen, full width, above everything else up there — an
+     overlay on the map. Two copies of the message, because that is what makes
+     a scrolling one loop seamlessly — see news.js. The second is aria-hidden
+     so it isn't read twice. -->
+<div id="news" class="panel" role="region" aria-label="Course news" hidden>
+  <div id="news-track">
+    <span class="news-copy"></span>
+    <span class="news-copy" aria-hidden="true"></span>
+  </div>
+</div>
+
 <div id="status" class="panel">
   <div id="head">
     <button id="ticker" type="button" aria-pressed="true" title="Fly to the latest ping">
@@ -1121,16 +1140,6 @@
   </div>
   <div id="viewer-note"></div>
   <div id="error"></div>
-</div>
-
-<!-- Between the height strip and the map, and an overlay on both. Two copies of
-     the message, because that is what makes a scrolling one loop seamlessly —
-     see news.js. The second is aria-hidden so it isn't read twice. -->
-<div id="news" class="panel" role="region" aria-label="Course news" hidden>
-  <div id="news-track">
-    <span class="news-copy"></span>
-    <span class="news-copy" aria-hidden="true"></span>
-  </div>
 </div>
 
 <div id="profile" class="panel" hidden>
