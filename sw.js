@@ -5,11 +5,11 @@
 // never cache what must be fresh:
 //
 //   index.html, src/*.js    network-first with a short timeout, cache as the
-//                           fallback. These are the files that change, they are
+//   icons/*.svg             fallback. These are the files that change, they are
 //                           small, and serving them stale is what turned a
 //                           one-line CSS fix into four rounds of "did it land?".
 //                           Online you are always current; offline you still open.
-//   vendor/, icons/         cache-first. Big, and their names change when they do.
+//   vendor/                 cache-first. Big, and its name changes when it does.
 //   api.github.com          network only. Chiefly the listing, fetched with an
 //                           ETag and `cache: 'no-store'`, which is the ONLY
 //                           thing that says a new ping exists. A stale one here
@@ -32,10 +32,20 @@
 // behaviour on iOS, where an installed app reloading itself has a history of
 // coming back with a viewport the wrong shape.
 
-// Bump on every deploy that changes a shell file. It is what evicts the old
+// Bump on every deploy that changes a file served CACHE-FIRST: the app's PNG
+// icons, or a vendored library swapped in place. It is what evicts the old
 // precache — the caches below are keyed by it, and `activate` deletes every cache
 // whose name is not on the current list.
-const VERSION = '14';
+//
+// It is also the only thing that gets a new worker installed at all, since the
+// browser looks for a byte to change in THIS file and nothing else. That is the
+// trap this last bump was for: the drawn marks were cache-first, an edit to
+// aid-station.svg shipped without touching this line, and every installed app
+// went on serving the old cup — invisible in a browser, where a hard reload goes
+// around the worker, and permanent in a PWA, where there is no such gesture. The
+// marks are network-first now, so the class of mistake is gone rather than
+// documented; this line is for the rest.
+const VERSION = '15';
 
 const SHELL = `shell-v${VERSION}`;
 // Neither of these carries the version, and that is the point: they hold bytes
@@ -65,9 +75,11 @@ const SHELL_URLS = [
   './icons/icon-512.png',
   './icons/icon-512-maskable.png',
   './icons/apple-touch-icon.png',
-  // The marks the map and the height strip draw. Part of the shell rather than of
-  // the data: they never change between deploys, and without them a course opened
-  // offline draws every sunrise as a bare dot.
+  // The marks the map and the height strip draw. Precached, but SERVED
+  // network-first like the modules above — see the `.svg` route in `fetch`. Being
+  // in here is what stops a course opened offline drawing every sunrise as a bare
+  // dot; being network-first is what stops a redrawn one taking a version bump to
+  // reach an installed app.
   //
   // No apostrophes in this comment on purpose: test/sw.test.js reads the list out
   // of this file with a regex over quoted strings, and one would look like an entry.
@@ -147,9 +159,13 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Deliberately before the same-origin branch: this is the app's own code, and
-  // it is the one thing here that must never be a deploy behind.
-  if (url.origin === self.location.origin && url.pathname.includes('/src/')) {
+  // Deliberately before the same-origin branch: this is the app's own code and
+  // its own drawings, and they are the things here that must never be a deploy
+  // behind. Every `.svg` on this origin is one of ours: the ten drawn and inlined
+  // marks, and the favicon, which is not precached and so was going to the network
+  // either way. The app's own launcher icons are PNGs and stay cache-first.
+  const own = url.pathname.includes('/src/') || url.pathname.endsWith('.svg');
+  if (url.origin === self.location.origin && own) {
     event.respondWith(fresh(req));
     return;
   }

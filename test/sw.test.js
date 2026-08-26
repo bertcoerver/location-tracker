@@ -76,6 +76,26 @@ test('sha-addressed blobs go to the data cache, not the shell', () => {
   assert.match(fn[1], /caches\.open\(DATA\)/);
 });
 
+test('the app modules and the drawn marks are served network-first', () => {
+  // Both are files that change under a name that does not, so cache-first serves
+  // them until VERSION is bumped — and VERSION is also the only thing that gets a
+  // new worker installed, so forgetting it means the old bytes are served forever.
+  // That is not a stale-for-a-while bug: it is invisible in a browser, where a hard
+  // reload goes around the worker, and permanent in an installed PWA, where there
+  // is no such gesture. It cost one deploy of a redrawn icon already.
+  const route = source.match(/const own = (.+);/);
+  assert.ok(route, 'the network-first route is not where this test expects it');
+  assert.match(route[1], /'\/src\/'/, 'the app modules are no longer network-first');
+  assert.match(route[1], /'\.svg'/, 'the drawn marks are no longer network-first');
+
+  // Order matters as much as the test above: the generic same-origin branch is
+  // cache-first, so it has to come second or it answers first and this never runs.
+  assert.ok(
+    source.indexOf('const own =') < source.indexOf('event.respondWith(asset(req))'),
+    'the cache-first same-origin branch now shadows the network-first one'
+  );
+});
+
 test('the GitHub API is never served from a cache', () => {
   // The listing is the only thing that says a new ping exists. If this ever gets
   // a cache strategy, the map silently stops updating — the worst failure this
