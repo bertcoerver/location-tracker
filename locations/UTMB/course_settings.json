@@ -7,7 +7,7 @@
     "ping_k": 0.3,
     "ping_midpoint": 25,
     "crew": ["Mariam", "Soline"],
-    "news_banner": "     📈🏔️ [Official Race Results](https://live.utmb.world/utmb/2026/runners/2112)      |     🔴 [Race Live Stream](https://live.utmb.world/utmb/2026/utmb) 🎥     ",
+    "news_banner": "📈🏔️ [Official Race Results](https://live.utmb.world/utmb/2026/runners/2112) | 🔴🎥 [Race Live Stream](https://live.utmb.world/utmb/2026/utmb) |📍🟠 Orange dots indicate Bert’s location | 🧭🗺️Orange line indicates Bert **predicted** location | ℹ️📊 Tap a point for more info! ",
     "distance": 174,
     "total_ascent": 9900
 }
