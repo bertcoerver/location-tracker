@@ -1162,9 +1162,13 @@ export function tooltipHtml(point, isLatest, origin = null) {
  * Shouty enum values are sentence-cased — "AID STATION" is a database column, not
  * a thing to read — but anything already mixed-case is left alone, because there
  * the exporter chose the capitals and may have had a proper noun in mind.
+ *
+ * Underscores are read as the word-joiner they are, not as punctuation to keep —
+ * a Suunto-exported course writes "Aid_station", and "Aid station" is the same
+ * claim the shouty exporters make, just not shouted.
  */
 function waypointKind(waypoint) {
-  const raw = (waypoint.type || waypoint.sym || '').trim();
+  const raw = (waypoint.type || waypoint.sym || '').trim().replace(/_/g, ' ');
   if (!raw || /^(generic|waypoint)$/i.test(raw)) return '';
   return raw === raw.toUpperCase() ? raw[0] + raw.slice(1).toLowerCase() : raw;
 }
