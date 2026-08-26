@@ -4,8 +4,9 @@
   Drawn on a 24x24 grid in one ink, like sunrise.svg — whatever colour is stated
   here is discarded on the way to the screen (see src/glyphs.js) and only the
   shape survives. Adapted from Lucide's "cross" icon (ISC License,
-  https://lucide.dev) to this file's own house style. One outlined path rather
-  than a filled one, so it stays consistent with the other three marks here.
+  https://lucide.dev) to this file's own house style. SOLID rather than
+  outlined, like photo.svg: it is the smallest mark of the four and a 2 px
+  stroke on it reads as a thin plus sign rather than a cross.
 
   Used for a waypoint whose <type> or <sym> reads "first aid" — see
   `waypointGlyph` in src/layers.js.
@@ -13,5 +14,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
      color="#000" fill="none" stroke="currentColor" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 9a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h4a1 1 0 0 1 1 1v4a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-4a1 1 0 0 1 1-1h4a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-4a1 1 0 0 1-1-1V4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4a1 1 0 0 1-1 1z"/>
+  <path fill="currentColor" stroke="none"
+        d="M4 9a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h4a1 1 0 0 1 1 1v4a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-4a1 1 0 0 1 1-1h4a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-4a1 1 0 0 1-1-1V4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4a1 1 0 0 1-1 1z"/>
 </svg>
