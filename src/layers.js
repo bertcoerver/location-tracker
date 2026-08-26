@@ -51,8 +51,12 @@ export function basemapLayer() {
  * The waypoints are not optional. They were behind a toggle, and a toggle is a
  * question — this one had the same answer every time, which makes it furniture
  * rather than a choice. A course with waypoints shows them.
+ *
+ * @param {number} zoom the camera's, which decides how many of the waypoint
+ *   NAMES there is room to draw — see `thinLabels`. Only the names: the marks
+ *   themselves are drawn at every zoom.
  */
-export function courseLayers(course) {
+export function courseLayers(course, zoom) {
   if (!course) return [];
 
   const line = courseColor();
@@ -156,21 +160,26 @@ export function courseLayers(course) {
       }));
     }
 
-    const labelled = course.waypoints.filter(w => waypointName(w));
+    const { named, characterSet } = namedWaypoints(course.waypoints);
 
     layers.push(new deck.TextLayer({
       id: 'waypoint-labels',
-      data: labelled,
+      // Only the names there is room for at this zoom, and none at all when the
+      // camera is far enough out that they'd be a smear — see `thinLabels`. The
+      // marks below are untouched by it: a place doesn't disappear, its caption
+      // does, and the dot still answers a tap with the name.
+      data: labelsAtZoom(named, zoom),
       // Not pickable: the dot underneath owns the tooltip, and a label that
       // answers to a different hover than the mark it belongs to is a bug.
       getPosition: w => [w.lon, w.lat],
       getText: waypointName,
       // See `characterSetFor`: deck.gl's default atlas is ASCII-only, and a
-      // course full of accented place names needs more than that.
-      characterSet: characterSetFor(labelled.map(waypointName)),
-      getSize: 12,
+      // course full of accented place names needs more than that. Built from
+      // every name rather than the drawn ones — see `namedWaypoints`.
+      characterSet,
+      getSize: LABEL_SIZE_PX,
       sizeUnits: 'pixels',
-      getPixelOffset: [0, -13],
+      getPixelOffset: [0, LABEL_OFFSET_PX],
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'bottom',
       getColor: [...line, 255],
@@ -184,12 +193,13 @@ export function courseLayers(course) {
       outlineColor: [...ring, 235]
 
       // No CollisionFilterExtension, though thinning out crowded labels is
-      // exactly what it is for. In deck.gl 9.3.7 it culls EVERY label in this
-      // stack — verified against the real course on both SwiftShader and the
-      // hardware GPU, with and without `collisionTestProps`, and with the
-      // per-frame layer rebuild frozen. The glyphs are laid out (33 instances,
-      // sublayer visible) and simply never drawn. A label you can read beats a
-      // label that tidily avoids its neighbours and isn't there.
+      // exactly what it is for, and it is why `thinLabels` above is hand-rolled
+      // instead. In deck.gl 9.3.7 it culls EVERY label in this stack — verified
+      // against the real course on both SwiftShader and the hardware GPU, with
+      // and without `collisionTestProps`, and with the per-frame layer rebuild
+      // frozen. The glyphs are laid out (33 instances, sublayer visible) and
+      // simply never drawn. A label you can read beats a label that tidily
+      // avoids its neighbours and isn't there.
     }));
   }
 
@@ -330,6 +340,192 @@ function waypointName(w) {
  */
 function characterSetFor(strings) {
   return [...new Set(strings.join(''))];
+}
+
+// --- thinning the labels out ------------------------------------------------
+//
+// A course's waypoints are drawn at a size that suits reading one of them, and
+// the camera decides how close together that puts them. Zoomed out far enough to
+// see the whole of UTMB the map has 24 names on a squiggle 300 px across, which
+// is not 24 labels — it is a grey smear with a route somewhere under it.
+//
+// So the labels are thinned by the camera: below a floor there are none at all,
+// and above it a name is drawn only where there is actually room for it.
+
+/** The size the names are drawn at, and the two measurements taken off it. */
+const LABEL_SIZE_PX = 12;
+/** How far above the dot the name sits — the layer's own pixel offset. */
+const LABEL_OFFSET_PX = -13;
+/** A line's height, and the average advance of a character at that size.
+ *  Estimates: `TextLayer` measures through its font atlas, which is not
+ *  something this side can ask, and the halo absorbs the error either way. */
+const LABEL_LINE_PX = LABEL_SIZE_PX * 1.15;
+const LABEL_CHAR_PX = LABEL_SIZE_PX * 0.55;
+/** Slack around a label's estimated box, so two that merely touch still count
+ *  as a clash — a name has to be readable, not just technically not overlapping. */
+const LABEL_PAD_PX = 4;
+
+/**
+ * How far apart two drawn names must be, centre to centre.
+ *
+ * The box test below is the one that stops labels sitting ON each other, and on
+ * its own it is not enough. A loop course spreads its waypoints around a ring,
+ * so at the zoom that fits the whole race on screen the names tile into the gaps
+ * between each other without ever quite touching: 24 becomes 14, and 14 names on
+ * a 300 px squiggle reads exactly as badly as 24 did. Clutter is a question about
+ * density, and this is the knob that answers it.
+ */
+const LABEL_GAP_PX = 70;
+
+/**
+ * The zoom at which names start being drawn at all.
+ *
+ * Below this the course is a shape rather than a route — the whole of UTMB fits
+ * a phone at about zoom 9 — and a name pinned to every bend of it is furniture
+ * over the one thing the view is for. The marks stay: a waypoint with a category
+ * still draws its cup or its flag, every dot still answers a tap with its name,
+ * and `sunLayers` made the same trade for the same reason. What a mark has to say
+ * from across the screen is "something is here", and the drawing says that.
+ */
+const LABEL_ZOOM_FLOOR = 10;
+
+/**
+ * The zoom, rounded to the step the thinning is actually recomputed on.
+ *
+ * A quarter of a zoom level. Two things want this: the memo below only pays for
+ * itself if a pinch settles on a value it has seen, and a label that recomputed
+ * continuously would flicker in and out around the point where it just fits.
+ * Rounded DOWN, so the floor above is a floor rather than something a label can
+ * appear a fraction early on.
+ *
+ * Exported because map.js repaints on it — see `tick`.
+ */
+export function labelZoomBucket(zoom) {
+  return Math.floor(zoom * 4) / 4;
+}
+
+/**
+ * Where a coordinate lands in Web Mercator world pixels at a given zoom.
+ *
+ * World pixels rather than screen pixels, which is what keeps this pure and keeps
+ * the thinning stable: panning moves every label by the same amount, so the
+ * distances between them do not change and neither does the answer. Rotating the
+ * map is a rigid transform and doesn't change them either. Pitching it does — and
+ * the result is then an approximation, which is a fair price for not having to
+ * hand a live viewport to a function that is otherwise arithmetic.
+ */
+function worldPixels(lon, lat, zoom) {
+  const size = 512 * 2 ** zoom;
+  const phi = lat * Math.PI / 180;
+  return [
+    (lon + 180) / 360 * size,
+    (1 - Math.log(Math.tan(phi) + 1 / Math.cos(phi)) / Math.PI) / 2 * size
+  ];
+}
+
+/**
+ * Which labels win a clash, lowest first.
+ *
+ * By the same category the mark is drawn from, so the rule reads off the map:
+ * where two names won't both fit, the one that keeps its name is the one a runner
+ * would look for. An aid station is where the food and the drop bag are; a
+ * checkpoint is a place the course passes through. On UTMB every waypoint is one
+ * of these three, so this ladder IS the thinning order there — the cols lose
+ * their names to the feed stations before they lose them to nothing.
+ */
+const LABEL_RANK = ['aid-station', 'first-aid', 'summit', 'checkpoint'];
+
+function labelRank(waypoint) {
+  const at = LABEL_RANK.indexOf(waypointGlyph(waypoint));
+  return at === -1 ? LABEL_RANK.length : at;
+}
+
+/**
+ * The waypoints whose names actually get drawn at this zoom.
+ *
+ * Greedy, in priority order: take each label in turn and keep it if it clashes
+ * with nothing already kept. The same rule the height strip draws its names by
+ * — "a label that would run into the previous one is dropped rather than drawn
+ * on top of it", see `drawWaypoints` in profile.js — with a second dimension to
+ * run into and a minimum spacing on top.
+ *
+ * Pure, and deliberately so: this is the half of the feature worth testing, and
+ * a function of two arguments that needs neither `deck` nor a canvas can be.
+ * O(n²) on a list that is 24 long on the biggest course in the repo and 0 on
+ * every other one.
+ *
+ * @param {Array} named waypoints that have a name, in course order — which is
+ *   the tiebreak, since sorting by rank is stable.
+ * @param {number} zoom
+ */
+export function thinLabels(named, zoom) {
+  if (zoom < LABEL_ZOOM_FLOOR) return [];
+
+  const kept = [];
+  const boxes = [];
+
+  for (const w of [...named].sort((a, b) => labelRank(a) - labelRank(b))) {
+    const [x, y] = worldPixels(w.lon, w.lat, zoom);
+    const halfWidth = waypointName(w).length * LABEL_CHAR_PX / 2 + LABEL_PAD_PX;
+    const box = {
+      x,
+      y,
+      left: x - halfWidth,
+      right: x + halfWidth,
+      top: y + LABEL_OFFSET_PX - LABEL_LINE_PX - LABEL_PAD_PX,
+      bottom: y + LABEL_OFFSET_PX + LABEL_PAD_PX
+    };
+
+    const clashes = boxes.some(b =>
+      (box.left < b.right && b.left < box.right && box.top < b.bottom && b.top < box.bottom) ||
+      Math.hypot(x - b.x, y - b.y) < LABEL_GAP_PX);
+
+    if (!clashes) {
+      kept.push(w);
+      boxes.push(box);
+    }
+  }
+
+  return kept;
+}
+
+/**
+ * The named waypoints of a course, and the glyphs their names need.
+ *
+ * Memoised on the array's identity for the reason `tracedPath` is: `courseLayers`
+ * runs once a frame, and both of these are props that must not arrive as a fresh
+ * object every time.
+ *
+ * `characterSet` is built from every named waypoint rather than from the ones
+ * drawn right now, and that is load-bearing. It is what decides the font atlas,
+ * the atlas is rasterised whenever it changes, and the drawn set changes with the
+ * camera — so measuring it against the thinned list would rebuild the atlas on
+ * every zoom step, to arrive at very nearly the same set of letters each time.
+ */
+let namedMemo = { from: null, named: [], characterSet: [] };
+
+function namedWaypoints(waypoints) {
+  if (waypoints !== namedMemo.from) {
+    const named = waypoints.filter(w => waypointName(w));
+    namedMemo = {
+      from: waypoints,
+      named,
+      characterSet: characterSetFor(named.map(waypointName))
+    };
+  }
+  return namedMemo;
+}
+
+/** `thinLabels` held steady between frames, so deck re-uploads the labels when
+ *  the camera has actually crossed a step and not once per frame. */
+let thinnedMemo = { from: null, zoom: null, data: [] };
+
+function labelsAtZoom(named, zoom) {
+  const bucket = labelZoomBucket(zoom);
+  if (named !== thinnedMemo.from || bucket !== thinnedMemo.zoom) {
+    thinnedMemo = { from: named, zoom: bucket, data: thinLabels(named, bucket) };
+  }
+  return thinnedMemo.data;
 }
 
 /**

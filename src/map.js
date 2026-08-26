@@ -6,8 +6,8 @@ import { courseBounds, courseHoverAt, pointAt } from './course.js';
 import { loadGlyphs } from './glyphs.js';
 import {
   basemapLayer, beaconLayers, courseLayers, forecastLayers, hoverLayers, hoverTooltipHtml,
-  makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers, sunLayers, sunTooltipHtml,
-  tooltipHtml, traceLayers, viewerLayers, waypointTooltipHtml
+  labelZoomBucket, makeTooltip, mediaLayers, mediaTooltipHtml, pointLayers, sunLayers,
+  sunTooltipHtml, tooltipHtml, traceLayers, viewerLayers, waypointTooltipHtml
 } from './layers.js';
 import { createPin } from './pin.js';
 import { boundsOf, fixesOf, latestOf, posOf, unionBounds } from './points.js';
@@ -67,6 +67,9 @@ export function createMap(container, {
   let viewState = { longitude: 0, latitude: 20, zoom: 1.4, pitch: 0, bearing: 0 };
   let follow = true;
   let fitted = false;
+  // The label step the last painted frame was built for — see `tick`, which
+  // repaints on it when nothing else would.
+  let paintedZoom = null;
   // Whether the next fit should be flown or jumped. A first load has nowhere to
   // fly FROM, so it jumps; a run switch has, and flying it is what makes the two
   // races read as two places on one map rather than as two page loads.
@@ -108,7 +111,9 @@ export function createMap(container, {
       // course can be partly covered by a ping — but the halo still reads around
       // the edge of one, and the race is what the page is for.
       ...viewerLayers(viewer, pulse),
-      ...courseLayers(course),
+      // The zoom, because how many waypoint NAMES there is room to draw is a
+      // question about the camera — see `thinLabels`.
+      ...courseLayers(course, viewState.zoom),
       // The stand-in for a run that has no GPX: a dashed line through its own
       // pings, in the course's place in the stack because it is playing the
       // course's part. Draws nothing when there IS a course — the two would be
@@ -1012,7 +1017,18 @@ export function createMap(container, {
       // dot is the case with no pings behind it: a run that hasn't started yet is
       // exactly when someone checks where they are relative to it, and without
       // this the halo would sit frozen.
-      if (points.length || viewer) deckgl.setProps({ layers: allLayers() });
+      //
+      // A zoom that has crossed a label step is the third reason, and the only one
+      // that isn't an animation. Either of the two above already rebuilds the stack
+      // on every frame of a pinch — but a course with no pings and no viewer dot
+      // repaints on neither, and `onViewStateChange` hands deck the camera by
+      // itself. Without this the names on a race that hasn't started yet would
+      // stay thinned for whatever zoom the map last drew at.
+      const bucket = labelZoomBucket(viewState.zoom);
+      if (points.length || viewer || bucket !== paintedZoom) {
+        paintedZoom = bucket;
+        deckgl.setProps({ layers: allLayers() });
+      }
       // Here rather than in render(): a fly-to moves the camera for a second
       // without anything calling render, and a pinned tooltip left behind at
       // the old screen position would be pointing at nothing.

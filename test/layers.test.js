@@ -8,8 +8,8 @@ import { buildCourse } from '../src/course.js';
 import { CONFIG } from '../src/config.js';
 import {
   bandAlpha, bandFades, beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml,
-  makeTooltip, latestState, mediaTooltipHtml, splitWeather, sunTooltipHtml, tooltipHtml,
-  viewerLayers, waypointGlyph, waypointTooltipHtml
+  labelZoomBucket, makeTooltip, latestState, mediaTooltipHtml, splitWeather, sunTooltipHtml,
+  thinLabels, tooltipHtml, viewerLayers, waypointGlyph, waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
@@ -472,6 +472,95 @@ test('a waypoint says what kind of place it is, sentence-cased from a shouty <ty
   assert.ok(!html.includes('AID STATION'), html);
   // Beside the name on the top line, not down in the column of readings.
   assert.ok(!html.includes('<div class="row"><span class="i" aria-hidden="true">Aid'), html);
+});
+
+// --- thinning the waypoint labels --------------------------------------------
+
+/** A named waypoint at a place, `metres` east of the last one along a line.
+ *  Latitude 46 is UTMB's, which is where the pixel spacings below come from. */
+const at = (name, eastMetres, type = 'Checkpoint') => ({
+  name,
+  type,
+  lat: 46,
+  // 111 320 m to the degree at the equator, narrowed by the latitude.
+  lon: 6 + eastMetres / (111320 * Math.cos(46 * Math.PI / 180))
+});
+
+/** The names `thinLabels` kept, which is what a reader would see. */
+const shown = (waypoints, zoom) => thinLabels(waypoints, zoom).map(w => w.name);
+
+test('no waypoint names at all when the camera is far enough out', () => {
+  // The whole of UTMB fits a phone at about zoom 9, and a name on every bend of
+  // a 300 px squiggle is a smear rather than 24 labels. The marks stay; only
+  // the captions go.
+  const course = [at('Les Houches', 0), at('Saint-Gervais', 8000)];
+
+  assert.deepEqual(shown(course, 9), []);
+  assert.deepEqual(shown(course, 9.75), []);
+  // And they are back the moment the floor is reached.
+  assert.equal(shown(course, 10).length, 2);
+});
+
+test('waypoints far enough apart all keep their names', () => {
+  // 8 km at zoom 12 is well past any spacing rule in here.
+  const course = [at('Trient', 0), at('Vallorcine', 8000), at('La Flégère', 16000)];
+
+  assert.deepEqual(shown(course, 12), ['Trient', 'Vallorcine', 'La Flégère']);
+});
+
+test('an aid station keeps its name where a checkpoint beside it loses one', () => {
+  // Two names 200 m apart: at zoom 12 that is a few pixels, and they cannot both
+  // be drawn. The one a runner is looking for is the one that survives — which on
+  // UTMB is what thins the cols out before the feed stations.
+  const course = [
+    at('Grand Col Ferret', 0, 'Checkpoint'),
+    at('La Fouly', 200, 'Aid_station')
+  ];
+
+  assert.deepEqual(shown(course, 12), ['La Fouly']);
+  // Document order must not be what decided it: the same pair the other way up
+  // gives the same answer.
+  assert.deepEqual(shown([course[1], course[0]], 12), ['La Fouly']);
+});
+
+test('two waypoints of one category are thinned in course order', () => {
+  const course = [at('First', 0), at('Second', 200), at('Third', 400)];
+
+  // Nothing separates these but where they are, so the rule falls back to the
+  // order they come in — which is the order the course visits them.
+  assert.deepEqual(shown(course, 12), ['First']);
+});
+
+test('the names thin out gradually as the camera pulls back', () => {
+  // A kilometre apart, which is 150 px at zoom 13 and 37 px at zoom 11 — either
+  // side of the spacing rule, so this course thins out across the range.
+  const course = [
+    at('A', 0, 'Aid_station'), at('B', 1000), at('C', 2000),
+    at('D', 3000, 'Aid_station'), at('E', 4000), at('F', 5000)
+  ];
+
+  const counts = [13, 12, 11.5, 11].map(z => shown(course, z).length);
+
+  // Monotonic: pulling back may drop a name and must never add one.
+  for (let i = 1; i < counts.length; i++) {
+    assert.ok(counts[i] <= counts[i - 1], `${counts} rose at ${i}`);
+  }
+  assert.equal(counts[0], 6, 'all six fit when zoomed right in');
+  assert.ok(counts.at(-1) < 6, `${counts} never thinned`);
+});
+
+test('a course whose waypoints have no names draws nothing, at any zoom', () => {
+  // 31 of the 32 courses in the repo are this one.
+  assert.deepEqual(thinLabels([], 9), []);
+  assert.deepEqual(thinLabels([], 14), []);
+});
+
+test('labelZoomBucket rounds down, so the floor is never crossed early', () => {
+  assert.equal(labelZoomBucket(9.99), 9.75);
+  assert.equal(labelZoomBucket(10), 10);
+  assert.equal(labelZoomBucket(10.4), 10.25);
+  // Steady across a small camera move, which is what stops labels flickering.
+  assert.equal(labelZoomBucket(11.1), labelZoomBucket(11.2));
 });
 
 test('waypointGlyph picks the mark by category, however the exporter wrote it', () => {
