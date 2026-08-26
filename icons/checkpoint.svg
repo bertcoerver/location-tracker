@@ -3,8 +3,17 @@
 
   Drawn on a 24x24 grid in one ink, like sunrise.svg — whatever colour is stated
   here is discarded on the way to the screen (see src/glyphs.js) and only the
-  shape survives. Adapted from Lucide's "flag" icon (ISC License,
-  https://lucide.dev) to this file's own house style.
+  shape survives. The banner is SOLID rather than outlined, like photo.svg's
+  body: an outlined banner left its inside genuinely transparent, which on the
+  map read as a hole showing the basemap through the flag rather than a flag.
+  Since the tint refills the whole drawing with one colour and cannot paint
+  anything back OUT of it (see src/glyphs.js), "solid" here means the banner's
+  own ink, not a second colour — there is no white to be had within one mark.
+
+  Redrawn as a closed banner plus a separate pole line, in the shape of
+  Feather/Lucide's older two-part "flag" glyph (ISC License, https://lucide.dev),
+  because the closed shape fills; the newer single wavy path both projects now
+  ship is one open stroke that was never meant to hold a fill.
 
   Used for a waypoint whose <type> or <sym> reads "checkpoint" — see
   `waypointGlyph` in src/layers.js.
@@ -12,5 +21,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
      color="#000" fill="none" stroke="currentColor" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"/>
+  <path fill="currentColor" stroke="none"
+        d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+  <line x1="4" y1="22" x2="4" y2="15"/>
 </svg>

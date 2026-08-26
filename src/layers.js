@@ -95,11 +95,20 @@ export function courseLayers(course) {
   if (course.waypoints.length) {
     const withKind = course.waypoints.map(w => ({ ...w, kind: 'waypoint' }));
 
+    // Split by whether a category mark is actually going to be drawn this
+    // frame: `waypointGlyph` is pure and answers before the atlas has loaded,
+    // but the icon itself only appears once `marks` is ready, so a waypoint
+    // must not lose its dot before its replacement is there to take over —
+    // that would flash it invisible for the one frame in between.
+    const marks = waypointAtlas();
+    const glyphed = marks ? withKind.filter(w => waypointGlyph(w)) : [];
+    const dotted = marks ? withKind.filter(w => !waypointGlyph(w)) : withKind;
+
     layers.push(new deck.ScatterplotLayer({
       id: 'waypoints',
       // `kind` is what the tooltip dispatches on — a waypoint is not a fix and
       // shouldn't be described like one.
-      data: withKind,
+      data: dotted,
       pickable: true,
       radiusUnits: 'pixels',
       getPosition: w => [w.lon, w.lat],
@@ -111,17 +120,17 @@ export function courseLayers(course) {
       getFillColor: [...line, 255]
     }));
 
-    // A category mark over the dot, for the waypoints whose <type> or <sym>
-    // names one — see `waypointGlyph`. Same idiom as `sunLayers`' glyph: not
-    // pickable, because the dot underneath already owns the tooltip, and drawn
-    // large enough to cover the plain dot outright rather than sit beside it,
-    // since the point here is to REPLACE the generic mark, not to label it.
-    const marks = waypointAtlas();
-    const glyphed = withKind.filter(w => waypointGlyph(w));
-    if (marks && glyphed.length) {
+    // A category mark REPLACING the dot, for the waypoints whose <type> or
+    // <sym> names one — see `waypointGlyph`. Same idiom as `sunLayers`'
+    // glyph, except the dot underneath is gone rather than covered: two marks
+    // stacked on the same point read as clutter, and the icon already says
+    // everything the plain dot did.
+    if (glyphed.length) {
       layers.push(new deck.IconLayer({
         id: 'waypoint-glyph',
         data: glyphed,
+        // Not pickable itself — see `waypoints-hit` below, which stands in
+        // for the dot this layer replaced.
         pickable: false,
         iconAtlas: marks.atlas,
         iconMapping: marks.mapping,
@@ -132,6 +141,18 @@ export function courseLayers(course) {
         // The atlas is null until the SVGs load and then never changes again,
         // so this is one rebuild in the life of the page.
         updateTriggers: { getIcon: marks }
+      }));
+
+      // The dot's tooltip, without the dot: invisible, sized to the icon it
+      // sits under rather than the 6 px dot, in the idiom of `points-hit`.
+      layers.push(new deck.ScatterplotLayer({
+        id: 'waypoints-hit',
+        data: glyphed,
+        pickable: true,
+        radiusUnits: 'pixels',
+        getPosition: w => [w.lon, w.lat],
+        getRadius: WAYPOINT_ICON_PX / 2,
+        getFillColor: [0, 0, 0, 0]
       }));
     }
 
