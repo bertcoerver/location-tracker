@@ -87,24 +87,33 @@ export function renderNews(text) {
  * message in a fixed number of seconds instead would make a long one a blur and a
  * short one a crawl, which is the failure mode of every marquee ever written.
  *
+ * The gap counts towards the DURATION and not towards the decision. One lap moves the
+ * track by a copy plus its gap, so a lap timed for the copy alone runs fast by the
+ * ratio between them — but a message that fits the bar on its own fits, and letting
+ * the gap push it over the edge would set a bar of clear space scrolling to make room
+ * for a gap that only exists because it scrolls.
+ *
  * `reduced` is not "animate less". A banner that overflows and cannot move has been
  * silently truncated, and the reader has no way to reach the rest of it — so honouring
  * the preference means turning the animation OFF and letting the bar scroll by hand
  * instead, which the caller arranges. Either way `marquee` is false and there is no
  * third state to reason about.
  *
- * @param {number}  contentPx one copy of the message, including its trailing gap.
+ * @param {number}  contentPx one copy of the message, without its trailing gap.
+ * @param {number}  gapPx     the space between a copy and the next.
  * @param {number}  boxPx     the bar's own width.
  * @param {boolean} reduced   `prefers-reduced-motion` is set.
  */
-export function marqueeState({ contentPx, boxPx, reduced = false }) {
+export function marqueeState({ contentPx, gapPx = 0, boxPx, reduced = false }) {
   // Zero width is a bar that hasn't been laid out yet — measuring it would produce a
   // duration of zero and a strobing element. Not scrolling is the right answer until
   // there is something to measure; `sync` runs again on the next resize or font load.
   const marquee = !reduced && contentPx > 0 && boxPx > 0 && contentPx > boxPx;
   return {
     marquee,
-    durationMs: marquee ? Math.round((contentPx / CONFIG.newsSpeedPxPerSec) * 1000) : 0
+    durationMs: marquee
+      ? Math.round(((contentPx + gapPx) / CONFIG.newsSpeedPxPerSec) * 1000)
+      : 0
   };
 }
 
@@ -130,6 +139,12 @@ export function createNews(root) {
   const reduceQuery = matchMedia('(prefers-reduced-motion: reduce)');
 
   let text = '';
+  // What was last WRITTEN to the DOM, so a re-sync that measures the same thing
+  // writes nothing. Setting `--news-dur` to a different value mid-lap keeps the
+  // elapsed time and re-maps it onto the new duration, which is a visible jump —
+  // and a phone fires `resize` for every URL-bar nudge, so "re-syncs are free"
+  // is not a safe assumption. Comparing before writing makes them free.
+  let written = { marquee: null, durationMs: null };
 
   function sync() {
     const on = Boolean(text);
@@ -141,21 +156,40 @@ export function createNews(root) {
     if (!on) return;
 
     // The gap belongs to the CSS, but its VALUE has to be the one the measurement
-    // below sees — `scrollWidth` includes it, and the -50% translate assumes the two
-    // agree. One number, set from config, read by both.
+    // below adds in, and the -50% translate assumes the two agree. One number, set
+    // from config, read by both.
     root.style.setProperty('--news-gap', `${CONFIG.newsGapPx}px`);
 
     const state = marqueeState({
-      // One copy's own width, gap included — it is carried as that copy's margin, so
-      // the measurement and the -50% translate are describing the same box.
-      contentPx: copies[0].scrollWidth,
+      // `getBoundingClientRect` rather than `scrollWidth`, which rounds to whole
+      // pixels — a lap timed for 413 px that actually covers 412.6 runs fractionally
+      // fast for the whole race, and the error is in the duration where nothing
+      // corrects it.
+      contentPx: copies[0].getBoundingClientRect().width,
+      // Passed rather than folded into the width above: the gap is the copy's own
+      // margin, so it sits outside every width the box reports, and it belongs to the
+      // lap's LENGTH and not to the question of whether the message fits.
+      gapPx: CONFIG.newsGapPx,
       boxPx: root.clientWidth,
       reduced: reduceQuery.matches
     });
 
-    root.dataset.marquee = String(state.marquee);
-    root.style.setProperty('--news-dur', `${state.durationMs}ms`);
+    if (state.marquee !== written.marquee) root.dataset.marquee = String(state.marquee);
+    if (state.durationMs !== written.durationMs) {
+      root.style.setProperty('--news-dur', `${state.durationMs}ms`);
+    }
+    written = state;
     syncFades();
+  }
+
+  // `resize` arrives in bursts — an iOS URL bar sliding away sends a dozen — and
+  // every `sync` is a forced layout in the middle of one. Coalescing to one call per
+  // frame means the burst costs a single measurement, taken after the browser has
+  // finished resizing rather than at each step of it.
+  let queued = 0;
+  function syncSoon() {
+    cancelAnimationFrame(queued);
+    queued = requestAnimationFrame(sync);
   }
 
   /**
@@ -170,13 +204,19 @@ export function createNews(root) {
     root.dataset.moreRight = String(more > 1);
   }
 
-  root.addEventListener('scroll', syncFades);
-  addEventListener('resize', sync);
-  reduceQuery.addEventListener('change', sync);
+  // Also once per frame: a scroll fires far faster than it paints, and each of these
+  // is a layout read taken in the middle of the gesture that produced it.
+  let fadesQueued = 0;
+  root.addEventListener('scroll', () => {
+    cancelAnimationFrame(fadesQueued);
+    fadesQueued = requestAnimationFrame(syncFades);
+  }, { passive: true });
+  addEventListener('resize', syncSoon);
+  reduceQuery.addEventListener('change', syncSoon);
   // A webfont landing changes every measurement on the page, and it lands after this
   // module has already run. Without this, a banner that just fits at fallback metrics
   // and just doesn't at the real ones would never start scrolling.
-  document.fonts?.ready.then(sync);
+  document.fonts?.ready.then(syncSoon);
 
   return {
     /**

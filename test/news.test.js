@@ -116,6 +116,18 @@ test('a message too wide scrolls, at a speed rather than in a fixed time', () =>
   assert.equal(short.durationMs, Math.round((900 / CONFIG.newsSpeedPxPerSec) * 1000));
 });
 
+test('the gap is part of the lap, not part of the decision', () => {
+  // One lap moves the track by a copy PLUS its gap, so timing the copy alone runs the
+  // text fast by the ratio between them.
+  const state = marqueeState({ contentPx: 900, gapPx: 96, boxPx: 600 });
+  assert.equal(state.durationMs, Math.round((996 / CONFIG.newsSpeedPxPerSec) * 1000));
+
+  // But a message that fits the bar on its own fits. Counting the gap here would set a
+  // bar of clear space scrolling to make room for a gap that only exists because it
+  // scrolls — and it would never stop, since scrolling is what creates the gap.
+  assert.equal(marqueeState({ contentPx: 550, gapPx: 96, boxPx: 600 }).marquee, false);
+});
+
 test('reduced motion never scrolls, however long the message', () => {
   // Not "animate less": the bar becomes scrollable by hand instead, which the CSS
   // arranges off this same false. Truncating with no way to reach the rest would be

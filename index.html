@@ -486,8 +486,12 @@
     border-radius: 0;
     /* Flush with the top of the window on all three sides that touch it — the
        fourth, the bottom edge, is the one border the bar keeps, since that's
-       the seam against the map rather than the screen. */
+       the seam against the map rather than the screen. It is DRAWN by
+       #news-glass, which covers this element's own border the way any
+       positioned child covers it; what stays here is its 1 px of width, still
+       colourless, so that the text goes on being centred in 29 px and not 30. */
     border-left: 0; border-right: 0; border-top: 0;
+    border-bottom-color: transparent;
     display: flex;
     align-items: center;
     /* One line, always — see news.js. */
@@ -495,13 +499,63 @@
     font-size: 13px;
     line-height: 1;
     color: var(--text-secondary);
+    /* The two things .panel paints that a moving child must not sit inside —
+       the fill and the blur behind it — move to #news-glass below. A
+       backdrop-filter samples what is BEHIND its element, so the element
+       carrying one cannot also be the element whose children move: leaving them
+       together made WebKit re-evaluate a full-width blur over a live deck.gl
+       canvas on every frame of the scroll. The radius comes down there too.
+       Everything else about the box — border, shadow, padding — stays here, so
+       the text is centred in exactly the same 29 px it always was.
+       `transparent` rather than `none`, because .panel sets a colour and this
+       has to beat it. */
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  /* The glass the bar is drawn ON, as its own layer behind the text — same box,
+     no children, nothing in it that ever moves.
+
+     Fixed rather than absolute, and to exactly the box #news occupies: under
+     `prefers-reduced-motion` the bar becomes a horizontal scroller, and an
+     absolutely positioned child would scroll away with the message, taking the
+     blur with it and leaving bare map behind the text. That works because
+     nothing between here and the viewport has a transform, filter or `contain`
+     — any of those would make an ancestor the containing block for this and
+     slide it off anyway. If one is ever added to #news, this has to become
+     `position: absolute; inset: 0` and the scrolling has to move inwards with
+     it. */
+  #news-glass {
+    position: fixed;
+    left: 0; right: 0;
+    top: env(safe-area-inset-top, 0px);
+    height: var(--news-h);
+    z-index: 0;
+    pointer-events: none;
+    background: var(--surface-2);
+    /* 12 px rather than the 20 the other panels use, and the one place in this
+       file where the bar is deliberately not the same material as .panel. Cost
+       scales with the radius over an area, and this is the widest frosted thing
+       on the page — full window width, sampling a live deck.gl canvas that
+       redraws under it whether or not the text is moving. On an older phone
+       that is the difference between a lap that holds 60 fps and one that does
+       not. The tooltips already frost at 12 px (see `.tip`), and against a
+       30 px strip the two radii are hard to tell apart: it is the saturate
+       that does most of the work of keeping the map underneath looking like a
+       map rather than like fog. */
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    /* The seam against the map. Drawn here rather than on #news because this
+       covers that border — see there for why the width stays behind. */
+    border-bottom: 1px solid var(--border);
   }
   #news[hidden] { display: none; }
   #news a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
   #news code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
   #news strong { font-weight: 600; color: var(--text-primary); }
 
-  #news-track { display: flex; white-space: nowrap; }
+  /* Above the glass, below the fades. */
+  #news-track { display: flex; white-space: nowrap; position: relative; z-index: 1; }
   /* Two copies, and the gap carried INSIDE each one as its own margin. That is
      what lets the animation be a bare -50%: half of a two-copy track is exactly
      one copy, so the restart lands copy 1 where copy 2 was and the join is
@@ -510,15 +564,26 @@
   .news-copy { margin-right: var(--news-gap, 96px); }
   #news[data-marquee="true"] #news-track {
     animation: news-scroll var(--news-dur, 20s) linear infinite;
-    /* The blur lives on #news (via .panel) and the transform on the track inside
-       it, deliberately. Animating a transform on the backdrop-filtered element
-       itself recomputes a 20px blur over a live deck.gl canvas every frame, which
-       is a phone-killer and flickers on WebKit. Promoting the track keeps the
-       blurred region still and composites only the text. */
+    /* Promotes the text to its own layer, so a lap is the compositor moving one
+       finished raster rather than the main thread re-drawing a line of type 60
+       times a second. The blur it used to slide over now lives on #news-glass,
+       which is a SIBLING of this element rather than its parent — see #news.
+
+       No `transform` alongside it, and that omission is load-bearing. The
+       keyframes below name both ends for the same reason: an animation with only
+       a `to` frame takes its `from` from whatever the element already computes,
+       so a static `translateZ(0)` here left the browser interpolating
+       translateZ → translateX. Mismatched function lists interpolate as
+       matrices, a matrix carrying a percentage has to be re-resolved against the
+       box, and that is exactly the shape of transform animation the compositor
+       hands back to the main thread — where a GPS poll or a deck.gl redraw
+       stutters it. Two translate3d frames keep it on the GPU. */
     will-change: transform;
-    transform: translateZ(0);
   }
-  @keyframes news-scroll { to { transform: translateX(-50%); } }
+  @keyframes news-scroll {
+    from { transform: translate3d(0, 0, 0); }
+    to   { transform: translate3d(-50%, 0, 0); }
+  }
   /* Short enough to fit: centred, and the second copy has nothing to do. */
   #news[data-marquee="false"] #news-track { width: 100%; justify-content: center; }
   #news[data-marquee="false"] .news-copy { margin-right: 0; }
@@ -537,7 +602,8 @@
     position: absolute;
     top: 0; bottom: 0;
     width: 28px;
-    z-index: 1;
+    /* Above #news-track, which is z-index 1 now that the glass is behind it. */
+    z-index: 2;
     pointer-events: none;
     opacity: 0;
     transition: opacity .18s;
@@ -1085,6 +1151,7 @@
      a scrolling one loop seamlessly — see news.js. The second is aria-hidden
      so it isn't read twice. -->
 <div id="news" class="panel" role="region" aria-label="Course news" hidden>
+  <div id="news-glass" aria-hidden="true"></div>
   <div id="news-track">
     <span class="news-copy"></span>
     <span class="news-copy" aria-hidden="true"></span>
