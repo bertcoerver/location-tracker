@@ -51,16 +51,35 @@ export const CELL_PX = 96;
 /**
  * How much of that cell is margin rather than drawing.
  *
- * The halo blurs OUTWARDS from the ink, and a drawing that ran to the edge of its
- * cell would have that blur cut off square — which reads as a box around the
- * mark, the one artefact worse than no halo at all. Every display size is quoted
- * in whole cells, so this margin is the difference between the size asked for and
- * the size seen; the callers' numbers already allow for it.
+ * The outline stands OUTSIDE the ink, and a drawing that ran to the edge of its
+ * cell would have that outline cut off square — which reads as a box around the
+ * mark, the one artefact worse than no outline at all. Every display size is
+ * quoted in whole cells, so this margin is the difference between the size asked
+ * for and the size seen; the callers' numbers already allow for it.
  */
 export const INSET_PX = 8;
 
-/** The halo's spread, in cell pixels. */
-const HALO_PX = 5;
+/**
+ * How far the outline stands off the drawing, in cell pixels.
+ *
+ * Under `INSET_PX`, which is the margin the cell keeps for exactly this. Quoted
+ * in cell pixels rather than screen ones, so it scales with the mark: at the
+ * 22 px a waypoint is drawn at this comes out a shade over a pixel, and at the
+ * 30 px a sunrise gets it comes out a shade under one and a half — which is the
+ * right relationship between the two, and is why it is not stated in pixels.
+ */
+const STROKE_PX = 4.5;
+
+/**
+ * How many copies the outline is built from.
+ *
+ * The outline is the drawing stamped around a circle, so this is how round that
+ * circle is: the scallop left between two stamps is 0.15 of a cell pixel at
+ * twelve, which is a thirtieth of a pixel at the size a waypoint is drawn.
+ * Eight would do; twelve costs nothing, because it happens once per mark per
+ * colour, at load, and never again.
+ */
+const STROKE_STAMPS = 12;
 
 /** The load, once. Held so that a second caller waits on the first rather than
  *  fetching the same four files again. */
@@ -120,19 +139,19 @@ export function inlineGlyph(name) {
  *
  * @param {string} name one of `GLYPHS`.
  * @param {string} ink a CSS colour — the whole drawing is refilled with it.
- * @param {string|null} [halo] a CSS colour to spread behind the drawing. Worth it
- *   on the map, where whatever is underneath is whatever the basemap happens to
- *   be; pointless on the height strip, which owns its own background.
+ * @param {string|null} [stroke] a CSS colour to outline the drawing with. Worth
+ *   it on the map, where whatever is underneath is whatever the basemap happens
+ *   to be; pointless on the height strip, which owns its own background.
  * @returns {HTMLCanvasElement|null}
  */
-export function glyph(name, ink, halo = null) {
+export function glyph(name, ink, stroke = null) {
   const stencil = stencils.get(name);
   if (!stencil) return null;
 
-  const key = `${name}|${ink}|${halo ?? ''}`;
+  const key = `${name}|${ink}|${stroke ?? ''}`;
   let mark = marks.get(key);
   if (!mark) {
-    mark = halo ? withHalo(tint(stencil, ink), halo) : tint(stencil, ink);
+    mark = stroke ? withStroke(tint(stencil, ink), stroke) : tint(stencil, ink);
     marks.set(key, mark);
   }
   return mark;
@@ -153,8 +172,8 @@ export function glyph(name, ink, halo = null) {
  * @param {string[]} names
  * @returns {{atlas: HTMLCanvasElement, mapping: Object}|null}
  */
-export function glyphAtlas(names, ink, halo = null) {
-  const cells = names.map(name => glyph(name, ink, halo));
+export function glyphAtlas(names, ink, stroke = null) {
+  const cells = names.map(name => glyph(name, ink, stroke));
   if (cells.some(cell => !cell)) return null;
 
   const canvas = document.createElement('canvas');
@@ -251,30 +270,45 @@ function tint(stencil, ink) {
 }
 
 /**
- * The same drawing with the page's background spread behind it.
+ * The same drawing with an outline around it.
  *
  * The marks sit on a basemap this app does not control, and a one-colour drawing
  * on satellite imagery or on a dark street map can vanish outright — the colour
  * emoji these replaced carried their own contrast and never had to think about
- * it. This is the same bargain the waypoint labels already make with
- * `outlineColor`, drawn rather than typeset.
+ * it. This is the same bargain the waypoint labels make with `outlineColor`,
+ * drawn rather than typeset.
  *
- * Drawn three times because one shadow pass is faint: they accumulate to
- * something that actually separates the mark from what is under it, and the clean
- * copy on top keeps the drawing's own edges sharp.
+ * A STROKE and not the blurred shadow this used to be. A blur has no edge, so
+ * what it does against a busy tile is dilute the contrast either side of the
+ * drawing rather than draw a line between them: three shadow passes were needed
+ * to make it visible at all, and even then the mark looked smudged onto the map
+ * instead of sitting on it. This is the drawing's own silhouette, stamped once
+ * per point of a small circle and so hard-edged everywhere, with the mark itself
+ * laid back on top.
+ *
+ * The stamps are drawn a whole cell off the left of the canvas and their SHADOWS
+ * offset a whole cell back onto it, which is the standard way to get a shadow
+ * without the thing casting it: every pass would otherwise leave a copy of the
+ * mark on the canvas as well, under the next pass's outline.
  */
-function withHalo(mark, halo) {
+function withStroke(mark, colour) {
   const canvas = document.createElement('canvas');
   canvas.width = CELL_PX;
   canvas.height = CELL_PX;
 
   const c = canvas.getContext('2d');
-  c.shadowColor = halo;
-  c.shadowBlur = HALO_PX;
-  for (let i = 0; i < 3; i++) c.drawImage(mark, 0, 0);
+  c.shadowColor = colour;
+  c.shadowBlur = 0;
+  for (let i = 0; i < STROKE_STAMPS; i++) {
+    const angle = i * 2 * Math.PI / STROKE_STAMPS;
+    c.shadowOffsetX = CELL_PX + Math.cos(angle) * STROKE_PX;
+    c.shadowOffsetY = Math.sin(angle) * STROKE_PX;
+    c.drawImage(mark, -CELL_PX, 0);
+  }
 
   c.shadowColor = 'transparent';
-  c.shadowBlur = 0;
+  c.shadowOffsetX = 0;
+  c.shadowOffsetY = 0;
   c.drawImage(mark, 0, 0);
   return canvas;
 }

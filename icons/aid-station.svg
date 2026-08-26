@@ -1,10 +1,23 @@
 <!--
-  Aid station: a cup, for the food and drink laid out on the table.
+  Aid station: a cup, half full.
 
   Drawn on a 24x24 grid in one ink, like sunrise.svg — whatever colour is stated
   here is discarded on the way to the screen (see src/glyphs.js) and only the
   shape survives. Adapted from Lucide's "cup-soda" icon (ISC License,
   https://lucide.dev) to this file's own house style.
+
+  The drink is FILLED rather than left as the bare surface line Lucide draws,
+  which is what makes this a cup with something in it instead of an empty cup
+  with a crease across it. The fill's top edge is that same line, so the two
+  agree exactly: it starts where the wave starts, at the point (7,15) where the
+  left wall passes y=15, and ends at (17,15) on the right wall. Move the wave and
+  this path has to move with it, or the drink pulls away from the glass.
+
+  Half, and not more, because a fuller cup is nearly a solid shape and reads as a
+  bucket. The tint refills the whole drawing with one colour and cannot paint
+  anything back OUT of it (see src/glyphs.js), so the drink is the cup's own ink
+  — the LEVEL is the only thing distinguishing the two, and it has to be obvious
+  at 22 px.
 
   Used for a waypoint whose <type> or <sym> reads "aid station" — see
   `waypointGlyph` in src/layers.js.
@@ -12,6 +25,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
      color="#000" fill="none" stroke="currentColor" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round">
+  <path fill="currentColor" stroke="none"
+        d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0l-.71 5.28a2 2 0 0 1-2
+           1.72h-4.54a2 2 0 0 1-2-1.72Z"/>
   <path d="m6 8 1.75 12.28a2 2 0 0 0 2 1.72h4.54a2 2 0 0 0 2-1.72L18 8"/>
   <path d="M5 8h14"/>
   <path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/>
