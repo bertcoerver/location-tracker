@@ -127,6 +127,25 @@ test('escaped characters in a waypoint name are decoded', () => {
   assert.equal(gpx.waypoints[0].name, 'Caf& <Bar>');
 });
 
+test('a name wrapped in CDATA reads as the name, not the markup', () => {
+  // MapOut wraps a <name> in CDATA whenever it contains an apostrophe, so
+  // "Plan de l'Au" arrives as <name><![CDATA[Plan de l'Au]]></name>. A reader
+  // that just takes the element's text content shows the brackets and all.
+  const gpx = parseGpx(wrap(`
+    <wpt lat="1" lon="1"><name><![CDATA[Plan de l'Au]]></name></wpt>
+    <trk><trkseg><trkpt lat="1" lon="1"/><trkpt lat="1" lon="2"/></trkseg></trk>`));
+
+  assert.equal(gpx.waypoints[0].name, "Plan de l'Au");
+});
+
+test('text around a CDATA section still gets entity-decoded', () => {
+  const gpx = parseGpx(wrap(`
+    <wpt lat="1" lon="1"><name>Caf&amp; <![CDATA[<Bar>]]> &amp; Grill</name></wpt>
+    <trk><trkseg><trkpt lat="1" lon="1"/><trkpt lat="1" lon="2"/></trkseg></trk>`));
+
+  assert.equal(gpx.waypoints[0].name, 'Caf& <Bar> & Grill');
+});
+
 test('self-closing points with no children are fine', () => {
   const gpx = parseGpx(wrap('<trk><trkseg><trkpt lat="1" lon="1"/><trkpt lat="2" lon="2"/></trkseg></trk>'));
   assert.equal(gpx.segments[0].length, 2);
