@@ -474,6 +474,16 @@ test('a waypoint says what kind of place it is, sentence-cased from a shouty <ty
   assert.ok(!html.includes('<div class="row"><span class="i" aria-hidden="true">Aid'), html);
 });
 
+test('an underscore-joined kind reads as separate words', () => {
+  // Suunto's UTMB export writes "Aid_station" and "First_aid" rather than the
+  // shouty or space-separated forms the other exporters use.
+  const html = waypointTooltipHtml(
+    { name: 'Les Contamines', type: 'Aid_station', ele: 1140, lat: 45.8, lon: 6.7 });
+
+  assert.ok(text(html).includes('Aid station'), html);
+  assert.ok(!html.includes('Aid_station'), html);
+});
+
 test('a mixed-case kind keeps its own capitals', () => {
   // Only an all-caps value is an enum being shouted; anything else was written
   // by someone who may have meant the capitals.
