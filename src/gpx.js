@@ -29,12 +29,32 @@ function attr(tag, name) {
 function child(body, name) {
   const m = body.match(
     new RegExp(`<${NS}${name}\\s*>([\\s\\S]*?)</${NS}${name}\\s*>`, 'i'));
-  return m ? decode(m[1].trim()) : null;
+  return m ? unwrap(m[1].trim()) : null;
 }
 
 function decode(s) {
   return s.replace(/&(lt|gt|amp|quot|apos|#39);/g, (_, e) =>
     ({ lt: '<', gt: '>', amp: '&', quot: '"', apos: "'", '#39': "'" })[e]);
+}
+
+// A `<![CDATA[...]]>` section is verbatim text, not markup — MapOut wraps a
+// `<name>` in one whenever it contains an apostrophe, so a course full of
+// "L'Alpe" and "Plan de l'Au" is a course full of CDATA. Left to `decode`
+// alone, that text comes through as the literal markers and all —
+// "<![CDATA[Plan de l'Au]]>" — which is worse than the name it replaces.
+// Only the text OUTSIDE the CDATA sections gets entity-decoded; text inside
+// one is exactly what's between the brackets, by definition.
+const CDATA = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
+
+function unwrap(raw) {
+  if (!raw.includes('<![CDATA[')) return decode(raw);
+  let out = '';
+  let last = 0;
+  for (const m of raw.matchAll(CDATA)) {
+    out += decode(raw.slice(last, m.index)) + m[1];
+    last = m.index + m[0].length;
+  }
+  return out + decode(raw.slice(last));
 }
 
 /** One `<trkpt>` / `<rtept>` / `<wpt>` match -> a point, or null if unusable. */

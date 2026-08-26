@@ -109,13 +109,18 @@ export function courseLayers(course) {
       getFillColor: [...line, 255]
     }));
 
+    const labelled = course.waypoints.filter(w => waypointName(w));
+
     layers.push(new deck.TextLayer({
       id: 'waypoint-labels',
-      data: course.waypoints.filter(w => waypointName(w)),
+      data: labelled,
       // Not pickable: the dot underneath owns the tooltip, and a label that
       // answers to a different hover than the mark it belongs to is a bug.
       getPosition: w => [w.lon, w.lat],
       getText: waypointName,
+      // See `characterSetFor`: deck.gl's default atlas is ASCII-only, and a
+      // course full of accented place names needs more than that.
+      characterSet: characterSetFor(labelled.map(waypointName)),
       getSize: 12,
       sizeUnits: 'pixels',
       getPixelOffset: [0, -13],
@@ -264,6 +269,20 @@ function tracedPath(points) {
 /** A waypoint's display name, or '' when it hasn't got one worth drawing. */
 function waypointName(w) {
   return (w.name || w.sym || '').trim();
+}
+
+/**
+ * The characters a `TextLayer` needs to draw the given strings.
+ *
+ * deck.gl's own default is the printable ASCII range, so an accented name —
+ * "La Flégère", "Arête du Mont-Favre" — or a stray "®" or curly apostrophe
+ * ("UTMB® (all POI's)") comes through with holes where those glyphs should
+ * be: the font atlas never rasterised them. Building the set from the actual
+ * labels, rather than widening the default, keeps the atlas exactly as big
+ * as this layer's data needs and no bigger.
+ */
+function characterSetFor(strings) {
+  return [...new Set(strings.join(''))];
 }
 
 /**
@@ -743,6 +762,8 @@ export function beaconLayers(beacons) {
       // Not pickable: the dot underneath owns the tooltip and the click.
       getPosition: b => [b.lon, b.lat],
       getText: b => b.run,
+      // See `characterSetFor` — a run name is free text too.
+      characterSet: characterSetFor(data.map(b => b.run)),
       getSize: 11,
       sizeUnits: 'pixels',
       getPixelOffset: [0, -10],
