@@ -92,13 +92,31 @@ function labelOutline() {
  */
 const TILE_URLS = {};
 
-function tileUrls(style) {
-  TILE_URLS[style] ??= ['a', 'b', 'c'].map(sub =>
-    `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}@2x.png`);
+/**
+ * The three subdomain templates for `style`, carrying `key`.
+ *
+ * The query string is omitted entirely rather than sent empty when no key is
+ * configured, so an unconfigured deploy makes exactly the request it made before
+ * this argument existed — a watermarked tile, which is still a tile. See
+ * `CONFIG.basemapKey`.
+ *
+ * Pure, and separate from the memo below, because the memo is keyed on the style
+ * alone: the key cannot change while the page is open, so folding it into the
+ * cache key would buy nothing, and building the URLs here is what lets a test
+ * check both halves of that `key ?` without reaching into the cache.
+ */
+export function tileTemplates(style, key) {
+  const query = key ? `?key=${encodeURIComponent(key)}` : '';
+  return ['a', 'b', 'c'].map(sub =>
+    `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}@2x.png${query}`);
+}
+
+export function tileUrls(style) {
+  TILE_URLS[style] ??= tileTemplates(style, CONFIG.basemapKey);
   return TILE_URLS[style];
 }
 
-/** Keyless CARTO raster basemap, light or dark to match the page. */
+/** CARTO raster basemap, light or dark to match the page. */
 export function basemapLayer() {
   const style = prefersDark() ? 'dark_all' : 'light_all';
 

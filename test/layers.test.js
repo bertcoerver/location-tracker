@@ -9,7 +9,8 @@ import { CONFIG } from '../src/config.js';
 import {
   bandAlpha, bandFades, beaconLayers, beaconTooltipHtml, fmtDistance, forecastLayers, hoverTooltipHtml,
   labelZoomBucket, makeTooltip, latestState, mediaTooltipHtml, splitWeather, sunTooltipHtml,
-  thinLabels, tooltipHtml, viewerLayers, waypointGlyph, waypointTooltipHtml
+  thinLabels, tileTemplates, tileUrls, tooltipHtml, viewerLayers, waypointGlyph,
+  waypointTooltipHtml
 } from '../src/layers.js';
 import { buildForecast } from '../src/predict.js';
 import { interpolateAt } from '../src/stats.js';
@@ -1486,4 +1487,44 @@ test('a ping with nothing to say about pace stays silent', () => {
 
   assert.ok(!out.includes('paused'), out);
   assert.ok(!out.includes('min/km'), out);
+});
+
+
+// --- basemap tiles ---------------------------------------------------------
+// CARTO began watermarking unauthenticated requests to the raster endpoint, so
+// the tiles now carry a key. These lock down the two things that would show up
+// as a blank or spoiled map rather than as a failing assertion anywhere else.
+
+test('no configured key means no query string at all', () => {
+  // Not `?key=`, which would be a request claiming a key it does not have. An
+  // unconfigured deploy must send exactly what it sent before the key existed.
+  for (const url of tileTemplates('light_all', '')) {
+    assert.ok(!url.includes('?'), url);
+    assert.match(url, /\/rastertiles\/light_all\/\{z\}\/\{x\}\/\{y\}@2x\.png$/);
+  }
+});
+
+test('a configured key rides on every subdomain', () => {
+  const urls = tileTemplates('dark_all', 'abc123');
+
+  assert.equal(urls.length, 3);
+  for (const url of urls) assert.ok(url.endsWith('@2x.png?key=abc123'), url);
+
+  // Three DISTINCT hosts: deck round-robins them, and three copies of one
+  // subdomain would quietly serialise every tile fetch behind one connection.
+  assert.equal(new Set(urls).size, 3);
+});
+
+test('a key with URL-significant characters is encoded', () => {
+  const [url] = tileTemplates('light_all', 'a&b=c');
+
+  assert.ok(url.endsWith('?key=a%26b%3Dc'), url);
+});
+
+test('the same style hands back the same array, by reference', () => {
+  // Load-bearing, not hygiene: deck decides whether a layer's data changed by
+  // comparing the prop by reference, so a fresh array of identical strings reads
+  // as a whole new dataset and re-fetches the basemap on every repaint.
+  assert.equal(tileUrls('light_all'), tileUrls('light_all'));
+  assert.notEqual(tileUrls('light_all'), tileUrls('dark_all'));
 });

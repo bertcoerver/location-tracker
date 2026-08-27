@@ -7,6 +7,22 @@ export const CONFIG = {
   branch: 'main',
   dir:    'locations',
 
+  // The key the basemap tiles are fetched with. Free, no account and no approval
+  // queue: https://carto.com/basemaps/apikey — five million tiles a month, which
+  // this map will not come close to.
+  //
+  // Empty is a working map rather than a broken one: CARTO still serves every
+  // tile, it just stamps "API key required" across each of them. That is what
+  // this setting is here for. The endpoint had been keyless for years, started
+  // watermarking unauthenticated requests, and every map standing on it went
+  // spotty on the same day.
+  //
+  // It ships in client-side source and there is no hiding it. That is what this
+  // class of key is: a rate-limit bucket, not a credential. The protection is the
+  // domain restriction CARTO lets you put on it, and the worst case is somebody
+  // else spending the five million.
+  basemapKey: '',
+
   // GitHub allows 60 API requests/hour PER IP, and a 304 costs the same as a
   // 200 — measured, despite the docs saying conditional requests are free. One
   // poll is one request whatever the run count, so the rate is a budget split

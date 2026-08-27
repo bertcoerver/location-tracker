@@ -53,7 +53,14 @@ const SHELL = `shell-v${VERSION}`;
 // to VERSION would throw away every ping and every tile of a race already being
 // watched because a stylesheet changed, which is the opposite of what this is for.
 const DATA = 'data-v1';
-const TILES = 'tiles-v1';
+// `tiles-v2`, and the rename is the whole point of it. Every tile cached before
+// the basemap key went in carries CARTO's "API key required" watermark baked
+// into the picture, and cache-first means those would have been served for as
+// long as they survived the trim. `activate` deletes every cache not on `KEEP`,
+// so changing this name is what throws the spoiled ones away. The keyed URLs
+// carry a query string and would have missed them in any case — but they would
+// have sat there spending the budget until `trim` happened to walk past.
+const TILES = 'tiles-v2';
 const KEEP = [SHELL, DATA, TILES];
 
 // ~40 KB per @2x tile, so this is a soft ceiling around 50 MB. Tiles are the only
