@@ -21,7 +21,7 @@ export const CONFIG = {
   // class of key is: a rate-limit bucket, not a credential. The protection is the
   // domain restriction CARTO lets you put on it, and the worst case is somebody
   // else spending the five million.
-  basemapKey: '',
+  basemapKey: 'cb1_2a43_1_2cca8ca9e6a4d9a791a8d639',
 
   // GitHub allows 60 API requests/hour PER IP, and a 304 costs the same as a
   // 200 — measured, despite the docs saying conditional requests are free. One
