@@ -1,7 +1,7 @@
 {
     "id": "UTMB",
     "label": "Ultra Trail de Mont Blanc",
-    "start_datetime": "2026-08-28T18:00:00+02:00",
+    "start_datetime": "2026-08-28T20:00:00+02:00",
     "ping_min_interval": 25,
     "ping_max_interval": 40,
     "ping_k": 0.3,
